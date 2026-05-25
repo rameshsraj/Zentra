@@ -180,3 +180,10 @@ export const getNetworkPrograms = () => fetchJSON<{ pid: number; name: string; c
 export const getCountryBreakdown = () => fetchJSON<{ code: string; name: string; bytes: number; connections: number }[]>('/network/deep/countries')
 export const stopPcapExport = () => fetchJSON<{ stopped: boolean }>('/network/capture/export/stop', { method: 'POST' })
 export interface ServiceBreakdownEntry { service: string; count: number; percentage: number }
+
+// Types used by Network.tsx
+export interface NetworkAdapter { name: string; ip: string; mac: string }
+export interface NetworkProgram { pid: number; name: string; connections: number }
+export interface TrafficChartPoint { timestamp: string; bytes_in: number; bytes_out: number; packets_in: number; packets_out: number }
+export interface ProtocolBreakdown { name: string; bytes: number; packets: number; percentage: number }
+export interface CountryBreakdownEntry { code: string; name: string; bytes: number; connections: number }

@@ -228,7 +228,7 @@ export default function AlertsPage() {
                             className={cn('flex items-center gap-4 px-8 py-2 text-xs cursor-pointer hover:bg-white/5 border-t border-white/5', alert.alert_id === selectedId && 'bg-brand-600/10')}
                           >
                             <span className="text-slate-300 truncate flex-1">{alert.message}</span>
-                            <span className="font-mono text-slate-500">{alert.metric_value.toFixed(1)}</span>
+                            <span className="font-mono text-slate-500">{(alert.metric_value ?? 0).toFixed(1)}</span>
                             <span className={cn('px-2 py-0.5 rounded text-[10px] font-semibold',
                               alert.status === 'triggered' ? 'bg-red-500/10 text-red-400' :
                               alert.status === 'acknowledged' ? 'bg-amber-500/10 text-amber-400' :
@@ -266,7 +266,7 @@ export default function AlertsPage() {
                         </td>
                         <td className="px-4 py-2.5 text-xs text-slate-300 max-w-xs truncate">{alert.message}</td>
                         <td className="px-4 py-2.5 font-mono text-xs text-slate-400">
-                          {alert.metric_value.toFixed(1)} / {alert.threshold.toFixed(1)}
+                          {(alert.metric_value ?? 0).toFixed(1)} / {(alert.threshold ?? 0).toFixed(1)}
                         </td>
                         <td className="px-4 py-2.5">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
@@ -276,7 +276,7 @@ export default function AlertsPage() {
                           }`}>{alert.status}</span>
                         </td>
                         <td className="px-4 py-2.5 font-mono text-[10px] text-slate-500">
-                          {new Date(alert.triggered_at).toLocaleString()}
+                          {new Date(alert.triggered_at ?? alert.created_at).toLocaleString()}
                         </td>
                         <td className="px-4 py-2.5">
                           <div className="flex gap-1" onClick={e => e.stopPropagation()}>
@@ -336,16 +336,16 @@ export default function AlertsPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <div className="text-[10px] text-slate-500 uppercase mb-1">Current Value</div>
-                  <div className="text-lg font-mono font-bold text-red-400">{selected.metric_value.toFixed(2)}</div>
+                  <div className="text-lg font-mono font-bold text-red-400">{(selected.metric_value ?? 0).toFixed(2)}</div>
                 </div>
                 <div>
                   <div className="text-[10px] text-slate-500 uppercase mb-1">Threshold</div>
-                  <div className="text-lg font-mono font-bold text-slate-300">{selected.threshold.toFixed(2)}</div>
+                  <div className="text-lg font-mono font-bold text-slate-300">{(selected.threshold ?? 0).toFixed(2)}</div>
                 </div>
               </div>
               <div>
                 <div className="text-[10px] text-slate-500 uppercase mb-1">Triggered At</div>
-                <div className="text-xs font-mono text-slate-300">{new Date(selected.triggered_at).toLocaleString()}</div>
+                <div className="text-xs font-mono text-slate-300">{new Date(selected.triggered_at ?? selected.created_at).toLocaleString()}</div>
               </div>
               <div className="flex gap-2 pt-2 border-t border-white/10">
                 {selected.status === 'triggered' && (

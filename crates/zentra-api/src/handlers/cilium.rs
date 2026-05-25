@@ -101,10 +101,10 @@ pub async fn cilium_metrics_summary(
 ) -> Result<Json<CiliumMetricsSummary>, ApiError> {
     // Query latest scraped cilium metrics from the metrics/scrape_results table
     let endpoint_states = sqlx::query_scalar::<_, serde_json::Value>(
-        r#"SELECT COALESCE(jsonb_object_agg(labels->>'state', value), '{}')
+        r#"SELECT COALESCE(jsonb_object_agg(tags->>'state', value), '{}')
            FROM metrics
            WHERE org_id = $1 AND metric_name = 'cilium_endpoint_state'
-             AND time > NOW() - INTERVAL '5 minutes'"#
+             AND timestamp > NOW() - INTERVAL '5 minutes'"#
     )
     .bind(org_id)
     .fetch_optional(&state.tsdb_pool)
@@ -113,10 +113,10 @@ pub async fn cilium_metrics_summary(
     .unwrap_or_else(|| json!({}));
 
     let drop_reasons = sqlx::query_scalar::<_, serde_json::Value>(
-        r#"SELECT COALESCE(jsonb_object_agg(labels->>'reason', value), '{}')
+        r#"SELECT COALESCE(jsonb_object_agg(tags->>'reason', value), '{}')
            FROM metrics
            WHERE org_id = $1 AND metric_name = 'cilium_drop_count_total'
-             AND time > NOW() - INTERVAL '5 minutes'"#
+             AND timestamp > NOW() - INTERVAL '5 minutes'"#
     )
     .bind(org_id)
     .fetch_optional(&state.tsdb_pool)
@@ -125,10 +125,10 @@ pub async fn cilium_metrics_summary(
     .unwrap_or_else(|| json!({}));
 
     let bpf_map_pressure = sqlx::query_scalar::<_, serde_json::Value>(
-        r#"SELECT COALESCE(jsonb_object_agg(labels->>'map_name', value), '{}')
+        r#"SELECT COALESCE(jsonb_object_agg(tags->>'map_name', value), '{}')
            FROM metrics
            WHERE org_id = $1 AND metric_name = 'cilium_bpf_map_pressure'
-             AND time > NOW() - INTERVAL '5 minutes'"#
+             AND timestamp > NOW() - INTERVAL '5 minutes'"#
     )
     .bind(org_id)
     .fetch_optional(&state.tsdb_pool)
@@ -137,10 +137,10 @@ pub async fn cilium_metrics_summary(
     .unwrap_or_else(|| json!({}));
 
     let flow_verdicts = sqlx::query_scalar::<_, serde_json::Value>(
-        r#"SELECT COALESCE(jsonb_object_agg(labels->>'verdict', value), '{}')
+        r#"SELECT COALESCE(jsonb_object_agg(tags->>'verdict', value), '{}')
            FROM metrics
            WHERE org_id = $1 AND metric_name = 'hubble_flows_processed_total'
-             AND time > NOW() - INTERVAL '5 minutes'"#
+             AND timestamp > NOW() - INTERVAL '5 minutes'"#
     )
     .bind(org_id)
     .fetch_optional(&state.tsdb_pool)
@@ -152,7 +152,7 @@ pub async fn cilium_metrics_summary(
         r#"SELECT COALESCE(SUM(value)::BIGINT, 0)
            FROM metrics
            WHERE org_id = $1 AND metric_name = 'cilium_policy_import_errors_total'
-             AND time > NOW() - INTERVAL '5 minutes'"#
+             AND timestamp > NOW() - INTERVAL '5 minutes'"#
     )
     .bind(org_id)
     .fetch_optional(&state.tsdb_pool)
@@ -164,7 +164,7 @@ pub async fn cilium_metrics_summary(
         r#"SELECT COALESCE(MAX(value)::BIGINT, 0)
            FROM metrics
            WHERE org_id = $1 AND metric_name = 'cilium_identity_count'
-             AND time > NOW() - INTERVAL '5 minutes'"#
+             AND timestamp > NOW() - INTERVAL '5 minutes'"#
     )
     .bind(org_id)
     .fetch_optional(&state.tsdb_pool)
@@ -174,11 +174,11 @@ pub async fn cilium_metrics_summary(
 
     let hubble_drops = sqlx::query_scalar::<_, serde_json::Value>(
         r#"SELECT COALESCE(jsonb_object_agg(
-               labels->>'reason' || '/' || COALESCE(labels->>'protocol',''), value
+               tags->>'reason' || '/' || COALESCE(tags->>'protocol',''), value
            ), '{}')
            FROM metrics
            WHERE org_id = $1 AND metric_name = 'hubble_drop_total'
-             AND time > NOW() - INTERVAL '5 minutes'"#
+             AND timestamp > NOW() - INTERVAL '5 minutes'"#
     )
     .bind(org_id)
     .fetch_optional(&state.tsdb_pool)

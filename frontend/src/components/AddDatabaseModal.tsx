@@ -7,7 +7,7 @@ import { useAppMode } from '@/contexts/AppModeContext'
 interface AddDatabaseModalProps {
   open: boolean
   onClose: () => void
-  dbType: 'oracle' | 'postgresql' | 'mysql' | 'mongodb' | 'sqlserver'
+  dbType: 'oracle'
   title?: string
 }
 
@@ -26,49 +26,6 @@ const DB_CONFIGS: Record<string, {
       { key: 'username', label: 'Username', placeholder: 'e.g. system or monitoring_user' },
       { key: 'password', label: 'Password', placeholder: '••••••••', type: 'password' },
       { key: 'role', label: 'Connection Role', placeholder: 'e.g. SYSDBA, NORMAL' },
-    ],
-  },
-  postgresql: {
-    label: 'PostgreSQL',
-    defaultPort: 5432,
-    subtypes: ['postgresql'],
-    connectionFields: [
-      { key: 'database', label: 'Database Name', placeholder: 'e.g. postgres or mydb' },
-      { key: 'username', label: 'Username', placeholder: 'e.g. postgres' },
-      { key: 'password', label: 'Password', placeholder: '••••••••', type: 'password' },
-      { key: 'ssl_mode', label: 'SSL Mode', placeholder: 'e.g. disable, require, verify-full' },
-    ],
-  },
-  mysql: {
-    label: 'MySQL',
-    defaultPort: 3306,
-    subtypes: ['mysql', 'mariadb'],
-    connectionFields: [
-      { key: 'database', label: 'Database Name', placeholder: 'e.g. mysql or mydb' },
-      { key: 'username', label: 'Username', placeholder: 'e.g. root or monitoring' },
-      { key: 'password', label: 'Password', placeholder: '••••••••', type: 'password' },
-    ],
-  },
-  mongodb: {
-    label: 'MongoDB',
-    defaultPort: 27017,
-    subtypes: ['mongodb'],
-    connectionFields: [
-      { key: 'database', label: 'Database / Auth DB', placeholder: 'e.g. admin' },
-      { key: 'username', label: 'Username', placeholder: 'e.g. mongoAdmin' },
-      { key: 'password', label: 'Password', placeholder: '••••••••', type: 'password' },
-      { key: 'replica_set', label: 'Replica Set', placeholder: 'e.g. rs0 (optional)' },
-    ],
-  },
-  sqlserver: {
-    label: 'SQL Server',
-    defaultPort: 1433,
-    subtypes: ['sqlserver'],
-    connectionFields: [
-      { key: 'database', label: 'Database Name', placeholder: 'e.g. master' },
-      { key: 'username', label: 'Username', placeholder: 'e.g. sa or monitoring_user' },
-      { key: 'password', label: 'Password', placeholder: '••••••••', type: 'password' },
-      { key: 'instance', label: 'Named Instance', placeholder: 'e.g. MSSQLSERVER (optional)' },
     ],
   },
 }

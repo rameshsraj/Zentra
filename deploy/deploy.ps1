@@ -30,13 +30,16 @@ Write-Host " Server: $SERVER_USER@$SERVER_HOST" -ForegroundColor Cyan
 Write-Host " Path:   $DEPLOY_PATH" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
 
-# ---- Helper: Run SSH command ----
+$PLINK  = Join-Path $PSScriptRoot "plink.exe"
+$PSCP   = Join-Path $PSScriptRoot "pscp.exe"
+
+# ---- Helper: Run SSH command via plink ----
 function Invoke-SSH {
     param([string]$Command, [int]$TimeoutSec = 600)
     Write-Host "[SSH] $Command" -ForegroundColor DarkGray
     $pinfo = New-Object System.Diagnostics.ProcessStartInfo
-    $pinfo.FileName = "ssh"
-    $pinfo.Arguments = "-o StrictHostKeyChecking=no -o ConnectTimeout=10 -p $SERVER_PORT $SERVER_USER@$SERVER_HOST `"$Command`""
+    $pinfo.FileName = $PLINK
+    $pinfo.Arguments = "-batch -pw $SERVER_PASS -P $SERVER_PORT $SERVER_USER@$SERVER_HOST `"$Command`""
     $pinfo.RedirectStandardOutput = $true
     $pinfo.RedirectStandardError = $true
     $pinfo.UseShellExecute = $false
@@ -65,15 +68,15 @@ function Invoke-SSH {
     return $process.ExitCode
 }
 
-# ---- Helper: SCP upload ----
+# ---- Helper: SCP upload via pscp ----
 function Invoke-SCP {
     param([string]$LocalPath, [string]$RemotePath, [switch]$Recursive)
     $rFlag = ""
     if ($Recursive) { $rFlag = "-r" }
     Write-Host "[SCP] $LocalPath -> $RemotePath" -ForegroundColor DarkGray
-    $args_str = "-o StrictHostKeyChecking=no -P $SERVER_PORT $rFlag `"$LocalPath`" $SERVER_USER@${SERVER_HOST}:$RemotePath"
+    $args_str = "-batch -pw $SERVER_PASS -P $SERVER_PORT $rFlag `"$LocalPath`" $SERVER_USER@${SERVER_HOST}:$RemotePath"
     $pinfo = New-Object System.Diagnostics.ProcessStartInfo
-    $pinfo.FileName = "scp"
+    $pinfo.FileName = $PSCP
     $pinfo.Arguments = $args_str
     $pinfo.RedirectStandardOutput = $true
     $pinfo.RedirectStandardError = $true
@@ -116,7 +119,7 @@ try {
     }
     Write-Host "Building frontend for production..."
     $ErrorActionPreference = "Continue"
-    npx vite build 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+    npx --yes vite build 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
     $ErrorActionPreference = "Stop"
     if (-not (Test-Path "dist\index.html")) {
         throw "Frontend build failed - dist/index.html not found"
@@ -141,7 +144,8 @@ Copy-Item "$PROJECT_ROOT\Cargo.toml" "$STAGING\Cargo.toml"
 Copy-Item "$PROJECT_ROOT\Cargo.lock" "$STAGING\Cargo.lock"
 Copy-Item "$PROJECT_ROOT\crates"    "$STAGING\crates"   -Recurse
 Copy-Item "$PROJECT_ROOT\plugins"   "$STAGING\plugins"  -Recurse
-Copy-Item "$PROJECT_ROOT\.env"      "$STAGING\.env"
+# .env lives on the server already — do not overwrite it
+Write-Host "  Skipping .env (using server's existing .env)" -ForegroundColor Yellow
 
 # Copy frontend dist
 New-Item -ItemType Directory -Path "$STAGING\frontend\dist" -Force | Out-Null

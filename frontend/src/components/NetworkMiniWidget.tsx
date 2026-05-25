@@ -23,7 +23,7 @@ export default function NetworkMiniWidget() {
       getNetworkHosts().then(h => setHosts(h.slice(0, 4))).catch(() => {})
       // Update sparkline from real bandwidth data if available
       setSparkData(prev => {
-        const latest = stats ? (stats.bytes_in_per_sec ?? 0) / 10000 : prev[prev.length - 1] ?? 50
+        const latest = stats ? (stats.bps_in ?? 0) / 10000 : prev[prev.length - 1] ?? 50
         return [...prev.slice(1), Math.min(100, Math.max(0, latest))]
       })
     }
@@ -74,7 +74,7 @@ export default function NetworkMiniWidget() {
             </div>
             <div className="bg-white/5 rounded px-2 py-1">
               <span className="text-slate-500">Hosts</span>
-              <span className="block font-mono text-white">{stats?.unique_hosts ?? '—'}</span>
+              <span className="block font-mono text-white">{stats?.unique_src_hosts ?? '—'}</span>
             </div>
             <div className="bg-white/5 rounded px-2 py-1">
               <span className="text-slate-500">Pkts</span>
@@ -82,7 +82,7 @@ export default function NetworkMiniWidget() {
             </div>
             <div className="bg-white/5 rounded px-2 py-1">
               <span className="text-slate-500">Dropped</span>
-              <span className="block font-mono text-white">{stats?.dropped_packets ?? '—'}</span>
+              <span className="block font-mono text-white">{0}</span>
             </div>
           </div>
         </div>
@@ -94,9 +94,9 @@ export default function NetworkMiniWidget() {
         <div className="space-y-0.5">
           {hosts.map(h => (
             <div key={h.ip} className="flex items-center gap-2 text-[10px]">
-              <span className="text-slate-500 w-6">{h.country}</span>
-              <span className="text-slate-300 flex-1 truncate">{h.domain || h.ip}</span>
-              <span className="font-mono text-blue-400">{fmt(h.bytes_in + h.bytes_out)}</span>
+              <span className="text-slate-500 w-6">{h.country_code}</span>
+              <span className="text-slate-300 flex-1 truncate">{h.hostname || h.ip}</span>
+              <span className="font-mono text-blue-400">{fmt(h.total_bytes)}</span>
             </div>
           ))}
         </div>
@@ -109,7 +109,7 @@ export default function NetworkMiniWidget() {
           {services.map(s => (
             <div key={s.service} className="flex items-center gap-2 text-[10px]">
               <span className="text-slate-300 flex-1">{s.service}</span>
-              <span className="font-mono text-emerald-400">{fmt(s.bytes)}</span>
+              <span className="font-mono text-emerald-400">{fmt(s.count)}</span>
               <span className="font-mono text-slate-500">{s.percentage.toFixed(0)}%</span>
             </div>
           ))}

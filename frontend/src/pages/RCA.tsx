@@ -54,22 +54,22 @@ const mockHistory: RCAResult[] = [
     ],
   },
   {
-    id: 'rca-2', source: '/var/log/postgresql/postgresql-15-main.log', total_errors: 15, unique_errors: 4,
+    id: 'rca-2', source: '/u01/app/oracle/diag/rdbms/orcl/ORCL/trace/alert_ORCL.log', total_errors: 15, unique_errors: 4,
     analyzed_at: new Date(Date.now() - 7200000).toISOString(),
     errors: [
       {
-        message: 'FATAL: remaining connection slots are reserved for non-replication superuser connections',
-        count: 8, severity: 'critical', pattern: 'Connection Exhaustion',
+        message: 'ORA-04031: unable to allocate shared memory',
+        count: 8, severity: 'critical', pattern: 'Shared Pool Exhaustion',
         solutions: [
-          { title: 'Increase max_connections', description: 'Increase max_connections in postgresql.conf and restart. Consider using pgbouncer for connection pooling.', source: 'PostgreSQL Docs', url: 'https://www.postgresql.org/docs/current/runtime-config-connection.html', confidence: 0.90 },
-          { title: 'Use PgBouncer', description: 'Deploy PgBouncer as a connection pooler to manage connection limits more efficiently', source: 'PgBouncer Docs', url: 'https://www.pgbouncer.org/config.html', confidence: 0.85 },
+          { title: 'Increase SHARED_POOL_SIZE', description: 'Increase SHARED_POOL_SIZE in init.ora or use ALTER SYSTEM SET SHARED_POOL_SIZE. Consider using ASMM or AMM for automatic memory management.', source: 'Oracle Docs', url: 'https://docs.oracle.com/en/database/oracle/oracle-database/19/refrn/SHARED_POOL_SIZE.html', confidence: 0.90 },
+          { title: 'Enable Automatic Memory Management', description: 'Set MEMORY_TARGET and MEMORY_MAX_TARGET to let Oracle automatically manage SGA and PGA allocations', source: 'Oracle Docs', url: 'https://docs.oracle.com/en/database/oracle/oracle-database/19/admin/managing-memory.html', confidence: 0.85 },
         ],
       },
       {
-        message: 'ERROR: deadlock detected',
+        message: 'ORA-00060: deadlock detected while waiting for resource',
         count: 3, severity: 'error', pattern: 'Deadlock',
         solutions: [
-          { title: 'Review transaction ordering', description: 'Ensure all transactions acquire locks in consistent order to prevent deadlocks', source: 'PostgreSQL Wiki', url: 'https://wiki.postgresql.org/wiki/Lock_Monitoring', confidence: 0.78 },
+          { title: 'Review transaction ordering', description: 'Ensure all transactions acquire locks in consistent order to prevent deadlocks. Check V$LOCK and V$SESSION for blocking sessions.', source: 'Oracle Support', url: 'https://docs.oracle.com/en/database/oracle/oracle-database/19/tgsql/monitoring-locks.html', confidence: 0.78 },
         ],
       },
     ],

@@ -3,7 +3,7 @@
 //! Handles all 4 signals: traces, metrics, logs, profiles.
 //! Supports both JSON and protobuf (content-type negotiation).
 
-use axum::{extract::{State, Query}, Json, body::Bytes, http::HeaderMap};
+use axum::{extract::{State, Query, Path}, Json, body::Bytes, http::HeaderMap};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -588,6 +588,39 @@ pub async fn otel_resources(
     Ok(Json(json!({ "resources": resources, "count": resources.len() })))
 }
 
+/// GET /api/otel/resources/:service_name/signals — signal breakdown for one service
+pub async fn otel_resource_signals(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    Path(service_name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let trace_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM spans WHERE service_name = $1 AND started_at > NOW() - INTERVAL '24 hours'"
+    ).bind(&service_name).fetch_optional(&state.tsdb_pool).await.map_err(|e| ApiError::Internal(e.to_string()))?.unwrap_or(0);
+
+    let metric_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM metrics WHERE org_id = $1 AND resource_id = $2 AND timestamp > NOW() - INTERVAL '24 hours'"
+    ).bind(org_id).bind(&service_name).fetch_optional(&state.tsdb_pool).await.map_err(|e| ApiError::Internal(e.to_string()))?.unwrap_or(0);
+
+    let log_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM logs WHERE org_id = $1 AND source = $2 AND timestamp > NOW() - INTERVAL '24 hours'"
+    ).bind(org_id).bind(&service_name).fetch_optional(&state.tsdb_pool).await.map_err(|e| ApiError::Internal(e.to_string()))?.unwrap_or(0);
+
+    let profile_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM otel_profiles WHERE org_id = $1 AND service_name = $2 AND started_at > NOW() - INTERVAL '24 hours'"
+    ).bind(org_id).bind(&service_name).fetch_optional(&state.pool).await.map_err(|e| ApiError::Internal(e.to_string()))?.unwrap_or(0);
+
+    Ok(Json(json!({
+        "service_name": service_name,
+        "signals": {
+            "traces": { "count": trace_count, "active": trace_count > 0 },
+            "metrics": { "count": metric_count, "active": metric_count > 0 },
+            "logs": { "count": log_count, "active": log_count > 0 },
+            "profiles": { "count": profile_count, "active": profile_count > 0 },
+        },
+    })))
+}
+
 // ============================================================================
 // OTel P07: Health Dashboard Stats
 // ============================================================================
@@ -602,7 +635,7 @@ pub async fn otel_stats(
     ).fetch_optional(&state.tsdb_pool).await.map_err(|e| ApiError::Internal(e.to_string()))?.unwrap_or(0);
 
     let metrics_1m: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM metrics WHERE org_id = $1 AND time > NOW() - INTERVAL '1 minute'"
+        "SELECT COUNT(*) FROM metrics WHERE org_id = $1 AND timestamp > NOW() - INTERVAL '1 minute'"
     ).bind(org_id).fetch_optional(&state.tsdb_pool).await.map_err(|e| ApiError::Internal(e.to_string()))?.unwrap_or(0);
 
     let logs_1m: i64 = sqlx::query_scalar(

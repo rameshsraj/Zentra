@@ -14,3 +14,4 @@ pub mod tenant;
 pub mod target_pool;
 pub mod openapi;
 pub mod observability;
+pub mod semconv;

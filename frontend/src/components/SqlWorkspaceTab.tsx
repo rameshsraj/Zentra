@@ -4,7 +4,7 @@ import { Play, Download, Clock, ChevronRight, ChevronDown, Table2, Columns3, Sea
 import { cn } from '@/lib/utils'
 
 interface SqlWorkspaceTabProps {
-  dbType: 'oracle' | 'postgres' | 'mysql' | 'mongodb' | 'sqlserver'
+  dbType: 'oracle'
   connectionId?: string
 }
 
@@ -98,8 +98,7 @@ export default function SqlWorkspaceTab({ dbType, connectionId }: SqlWorkspaceTa
   }
 
   const insertTableQuery = (table: string) => {
-    const limit = dbType === 'oracle' ? 'FETCH FIRST 10 ROWS ONLY' : dbType === 'sqlserver' ? 'TOP 10' : 'LIMIT 10'
-    const q = dbType === 'sqlserver' ? `SELECT ${limit} * FROM ${table}` : `SELECT * FROM ${table} ${limit}`
+    const q = `SELECT * FROM ${table} FETCH FIRST 10 ROWS ONLY`
     setSql(q)
     editorRef.current?.focus()
   }
@@ -202,7 +201,7 @@ export default function SqlWorkspaceTab({ dbType, connectionId }: SqlWorkspaceTa
             </button>
           </div>
           <textarea ref={editorRef} value={sql} onChange={e => setSql(e.target.value)} onKeyDown={handleKeyDown}
-            rows={6} placeholder={`SELECT * FROM ${dbType === 'oracle' ? 'dual' : dbType === 'postgres' ? 'pg_stat_activity' : 'information_schema.tables'} ...`}
+            rows={6} placeholder="SELECT * FROM dual ..."
             className="w-full bg-gray-900 text-green-400 font-mono text-sm p-3 resize-none focus:outline-none border-none" spellCheck={false} />
         </div>
 

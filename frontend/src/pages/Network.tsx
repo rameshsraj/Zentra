@@ -7,7 +7,7 @@ import DrilldownModal, { type DrilldownNode } from '@/components/DrilldownModal'
 import {
   Network as NetworkIcon, Wifi, ArrowUpRight, ArrowDownRight, Zap, Radio,
   Star, StarOff, Ban, Eye, Server, Monitor, ArrowRightLeft, Cpu, Filter, Play, Square,
-  ChevronDown, Download, Upload, FileDown, Plus, Trash2, Bell,
+  ChevronDown, Download, Upload, FileDown, Trash2, Bell,
 } from 'lucide-react'
 import {
   getNetworkAdapters, getNetworkPrograms,
@@ -109,7 +109,7 @@ export default function NetworkPage() {
     getProtocolBreakdown().then(setProtocolData).catch(() => {})
     getNetworkServiceBreakdown().then(setServiceData).catch(() => {})
     getCountryBreakdown().then(setCountryData).catch(() => {})
-    getPaginatedConnections({ page: connPage, limit: 30, proto: protoFilter, search }).then(setPaginatedConns).catch(() => {})
+    getPaginatedConnections({ page: String(connPage), limit: '30', proto: protoFilter, search }).then(setPaginatedConns).catch(() => {})
     listBlacklist().then(setBlacklistData).catch(() => {})
     getNotificationLog().then(setNotifLog).catch(() => {})
     getNetworkInterfaces().then(setInterfaces).catch(() => {})
@@ -153,7 +153,7 @@ export default function NetworkPage() {
   const handleStartCapture = async () => {
     try {
       setCaptureError('')
-      await startCapture(selectedAdapter || 'eth0', bpfFilter || undefined)
+      await startCapture(selectedAdapter || 'eth0')
       setIsCapturing(true)
     } catch (e: any) {
       setCaptureError(e.message || 'Failed to start capture')
@@ -176,11 +176,11 @@ export default function NetworkPage() {
   // Use real paginated connections from API; fall back to empty array
   const liveConnections = (paginatedConns?.connections ?? []).map(c => ({
     ...c,
-    id: c.id ?? `${c.src_ip}:${c.src_port}-${c.dst_ip}:${c.dst_port}`,
+    id: `${c.src_ip}:${c.src_port}-${c.dst_ip}:${c.dst_port}`,
     service: c.service ?? '',
-    domain: c.domain ?? '',
-    asn: c.asn ?? '',
-    country: c.country ?? '',
+    domain: c.country_code ?? '',
+    asn: '' as string,
+    country: c.country_code ?? '',
     is_favorite: c.is_favorite ?? false,
     is_blacklisted: c.is_blacklisted ?? false,
   }))
@@ -200,29 +200,27 @@ export default function NetworkPage() {
     setDrilldown({ open: true, title: label, nodes })
   }
 
-  const bl = stats?.blacklisted_count ?? blacklisted.length
+  const bl = blacklisted.length
 
   const inboundVal = stats
-    ? (stats.bytes_in_per_sec > 0 ? `${fmt(Math.round(stats.bytes_in_per_sec))}/s` : fmt(stats.total_bytes_in))
+    ? (stats.bps_in > 0 ? `${fmt(Math.round(stats.bps_in))}/s` : fmt(stats.total_bytes_in))
     : '—'
   const outboundVal = stats
-    ? (stats.bytes_out_per_sec > 0 ? `${fmt(Math.round(stats.bytes_out_per_sec))}/s` : fmt(stats.total_bytes_out))
+    ? (stats.bps_out > 0 ? `${fmt(Math.round(stats.bps_out))}/s` : fmt(stats.total_bytes_out))
     : '—'
   const ppsVal = stats
-    ? (stats.packets_per_sec > 0
-      ? Math.round(stats.packets_per_sec)
-      : (stats.capture_duration_secs > 0
+    ? (stats.capture_duration_secs > 0
         ? Math.round((stats.total_packets_in + stats.total_packets_out) / stats.capture_duration_secs)
-        : 0))
+        : 0)
     : 0
   const ppsDisplay = ppsVal > 1000 ? `${(ppsVal / 1000).toFixed(1)}K` : String(ppsVal)
 
   const kpis = [
-    { label: 'Inbound', value: inboundVal, icon: ArrowDownRight, color: 'text-blue-400', sparkData: spark(stats?.bytes_in_per_sec ?? 2400), drill: [] },
-    { label: 'Outbound', value: outboundVal, icon: ArrowUpRight, color: 'text-amber-400', sparkData: spark(stats?.bytes_out_per_sec ?? 1800), drill: [] },
+    { label: 'Inbound', value: inboundVal, icon: ArrowDownRight, color: 'text-blue-400', sparkData: spark(stats?.bps_in ?? 2400), drill: [] },
+    { label: 'Outbound', value: outboundVal, icon: ArrowUpRight, color: 'text-amber-400', sparkData: spark(stats?.bps_out ?? 1800), drill: [] },
     { label: 'Packets/s', value: ppsDisplay, icon: Zap, color: 'text-purple-400', sparkData: spark(ppsVal || 142), drill: [] },
     { label: 'Connections', value: String(stats?.active_connections ?? paginatedConns?.total ?? liveConnections.length), icon: Wifi, color: 'text-cyan-400', sparkData: spark(stats?.active_connections ?? 30), drill: [] },
-    { label: 'Hosts', value: String(stats?.unique_hosts ?? liveHosts.length), icon: Monitor, color: 'text-emerald-400', sparkData: spark(stats?.unique_hosts ?? 15), drill: [] },
+    { label: 'Hosts', value: String(stats?.unique_src_hosts ?? liveHosts.length), icon: Monitor, color: 'text-emerald-400', sparkData: spark(stats?.unique_src_hosts ?? 15), drill: [] },
     { label: 'Blacklisted', value: String(bl), icon: Ban, color: bl > 0 ? 'text-red-400' : 'text-emerald-400', sparkData: spark(bl || 2), drill: [] },
   ]
 
@@ -295,7 +293,7 @@ export default function NetworkPage() {
             )}
             {adapters.map(a => (
                   <option key={a.name} value={a.name} className="bg-slate-900">
-                {a.name} — {a.description || ''} ({(a.addresses || []).join(', ')})
+                {a.name} — {a.ip} ({a.mac})
                   </option>
             ))}
               </select>
@@ -413,20 +411,20 @@ export default function NetworkPage() {
                     <div className="flex justify-center">
                       <DonutChart size={140} thickness={16} centerValue="100%" centerLabel="Traffic" segments={
                     protocolData.length > 0
-                      ? protocolData.map((p, i) => ({ label: p.protocol, value: p.percentage, color: ['#3b82f6', '#f59e0b', '#8b5cf6', '#64748b'][i % 4] }))
+                      ? protocolData.map((p, i) => ({ label: p.name, value: p.percentage, color: ['#3b82f6', '#f59e0b', '#8b5cf6', '#64748b'][i % 4] }))
                       : [{ label: 'TCP', value: 72, color: '#3b82f6' }, { label: 'UDP', value: 18, color: '#f59e0b' }, { label: 'ICMP', value: 6, color: '#8b5cf6' }, { label: 'ARP', value: 4, color: '#64748b' }]
                   } />
                     </div>
                     <div className="space-y-2 mt-3">
                   {(protocolData.length > 0 ? protocolData : [
-                    { protocol: 'TCP', percentage: 72, packets: 1730000, bytes: 1764000000 },
-                    { protocol: 'UDP', percentage: 18, packets: 432000, bytes: 490000000 },
-                    { protocol: 'ICMP', percentage: 6, packets: 144000, bytes: 122000000 },
-                    { protocol: 'ARP', percentage: 4, packets: 96000, bytes: 74000000 },
+                    { name: 'TCP', percentage: 72, packets: 1730000, bytes: 1764000000 },
+                    { name: 'UDP', percentage: 18, packets: 432000, bytes: 490000000 },
+                    { name: 'ICMP', percentage: 6, packets: 144000, bytes: 122000000 },
+                    { name: 'ARP', percentage: 4, packets: 96000, bytes: 74000000 },
                   ]).map((p, i) => (
-                        <div key={p.protocol} className="flex items-center gap-2">
+                        <div key={p.name} className="flex items-center gap-2">
                           <div className={`w-2 h-2 rounded-full`} style={{ backgroundColor: ['#3b82f6', '#f59e0b', '#8b5cf6', '#64748b'][i % 4] }} />
-                          <span className="text-[10px] text-slate-400 flex-1">{p.protocol}</span>
+                          <span className="text-[10px] text-slate-400 flex-1">{p.name}</span>
                           <span className="text-[10px] font-mono text-slate-500 mr-1">{fmt(p.bytes)}</span>
                           <span className="text-[10px] font-mono text-slate-300">{p.percentage.toFixed(1)}%</span>
                         </div>
@@ -439,7 +437,7 @@ export default function NetworkPage() {
                     <div className="space-y-2">
                   {(serviceData.length > 0 ? serviceData.slice(0, 6) : [
                     { service: 'HTTPS', percentage: 45, bytes: 0, packets: 0 },
-                    { service: 'PostgreSQL', percentage: 20, bytes: 0, packets: 0 },
+                    { service: 'Oracle DB', percentage: 20, bytes: 0, packets: 0 },
                     { service: 'DNS', percentage: 12, bytes: 0, packets: 0 },
                     { service: 'Redis', percentage: 8, bytes: 0, packets: 0 },
                     { service: 'HTTP', percentage: 15, bytes: 0, packets: 0 },
@@ -463,7 +461,7 @@ export default function NetworkPage() {
                     </div>
                     <div className="space-y-1.5">
                   {(countryData.length > 0 ? countryData.slice(0, 6).map(c => ({
-                    code: c.country_code, name: c.country_name, pct: c.percentage
+                    code: c.code, name: c.name, pct: Math.round((c.bytes / (countryData.reduce((s, x) => s + x.bytes, 0) || 1)) * 100)
                       })) : [
                     { code: 'US', name: 'United States', pct: 38 },
                     { code: 'DE', name: 'Germany', pct: 18 },
@@ -512,7 +510,7 @@ export default function NetworkPage() {
                           <td className="px-4 py-2 text-xs text-slate-300">{c.service}</td>
                           <td className="px-4 py-2 text-xs text-slate-400">{c.domain}</td>
                           <td className="px-4 py-2 text-xs text-slate-400">{c.country}</td>
-                          <td className="px-4 py-2 font-mono text-xs text-slate-300">{fmt(c.bytes_sent + c.bytes_received)}</td>
+                          <td className="px-4 py-2 font-mono text-xs text-slate-300">{fmt(c.bytes_sent + c.bytes_recv)}</td>
                           <td className="px-4 py-2">
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/20 text-emerald-400">
                               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />active
@@ -577,8 +575,8 @@ export default function NetworkPage() {
                         <td className="px-3 py-2 text-xs text-slate-500">{c.asn}</td>
                         <td className="px-3 py-2 text-xs text-slate-400">{c.country}</td>
                         <td className="px-3 py-2 font-mono text-xs text-emerald-400">{fmt(c.bytes_sent)}</td>
-                        <td className="px-3 py-2 font-mono text-xs text-blue-400">{fmt(c.bytes_received)}</td>
-                        <td className="px-3 py-2 font-mono text-xs text-slate-300">{(c.packets_sent + c.packets_received).toLocaleString()}</td>
+                        <td className="px-3 py-2 font-mono text-xs text-blue-400">{fmt(c.bytes_recv)}</td>
+                        <td className="px-3 py-2 font-mono text-xs text-slate-300">{(c.packets_sent + c.packets_recv).toLocaleString()}</td>
                       </tr>
                   ))}
                   </tbody>
@@ -1008,10 +1006,10 @@ export default function NetworkPage() {
                               <span className="text-xs font-medium text-white">{p.name}</span>
                             </div>
                           </td>
-                          <td className="px-4 py-2.5 font-mono text-xs text-slate-500">{p.path}</td>
-                          <td className="px-4 py-2.5 font-mono text-xs text-emerald-400">{fmt(p.bytes_sent)}</td>
-                          <td className="px-4 py-2.5 font-mono text-xs text-blue-400">{fmt(p.bytes_received)}</td>
-                          <td className="px-4 py-2.5 font-mono text-xs text-slate-300">{(p.packets_sent + p.packets_received).toLocaleString()}</td>
+                          <td className="px-4 py-2.5 font-mono text-xs text-slate-500">—</td>
+                          <td className="px-4 py-2.5 font-mono text-xs text-emerald-400">—</td>
+                          <td className="px-4 py-2.5 font-mono text-xs text-blue-400">—</td>
+                          <td className="px-4 py-2.5 font-mono text-xs text-slate-300">{p.connections}</td>
                           <td className="px-4 py-2.5 font-mono text-xs text-slate-300">{p.connections}</td>
                         </tr>
                   ))}

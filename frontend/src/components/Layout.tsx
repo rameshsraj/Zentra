@@ -148,6 +148,20 @@ const navItems: NavItem[] = [
       { to: '/predictive-alerts', label: 'Predictive', icon: TrendingUp },
       { to: '/rca', label: 'Root Cause', icon: SearchCode },
       { to: '/runbooks', label: 'RunBooks', icon: RotateCcw },
+      { to: '/llm-observability', label: 'LLM Observability', icon: Brain },
+    ],
+  },
+  {
+    to: '/otel-dashboard',
+    label: 'OpenTelemetry',
+    icon: Activity,
+    children: [
+      { to: '/otel-dashboard', label: 'Telemetry Health', icon: Activity },
+      { to: '/otel-resources', label: 'Resources', icon: Server },
+      { to: '/otel-config', label: 'Collector Setup', icon: Settings },
+      { to: '/otel-sdk-guide', label: 'SDK Guide', icon: Layers },
+      { to: '/otel-connectors', label: 'Signal Connectors', icon: Layers },
+      { to: '/otel-pipeline', label: 'Pipeline Topology', icon: Globe },
     ],
   },
   {

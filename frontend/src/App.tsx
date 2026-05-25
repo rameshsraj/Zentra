@@ -68,6 +68,15 @@ const AIInsightsPage = lazy(() => import('./pages/AIInsights'))
 const PredictiveAlertsPage = lazy(() => import('./pages/PredictiveAlerts'))
 const RCAPage = lazy(() => import('./pages/RCA'))
 const RunbooksPage = lazy(() => import('./pages/Runbooks'))
+const LLMObservabilityPage = lazy(() => import('./pages/LLMObservability'))
+
+// OpenTelemetry
+const OTelCollectorConfigPage = lazy(() => import('./pages/OTelCollectorConfig'))
+const OTelSdkGuidePage = lazy(() => import('./pages/OTelSdkGuide'))
+const OTelResourcesPage = lazy(() => import('./pages/OTelResources'))
+const OTelDashboardPage = lazy(() => import('./pages/OTelDashboard'))
+const OTelConnectorsPage = lazy(() => import('./pages/OTelConnectors'))
+const OTelPipelinePage = lazy(() => import('./pages/OTelPipeline'))
 
 export default function App() {
   return (
@@ -143,6 +152,15 @@ export default function App() {
             <Route path="predictive-alerts" element={<PredictiveAlertsPage />} />
             <Route path="rca" element={<RCAPage />} />
             <Route path="runbooks" element={<RunbooksPage />} />
+            <Route path="llm-observability" element={<LLMObservabilityPage />} />
+
+            {/* OpenTelemetry */}
+            <Route path="otel-config" element={<OTelCollectorConfigPage />} />
+            <Route path="otel-sdk-guide" element={<OTelSdkGuidePage />} />
+            <Route path="otel-resources" element={<OTelResourcesPage />} />
+            <Route path="otel-dashboard" element={<OTelDashboardPage />} />
+            <Route path="otel-connectors" element={<OTelConnectorsPage />} />
+            <Route path="otel-pipeline" element={<OTelPipelinePage />} />
 
             {/* Fallback — redirect unknown paths to dashboard */}
             <Route path="*" element={<Navigate to="/dashboard" replace />} />

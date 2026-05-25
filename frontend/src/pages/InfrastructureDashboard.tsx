@@ -38,7 +38,7 @@ export default function InfrastructureDashboardPage() {
   }, [qc, serverTargets])
 
   const totalServers = serverTargets.length
-  const reachableServers = Object.values(serverStats).filter(s => s.reachable).length
+  const reachableServers = Object.values(serverStats).length
   const avgCpu = Object.values(serverStats).length > 0
     ? Math.round(Object.values(serverStats).reduce((a, s) => a + s.cpu_usage_percent, 0) / Object.values(serverStats).length)
     : 0
@@ -106,7 +106,7 @@ export default function InfrastructureDashboardPage() {
               const stats = serverStats[t.target_id]
               return (
                 <div key={t.target_id} className="flex items-center gap-2 text-xs">
-                  <div className={`w-2 h-2 rounded-full ${stats?.reachable ? 'bg-emerald-400' : 'bg-slate-500'}`} />
+                  <div className={`w-2 h-2 rounded-full ${stats ? 'bg-emerald-400' : 'bg-slate-500'}`} />
                   <span className="text-white truncate flex-1">{t.name}</span>
                   {stats ? (
                     <span className="text-slate-400 font-mono">CPU {Math.round(stats.cpu_usage_percent)}%</span>
@@ -172,7 +172,7 @@ export default function InfrastructureDashboardPage() {
               return (
                 <div key={t.target_id} className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4">
                   <div className="flex items-center gap-2 mb-2">
-                    <div className={`w-2 h-2 rounded-full ${s.reachable ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                    <div className={`w-2 h-2 rounded-full ${s ? 'bg-emerald-400' : 'bg-red-400'}`} />
                     <span className="text-sm font-bold text-white">{s.hostname || t.name}</span>
                     <span className="ml-auto text-[10px] text-slate-500">{t.host}</span>
                   </div>

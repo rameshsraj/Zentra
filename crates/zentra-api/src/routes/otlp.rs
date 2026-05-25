@@ -23,14 +23,14 @@ pub fn router() -> Router<AppState> {
 
         // OTel P06: Resource Detection
         .route("/api/otel/resources", get(handlers::otlp::otel_resources))
+        .route("/api/otel/resources/:service_name/signals", get(handlers::otlp::otel_resource_signals))
 
         // OTel P07: Health Dashboard Stats
         .route("/api/otel/stats", get(handlers::otlp::otel_stats))
         .route("/api/otel/stats/timeseries", get(handlers::otlp::otel_stats_timeseries))
 
         // OTel P09: Span-to-Metrics Connector
-        .route("/api/otel/connectors", get(handlers::otel_connectors::list_connectors))
-        .route("/api/otel/connectors", post(handlers::otel_connectors::configure_connector))
+        .route("/api/otel/connectors", get(handlers::otel_connectors::list_connectors).post(handlers::otel_connectors::configure_connector))
         .route("/api/otel/derived-metrics", get(handlers::otel_connectors::query_derived_metrics))
 
         // OTel P13: Collector Pipeline Topology

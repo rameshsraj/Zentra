@@ -6,6 +6,7 @@ export interface SystemStatus {
   status: string
   version: string
   uptime: string
+  uptime_seconds: number
   targets: number
   alerts: number
   events: number
@@ -87,13 +88,17 @@ export interface MetricPoint {
 
 export interface Alert {
   id: string
+  alert_id: string
   target_id: string
   target_name: string
   rule_id: string
   severity: string
   message: string
   status: string
+  metric_value: number | null
+  threshold: number | null
   created_at: string
+  triggered_at: string | null
   acknowledged_at: string | null
   resolved_at: string | null
 }
@@ -128,6 +133,7 @@ export interface AppEvent {
   target_id: string | null
   severity: string
   message: string
+  payload: string | null
   data: Record<string, unknown>
   timestamp: string
 }
@@ -136,6 +142,9 @@ export interface EventStats {
   total_published: number
   subscribers: number
   events_per_second: number
+  metrics_collected: number
+  threats_detected: number
+  logs_ingested: number
   by_type: Record<string, number>
   by_severity: Record<string, number>
 }
@@ -163,9 +172,16 @@ export interface NetworkCapture {
   interface_name: string
   started_at: string | null
   total_packets: number
+  packets_total: number
   total_bytes: number
   unique_hosts: number
-  protocols: { name: string; count: number }[]
+  packets_per_second: number
+  bytes_per_second: number
+  tcp_count: number
+  udp_count: number
+  icmp_count: number
+  arp_count: number
+  protocols: { name: string; count: number; protocol?: string; packets?: number; percentage?: number }[]
   top_connections: NetworkConnection[]
 }
 

@@ -10,10 +10,6 @@ import { Link } from 'react-router-dom'
 
 const DB_TYPES = [
   { key: 'oracle', label: 'Oracle', path: '/oracle', color: 'text-red-400', bgColor: 'bg-red-500/10', borderColor: 'border-red-500/20' },
-  { key: 'postgresql', label: 'PostgreSQL', path: '/postgres', color: 'text-blue-400', bgColor: 'bg-blue-500/10', borderColor: 'border-blue-500/20' },
-  { key: 'mysql', label: 'MySQL', path: '/mysql', color: 'text-cyan-400', bgColor: 'bg-cyan-500/10', borderColor: 'border-cyan-500/20' },
-  { key: 'mongodb', label: 'MongoDB', path: '/mongodb', color: 'text-emerald-400', bgColor: 'bg-emerald-500/10', borderColor: 'border-emerald-500/20' },
-  { key: 'sqlserver', label: 'SQL Server', path: '/sqlserver', color: 'text-amber-400', bgColor: 'bg-amber-500/10', borderColor: 'border-amber-500/20' },
 ]
 
 function statusIcon(status: string) {
@@ -40,12 +36,7 @@ export default function DatabaseDashboardPage() {
     const map: Record<string, Target[]> = {}
     for (const t of dbTargets) {
       const sub = (t.target_subtype || '').toLowerCase()
-      const key = sub.includes('oracle') ? 'oracle'
-        : sub.includes('postgres') ? 'postgresql'
-        : sub.includes('mysql') ? 'mysql'
-        : sub.includes('mongo') ? 'mongodb'
-        : sub.includes('sqlserver') || sub.includes('mssql') ? 'sqlserver'
-        : sub || 'other'
+      const key = sub.includes('oracle') ? 'oracle' : sub || 'other'
       if (!map[key]) map[key] = []
       map[key].push(t)
     }
@@ -153,7 +144,7 @@ export default function DatabaseDashboardPage() {
         <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-12 text-center">
           <Database className="w-12 h-12 text-slate-600 mx-auto mb-3" />
           <h3 className="text-lg font-bold text-white mb-1">No databases configured</h3>
-          <p className="text-sm text-slate-400">Add database targets to start monitoring Oracle, PostgreSQL, MySQL, MongoDB, or SQL Server.</p>
+          <p className="text-sm text-slate-400">Add Oracle database targets to start monitoring.</p>
         </div>
       )}
     </div>

@@ -21,7 +21,7 @@ interface LogSourceItem {
 
 const mockSources: LogSourceItem[] = [
   { id: '1', name: 'Nginx Error Logs', source_type: 'file', host: '10.88.11.162', port: 22, path: '/var/log/nginx/error.log', status: 'active', last_ingested: new Date(Date.now() - 60000).toISOString(), log_count: 42850, created_at: '2024-01-10T00:00:00Z' },
-  { id: '2', name: 'PostgreSQL Logs', source_type: 'file', host: '10.88.11.162', port: 22, path: '/var/log/postgresql/postgresql-15-main.log', status: 'active', last_ingested: new Date(Date.now() - 120000).toISOString(), log_count: 128400, created_at: '2024-01-10T00:00:00Z' },
+  { id: '2', name: 'Oracle Alert Log', source_type: 'file', host: '10.88.11.162', port: 22, path: '/u01/app/oracle/diag/rdbms/orcl/ORCL/trace/alert_ORCL.log', status: 'active', last_ingested: new Date(Date.now() - 120000).toISOString(), log_count: 128400, created_at: '2024-01-10T00:00:00Z' },
   { id: '3', name: 'Application Syslog', source_type: 'syslog', host: '10.88.11.162', port: 514, path: '/var/log/syslog', status: 'active', last_ingested: new Date(Date.now() - 30000).toISOString(), log_count: 256000, created_at: '2024-01-10T00:00:00Z' },
   { id: '4', name: 'Docker Container Logs', source_type: 'docker', host: '10.88.11.162', port: 2375, path: '/var/lib/docker/containers', status: 'paused', last_ingested: new Date(Date.now() - 3600000).toISOString(), log_count: 89200, created_at: '2024-01-15T00:00:00Z' },
   { id: '5', name: 'Redis Logs', source_type: 'file', host: '10.88.11.163', port: 22, path: '/var/log/redis/redis-server.log', status: 'error', last_ingested: new Date(Date.now() - 7200000).toISOString(), log_count: 15600, created_at: '2024-01-20T00:00:00Z' },

@@ -163,21 +163,24 @@ export default function DashboardPage() {
             <DonutChart
               size={130}
               thickness={14}
-              centerValue={protocols ? `${(protocols.reduce((s, p) => s + p.packets, 0) / 1_000_000).toFixed(1)}M` : '—'}
+              centerValue={protocols ? `${(protocols.reduce((s, p) => s + p.count, 0) / 1_000_000).toFixed(1)}M` : '—'}
               centerLabel="Packets"
               segments={protocols?.map(p => ({
-                label: p.protocol,
-                value: p.packets,
-                color: p.protocol === 'TCP' ? '#3b82f6' : p.protocol === 'UDP' ? '#f59e0b' : p.protocol === 'ICMP' ? '#8b5cf6' : '#64748b',
+                label: p.name,
+                value: p.count,
+                color: p.name === 'TCP' ? '#3b82f6' : p.name === 'UDP' ? '#f59e0b' : p.name === 'ICMP' ? '#8b5cf6' : '#64748b',
               })) ?? []}
             />
             <div className="flex flex-wrap gap-3 mt-2 text-[10px]">
-              {(protocols ?? []).map(p => (
-                <div key={p.protocol} className="flex items-center gap-1">
-                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: p.protocol === 'TCP' ? '#3b82f6' : p.protocol === 'UDP' ? '#f59e0b' : p.protocol === 'ICMP' ? '#8b5cf6' : '#64748b' }} />
-                  <span className="text-slate-400">{p.protocol} {p.percentage.toFixed(0)}%</span>
+              {(protocols ?? []).map(p => {
+                const total = protocols!.reduce((s, x) => s + x.count, 0)
+                const pct = total > 0 ? ((p.count / total) * 100).toFixed(0) : '0'
+                return (
+                <div key={p.name} className="flex items-center gap-1">
+                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: p.name === 'TCP' ? '#3b82f6' : p.name === 'UDP' ? '#f59e0b' : p.name === 'ICMP' ? '#8b5cf6' : '#64748b' }} />
+                  <span className="text-slate-400">{p.name} {pct}%</span>
                 </div>
-              ))}
+              )})}
             </div>
           </div>
         </div>
@@ -257,7 +260,7 @@ export default function DashboardPage() {
                 ...(activeAlerts.slice(0, 3).map(a => ({
                   id: a.alert_id,
                   title: a.message,
-                  timestamp: a.triggered_at,
+                  timestamp: a.triggered_at ?? a.created_at,
                   severity: (a.severity === 'critical' ? 'critical' : a.severity === 'warning' ? 'warning' : 'info') as 'critical' | 'warning' | 'info',
                 }))),
                 ...(events?.events?.slice(0, 5).map((e, i) => ({
@@ -410,7 +413,7 @@ export default function DashboardPage() {
                 </div>
                 <div className="bg-slate-900/50 rounded-lg p-2 border border-white/5">
                   <div className="text-[10px] text-slate-500">Total Bytes</div>
-                  <div className="text-sm font-mono font-bold text-white">{(capture.bytes_total / 1_000_000_000).toFixed(1)}GB</div>
+                  <div className="text-sm font-mono font-bold text-white">{(capture.total_bytes / 1_000_000_000).toFixed(1)}GB</div>
                 </div>
                 <div className="bg-slate-900/50 rounded-lg p-2 border border-white/5">
                   <div className="text-[10px] text-slate-500">ICMP</div>

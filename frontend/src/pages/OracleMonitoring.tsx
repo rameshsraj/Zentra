@@ -4,10 +4,10 @@ import PageHeader from '@/components/PageHeader'
 import {
   Database, Activity, HardDrive, Clock, AlertTriangle, Server,
   BarChart3, Cpu, Zap, Shield, RefreshCw,
-  Search, Timer, Layers, Radio, TrendingUp, Plug, Plus, Trash2, CheckCircle, XCircle, FileText, Inbox, Terminal,
+  Search, Timer, Layers, Radio, TrendingUp, Plus, Trash2, CheckCircle, XCircle, FileText, Inbox, Terminal,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import LiveModeButton from '@/components/LiveModeButton'
+// LiveModeButton removed — not currently used
 import LoadingSkeleton from '@/components/LoadingSkeleton'
 import SqlWorkspaceTab from '@/components/SqlWorkspaceTab'
 import {

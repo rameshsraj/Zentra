@@ -15,7 +15,7 @@ interface AddTargetModalProps {
 
 const targetTypes = [
   { value: 'server', label: 'Server', subtypes: ['linux', 'windows', 'container', 'kubernetes', 'esxi', 'vsphere', 'vcenter'] },
-  { value: 'database', label: 'Database', subtypes: ['oracle', 'postgresql', 'mysql', 'mariadb', 'mongodb', 'redis'] },
+  { value: 'database', label: 'Database', subtypes: ['oracle'] },
   { value: 'storage', label: 'Storage', subtypes: ['localdisk', 'nfs', 'san', 's3', 'ceph', 'netapp', 'purestorage', 'minio'] },
   { value: 'network', label: 'Network', subtypes: ['switch', 'router', 'firewall', 'interface', 'bgp', 'ospf', 'vpn', 'dns', 'dhcp'] },
 ]
