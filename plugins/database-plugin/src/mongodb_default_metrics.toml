@@ -1,0 +1,60 @@
+## MongoDB Default Metrics — 8 Contexts
+## Note: MongoDB uses JavaScript shell commands, not SQL.
+## The 'request' field contains the command JSON for db.runCommand().
+
+[[metric]]
+context = "mongo_connections"
+labels = []
+metrics_desc = { current = "Current connections", available = "Available connections", total_created = "Total created connections" }
+metrics_type = { current = "gauge", available = "gauge", total_created = "counter" }
+request = "SELECT current, available, totalCreated AS total_created FROM serverStatus.connections"
+
+[[metric]]
+context = "mongo_opcounters"
+labels = []
+metrics_desc = { insert = "Insert ops", query = "Query ops", update = "Update ops", delete = "Delete ops", getmore = "Getmore ops", command = "Command ops" }
+metrics_type = { insert = "counter", query = "counter", update = "counter", delete = "counter", getmore = "counter", command = "counter" }
+request = "SELECT insert, query, update, delete, getmore, command FROM serverStatus.opcounters"
+
+[[metric]]
+context = "mongo_memory"
+labels = []
+metrics_desc = { resident_mb = "Resident memory (MB)", virtual_mb = "Virtual memory (MB)", mapped_mb = "Mapped memory (MB)" }
+metrics_type = { resident_mb = "gauge", virtual_mb = "gauge", mapped_mb = "gauge" }
+request = "SELECT resident AS resident_mb, virtual AS virtual_mb, mapped AS mapped_mb FROM serverStatus.mem"
+
+[[metric]]
+context = "mongo_replication"
+labels = ["member"]
+metrics_desc = { replication_lag_secs = "Replication lag in seconds", state = "Member state (1=PRIMARY, 2=SECONDARY)", health = "Health (1=up, 0=down)" }
+metrics_type = { replication_lag_secs = "gauge", state = "gauge", health = "gauge" }
+request = "SELECT name AS member, optimeDate_lag AS replication_lag_secs, state, health FROM rs.status().members"
+ignore_zero_result = true
+
+[[metric]]
+context = "mongo_wiredtiger"
+labels = []
+metrics_desc = { cache_bytes_used = "Cache bytes currently in use", cache_bytes_max = "Maximum cache size", cache_dirty_bytes = "Dirty bytes in cache", pages_evicted = "Pages evicted" }
+metrics_type = { cache_bytes_used = "gauge", cache_bytes_max = "gauge", cache_dirty_bytes = "gauge", pages_evicted = "counter" }
+request = "SELECT bytes_currently_in_the_cache AS cache_bytes_used, maximum_bytes_configured AS cache_bytes_max, tracked_dirty_bytes_in_the_cache AS cache_dirty_bytes, pages_evicted_by_application_threads AS pages_evicted FROM serverStatus.wiredTiger.cache"
+
+[[metric]]
+context = "mongo_database_size"
+labels = ["db"]
+metrics_desc = { data_size = "Data size (bytes)", storage_size = "Storage size (bytes)", index_size = "Index size (bytes)", collections = "Number of collections" }
+metrics_type = { data_size = "gauge", storage_size = "gauge", index_size = "gauge", collections = "gauge" }
+request = "SELECT db, dataSize AS data_size, storageSize AS storage_size, indexSize AS index_size, collections FROM dbStats"
+
+[[metric]]
+context = "mongo_global_lock"
+labels = []
+metrics_desc = { active_readers = "Active readers", active_writers = "Active writers", current_queue_readers = "Queued readers", current_queue_writers = "Queued writers" }
+metrics_type = { active_readers = "gauge", active_writers = "gauge", current_queue_readers = "gauge", current_queue_writers = "gauge" }
+request = "SELECT activeClients.readers AS active_readers, activeClients.writers AS active_writers, currentQueue.readers AS current_queue_readers, currentQueue.writers AS current_queue_writers FROM serverStatus.globalLock"
+
+[[metric]]
+context = "mongo_network"
+labels = []
+metrics_desc = { bytes_in = "Network bytes in", bytes_out = "Network bytes out", num_requests = "Total requests" }
+metrics_type = { bytes_in = "counter", bytes_out = "counter", num_requests = "counter" }
+request = "SELECT bytesIn AS bytes_in, bytesOut AS bytes_out, numRequests AS num_requests FROM serverStatus.network"

@@ -1,0 +1,141 @@
+## Oracle Default Metrics — 14 Contexts
+## Ported from oracledb_exporter reference
+
+[[metric]]
+context = "sessions"
+labels = ["status", "type"]
+metrics_desc = { value = "Total sessions" }
+metrics_type = { value = "gauge" }
+request = "SELECT status, type, COUNT(*) AS value FROM v$session GROUP BY status, type"
+
+[[metric]]
+context = "resource"
+labels = ["resource_name"]
+metrics_desc = { current_utilization = "Current utilization", max_utilization = "Max utilization", initial_allocation = "Initial allocation", limit_value = "Limit" }
+metrics_type = { current_utilization = "gauge", max_utilization = "gauge", initial_allocation = "gauge", limit_value = "gauge" }
+request = "SELECT resource_name, current_utilization, max_utilization, initial_allocation, CASE WHEN TRIM(limit_value) LIKE 'UNLIMITED' THEN '-1' ELSE TRIM(limit_value) END AS limit_value FROM v$resource_limit"
+
+[[metric]]
+context = "asm_diskgroup"
+labels = ["name"]
+metrics_desc = { total_mb = "Total MB", usable_mb = "Usable MB", offline_disks = "Offline disks" }
+metrics_type = { total_mb = "gauge", usable_mb = "gauge", offline_disks = "gauge" }
+request = "SELECT name, total_mb, usable_file_mb AS usable_mb, offline_disks FROM v$asm_diskgroup"
+ignore_zero_result = true
+
+[[metric]]
+context = "activity"
+labels = ["name"]
+metrics_desc = { value = "Activity metric value" }
+metrics_type = { value = "counter" }
+request = "SELECT name, value FROM v$sysstat WHERE name IN ('db block gets from cache','consistent gets from cache','physical reads','physical writes','redo writes','parse count (total)','parse count (hard)','user commits','user rollbacks')"
+
+[[metric]]
+context = "process"
+labels = []
+metrics_desc = { count = "Current process count", limit = "Process limit" }
+metrics_type = { count = "gauge", limit = "gauge" }
+request = "SELECT (SELECT COUNT(*) FROM v$process) AS count, (SELECT value FROM v$parameter WHERE name='processes') AS limit FROM DUAL"
+
+[[metric]]
+context = "wait_class"
+labels = ["wait_class"]
+metrics_desc = { total_waits = "Total waits", time_waited = "Time waited (hundredths of a second)" }
+metrics_type = { total_waits = "counter", time_waited = "counter" }
+request = "SELECT wait_class, SUM(total_waits) AS total_waits, SUM(time_waited) AS time_waited FROM v$system_wait_class WHERE wait_class != 'Idle' GROUP BY wait_class"
+
+[[metric]]
+context = "tablespace"
+labels = ["tablespace_name"]
+metrics_desc = { bytes = "Size in bytes", max_bytes = "Max size in bytes", free_bytes = "Free bytes", used_percent = "Percent used" }
+metrics_type = { bytes = "gauge", max_bytes = "gauge", free_bytes = "gauge", used_percent = "gauge" }
+request = """
+SELECT dt.tablespace_name, dt.bytes, dt.max_bytes, NVL(df.free_bytes,0) AS free_bytes,
+  ROUND((1-NVL(df.free_bytes,0)/NULLIF(dt.bytes,0))*100,2) AS used_percent
+FROM (SELECT tablespace_name, SUM(bytes) bytes, SUM(GREATEST(bytes,maxbytes)) max_bytes
+      FROM dba_data_files GROUP BY tablespace_name) dt
+LEFT JOIN (SELECT tablespace_name, SUM(bytes) free_bytes FROM dba_free_space GROUP BY tablespace_name) df
+  ON dt.tablespace_name=df.tablespace_name
+"""
+
+[[metric]]
+context = "db_system"
+labels = ["name"]
+metrics_desc = { value = "System statistic value" }
+metrics_type = { value = "gauge" }
+request = "SELECT name, value FROM v$sysmetric WHERE group_id=2"
+
+[[metric]]
+context = "db_platform"
+labels = []
+metrics_desc = { db_cpu = "DB CPU time per sec", host_cpu = "Host CPU utilization percent", db_time = "DB Time per sec" }
+metrics_type = { db_cpu = "gauge", host_cpu = "gauge", db_time = "gauge" }
+request = """
+SELECT
+  (SELECT value FROM v$sysmetric WHERE metric_name='CPU Usage Per Sec' AND group_id=2) AS db_cpu,
+  (SELECT value FROM v$sysmetric WHERE metric_name='Host CPU Utilization (%)' AND group_id=2) AS host_cpu,
+  (SELECT value FROM v$sysmetric WHERE metric_name='Database Time Per Sec' AND group_id=2) AS db_time
+FROM DUAL
+"""
+
+[[metric]]
+context = "top_sql"
+labels = ["sql_id"]
+metrics_desc = { elapsed_time = "Elapsed time (seconds)", executions = "Execution count", buffer_gets = "Buffer gets" }
+metrics_type = { elapsed_time = "gauge", executions = "counter", buffer_gets = "counter" }
+request = "SELECT sql_id, ROUND(elapsed_time/1000000,2) AS elapsed_time, executions, buffer_gets FROM v$sql ORDER BY elapsed_time DESC FETCH FIRST 20 ROWS ONLY"
+
+[[metric]]
+context = "cache_hit_ratio"
+labels = []
+metrics_desc = { buffer_cache_hit = "Buffer cache hit ratio", library_cache_hit = "Library cache hit ratio", dict_cache_hit = "Dictionary cache hit ratio" }
+metrics_type = { buffer_cache_hit = "gauge", library_cache_hit = "gauge", dict_cache_hit = "gauge" }
+request = """
+SELECT
+  ROUND((1 - (SELECT value FROM v$sysstat WHERE name='physical reads') /
+        NULLIF((SELECT value FROM v$sysstat WHERE name='db block gets') +
+               (SELECT value FROM v$sysstat WHERE name='consistent gets'),0))*100,2) AS buffer_cache_hit,
+  ROUND((1 - (SELECT SUM(reloads) FROM v$librarycache) /
+        NULLIF((SELECT SUM(pins) FROM v$librarycache),0))*100,2) AS library_cache_hit,
+  ROUND((1 - (SELECT SUM(getmisses) FROM v$rowcache) /
+        NULLIF((SELECT SUM(gets) FROM v$rowcache),0))*100,2) AS dict_cache_hit
+FROM DUAL
+"""
+
+[[metric]]
+context = "slow_queries"
+labels = ["sql_id"]
+metrics_desc = { elapsed_per_exec = "Elapsed time per execution (ms)", executions = "Total executions" }
+metrics_type = { elapsed_per_exec = "gauge", executions = "counter" }
+request = "SELECT sql_id, ROUND(elapsed_time/NULLIF(executions,0)/1000,2) AS elapsed_per_exec, executions FROM v$sql WHERE executions > 0 ORDER BY elapsed_time/NULLIF(executions,0) DESC FETCH FIRST 20 ROWS ONLY"
+
+[[metric]]
+context = "big_queries"
+labels = ["sql_id"]
+metrics_desc = { disk_reads = "Disk reads", buffer_gets = "Buffer gets", rows_processed = "Rows processed" }
+metrics_type = { disk_reads = "counter", buffer_gets = "counter", rows_processed = "counter" }
+request = "SELECT sql_id, disk_reads, buffer_gets, rows_processed FROM v$sql ORDER BY disk_reads DESC FETCH FIRST 20 ROWS ONLY"
+
+[[metric]]
+context = "size_user_segments"
+labels = ["segment_name", "tablespace_name"]
+metrics_desc = { bytes = "Segment size in bytes" }
+metrics_type = { bytes = "gauge" }
+request = "SELECT segment_name, tablespace_name, bytes FROM dba_segments WHERE owner NOT IN ('SYS','SYSTEM','DBSNMP','XDB') ORDER BY bytes DESC FETCH FIRST 50 ROWS ONLY"
+
+[[metric]]
+context = "txeventq_stats"
+labels = ["queue_name"]
+metrics_desc = { num_msgs = "Messages ready", enqueue_msgs = "Enqueued total", dequeue_msgs = "Dequeued total", spill_msgs = "Spilled messages", avg_msg_age = "Avg message age (secs)", max_msg_age = "Max message age (secs)" }
+metrics_type = { num_msgs = "gauge", enqueue_msgs = "counter", dequeue_msgs = "counter", spill_msgs = "counter", avg_msg_age = "gauge", max_msg_age = "gauge" }
+request = "SELECT queue_name, num_msgs, enqueue_msgs, dequeue_msgs, spill_msgs, avg_msg_age, max_msg_age FROM gv$persistent_queues"
+scrape_interval = 60
+
+[[metric]]
+context = "txeventq_subscriber"
+labels = ["queue_name", "subscriber_name"]
+metrics_desc = { enqueued_msgs = "Subscriber enqueued", dequeued_msgs = "Subscriber dequeued", subscriber_lag_secs = "Consumer lag (secs)" }
+metrics_type = { enqueued_msgs = "counter", dequeued_msgs = "counter", subscriber_lag_secs = "gauge" }
+request = "SELECT queue_name, subscriber_name, enqueued_msgs, dequeued_msgs, (SYSDATE - last_dequeue_time) * 86400 AS subscriber_lag_secs FROM gv$aq_sharded_subscriber_stat"
+ignore_zero_result = true
+scrape_interval = 60

@@ -1,0 +1,54 @@
+[package]
+name = "zentra-api"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "zentra-server"
+path = "src/main.rs"
+
+[dependencies]
+zentra-core = { workspace = true }
+zentra-db = { workspace = true }
+zentra-stream = { workspace = true }
+zentra-query = { workspace = true }
+zentra-drilldown = { workspace = true }
+zentra-ingestion = { workspace = true }
+zentra-log-engine = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+axum = { workspace = true }
+axum-extra = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tower_governor = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+sqlx = { workspace = true }
+tokio-util = { workspace = true }
+dotenvy = { workspace = true }
+futures = { workspace = true }
+parking_lot = "0.12"
+dashmap = { workspace = true }
+num_cpus = "1.16"
+bcrypt = { workspace = true }
+jsonwebtoken = { workspace = true }
+sha2 = { workspace = true }
+sha1 = { workspace = true }
+hmac = { workspace = true }
+base64 = { workspace = true }
+rand = "0.8"
+regex = "1"
+database-plugin = { workspace = true }
+toml = "0.8"
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+reqwest = { workspace = true }
+validator = { version = "0.18", features = ["derive"] }

@@ -1,0 +1,233 @@
+---
+# Zentra Full Stack Deployment (P8)
+# API Server + Frontend + Oracle Collector
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: Zentra
+  labels:
+    app.kubernetes.io/name: Zentra
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: Zentra-secrets
+  namespace: Zentra
+type: Opaque
+stringData:
+  database-url: "<SET_VIA_SEALED_SECRETS_OR_VAULT>"
+  jwt-secret: "<SET_VIA_SEALED_SECRETS_OR_VAULT>"
+  # Oracle credentials (if using native connection)
+  oracle-dsn: ""
+  oracle-user: ""
+  oracle-password: ""
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: Zentra-config
+  namespace: Zentra
+data:
+  RUST_LOG: "info"
+  API_PORT: "7001"
+  FRONTEND_PORT: "6010"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: Zentra-metrics
+  namespace: Zentra
+data:
+  oracle_default_metrics.toml: |
+    # Mount your custom Oracle metrics here
+    # See plugins/database-plugin/src/oracle_default_metrics.toml for defaults
+  postgres_default_metrics.toml: |
+    # Mount your custom PostgreSQL metrics here
+  mysql_default_metrics.toml: |
+    # Mount your custom MySQL metrics here
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zentra-api
+  namespace: Zentra
+  labels:
+    app: Zentra
+    component: api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: Zentra
+      component: api
+  template:
+    metadata:
+      labels:
+        app: Zentra
+        component: api
+    spec:
+      containers:
+        - name: zentra-api
+          image: zentra/api:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: api
+              containerPort: 7001
+              protocol: TCP
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: Zentra-secrets
+                  key: database-url
+            - name: Zentra_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: Zentra-secrets
+                  key: jwt-secret
+            - name: ORACLE_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: Zentra-secrets
+                  key: oracle-dsn
+                  optional: true
+            - name: RUST_LOG
+              valueFrom:
+                configMapKeyRef:
+                  name: Zentra-config
+                  key: RUST_LOG
+          volumeMounts:
+            - name: metrics-config
+              mountPath: /etc/Zentra/metrics
+              readOnly: true
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "2000m"
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 7001
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 7001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: metrics-config
+          configMap:
+            name: Zentra-metrics
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: Zentra-frontend
+  namespace: Zentra
+  labels:
+    app: Zentra
+    component: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: Zentra
+      component: frontend
+  template:
+    metadata:
+      labels:
+        app: Zentra
+        component: frontend
+    spec:
+      containers:
+        - name: nginx
+          image: zentra/frontend:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zentra-api
+  namespace: Zentra
+  labels:
+    app: Zentra
+    component: api
+spec:
+  selector:
+    app: Zentra
+    component: api
+  ports:
+    - name: api
+      port: 7001
+      targetPort: 7001
+      protocol: TCP
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: Zentra-frontend
+  namespace: Zentra
+  labels:
+    app: Zentra
+    component: frontend
+spec:
+  selector:
+    app: Zentra
+    component: frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
+  type: ClusterIP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: Zentra
+  namespace: Zentra
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+spec:
+  rules:
+    - host: Zentra.example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: zentra-api
+                port:
+                  number: 7001
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: Zentra-frontend
+                port:
+                  number: 80

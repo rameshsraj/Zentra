@@ -1,0 +1,140 @@
+[workspace]
+members = [
+    "crates/zentra-core",
+    "crates/zentra-db",
+    "crates/zentra-ingestion",
+    "crates/zentra-stream",
+    "crates/zentra-query",
+    "crates/zentra-drilldown",
+    "crates/zentra-log-engine",
+    "crates/zentra-api",
+    "crates/zentra-agent",
+    "crates/zentra-predict",
+    "crates/zentra-scrape",
+    "plugins/network-plugin",
+    "plugins/database-plugin",
+    "plugins/storage-plugin",
+    "plugins/server-plugin",
+    "plugins/license-plugin",
+    "plugins/security-plugin",
+    "plugins/ai-plugin",
+    "plugins/cloud-plugin",
+    "crates/zentra-netflow",
+    "crates/zentra-ml",
+]
+
+resolver = "2"
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+authors = ["Zentra Team"]
+license = "proprietary"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.40", features = ["full"] }
+tokio-util = "0.7"
+tokio-stream = { version = "0.1", features = ["net", "time"] }
+futures = "0.3"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Database
+sqlx = { version = "0.8", features = ["postgres", "uuid", "chrono", "json", "runtime-tokio"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# IDs
+uuid = { version = "1.0", features = ["v4", "v5", "v7", "serde"] }
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Web framework
+axum = { version = "0.7", features = ["ws"] }
+axum-extra = { version = "0.9", features = ["typed-header"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors", "compression-gzip", "limit", "timeout", "request-id", "util", "set-header"] }
+tower_governor = "0.4"
+hyper = "1.0"
+
+# Network capture
+pcap = "2.4"
+etherparse = "0.19"
+dns-lookup = "3.0"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+
+# Crypto
+sha2 = "0.10"
+sha1 = "0.10"
+base64 = "0.22"
+bcrypt = "0.15"
+jsonwebtoken = "9.3"
+hmac = "0.12"
+hex = "0.4"
+aes-gcm = "0.10"
+
+# Data structures
+dashmap = "6.0"
+crossbeam = "0.8"
+parking_lot = "0.12"
+
+# Config
+dotenvy = "0.15"
+config = "0.14"
+
+# Async trait
+async-trait = "0.1"
+
+# Regex
+regex = "1.10"
+
+# Process info
+sysinfo = "0.33"
+hostname = "0.4"
+
+# OpenAPI generation
+utoipa = { version = "4", features = ["axum_extras", "chrono", "uuid"] }
+utoipa-swagger-ui = { version = "7", features = ["axum"] }
+
+# Metrics / observability
+metrics = "0.23"
+metrics-exporter-prometheus = "0.15"
+
+# Internal crate references
+zentra-core = { path = "crates/zentra-core" }
+zentra-db = { path = "crates/zentra-db" }
+zentra-ingestion = { path = "crates/zentra-ingestion" }
+zentra-stream = { path = "crates/zentra-stream" }
+zentra-query = { path = "crates/zentra-query" }
+zentra-drilldown = { path = "crates/zentra-drilldown" }
+zentra-log-engine = { path = "crates/zentra-log-engine" }
+zentra-api = { path = "crates/zentra-api" }
+zentra-agent = { path = "crates/zentra-agent" }
+zentra-predict = { path = "crates/zentra-predict" }
+zentra-scrape = { path = "crates/zentra-scrape" }
+network-plugin = { path = "plugins/network-plugin" }
+database-plugin = { path = "plugins/database-plugin" }
+storage-plugin = { path = "plugins/storage-plugin" }
+server-plugin = { path = "plugins/server-plugin" }
+license-plugin = { path = "plugins/license-plugin" }
+cloud-plugin = { path = "plugins/cloud-plugin" }
+zentra-netflow = { path = "crates/zentra-netflow" }
+zentra-ml = { path = "crates/zentra-ml" }
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "allow"
+todo = "warn"
+dbg_macro = "warn"

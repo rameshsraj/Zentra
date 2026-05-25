@@ -1,0 +1,142 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: Zentra-oracle-exporter
+  namespace: Zentra
+  labels:
+    app: Zentra
+    component: oracle-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: Zentra
+      component: oracle-exporter
+  template:
+    metadata:
+      labels:
+        app: Zentra
+        component: oracle-exporter
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9161"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: Zentra-oracle
+      containers:
+        - name: oracle-exporter
+          image: Zentra/oracle-exporter:latest
+          ports:
+            - containerPort: 9161
+              name: metrics
+              protocol: TCP
+          env:
+            - name: DATA_SOURCE_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: oracle-credentials
+                  key: dsn
+            - name: ORACLE_METRICS_FILE
+              value: /config/oracle_default_metrics.toml
+            - name: SCRAPE_INTERVAL
+              value: "60"
+            - name: VAULT_PROVIDER
+              valueFrom:
+                configMapKeyRef:
+                  name: oracle-exporter-config
+                  key: vault_provider
+                  optional: true
+            - name: VAULT_ADDRESS
+              valueFrom:
+                configMapKeyRef:
+                  name: oracle-exporter-config
+                  key: vault_address
+                  optional: true
+          volumeMounts:
+            - name: metrics-config
+              mountPath: /config
+              readOnly: true
+            - name: oracle-wallet
+              mountPath: /wallet
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9161
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 9161
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: metrics-config
+          configMap:
+            name: oracle-metrics-config
+        - name: oracle-wallet
+          secret:
+            secretName: oracle-wallet
+            optional: true
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+        - key: "oracle"
+          operator: "Exists"
+          effect: "NoSchedule"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: Zentra-oracle-exporter
+  namespace: Zentra
+  labels:
+    app: Zentra
+    component: oracle-exporter
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9161
+      targetPort: 9161
+      protocol: TCP
+      name: metrics
+  selector:
+    app: Zentra
+    component: oracle-exporter
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oracle-exporter-config
+  namespace: Zentra
+data:
+  vault_provider: ""
+  vault_address: ""
+  scrape_interval: "60"
+  max_concurrent_connections: "5"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: oracle-credentials
+  namespace: Zentra
+type: Opaque
+stringData:
+  dsn: "<SET_VIA_SEALED_SECRETS_OR_VAULT>"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: Zentra-oracle
+  namespace: Zentra
+  labels:
+    app: Zentra
+    component: oracle-exporter

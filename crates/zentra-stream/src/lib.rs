@@ -1,0 +1,21 @@
+pub mod alert_engine;
+pub mod alert_dependency;
+pub mod escalation_engine;
+pub mod event_bus;
+pub mod event_history;
+pub mod notification_router;
+pub mod notifications;
+pub mod rule_evaluator;
+pub mod stream_processor;
+pub mod subscriber;
+pub mod webhook_dispatcher;
+
+pub use event_bus::EventBus;
+pub use event_history::EventHistory;
+pub use alert_engine::AlertEngine;
+pub use alert_dependency::{AlertDependency, DependencyRegistry};
+pub use escalation_engine::{EscalationChain, EscalationEngine, EscalationLevel};
+pub use notification_router::NotificationRouter;
+pub use notifications::NotificationDispatcher;
+pub use rule_evaluator::RuleEvaluator;
+pub use webhook_dispatcher::WebhookDispatcher;

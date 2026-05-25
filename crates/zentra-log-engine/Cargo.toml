@@ -1,0 +1,19 @@
+[package]
+name = "zentra-log-engine"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+zentra-core = { workspace = true }
+zentra-db = { workspace = true }
+zentra-stream = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+regex = { workspace = true }
+sqlx = { workspace = true }
+reqwest = { workspace = true }

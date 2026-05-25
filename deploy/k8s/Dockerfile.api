@@ -1,0 +1,24 @@
+# Zentra API Server Dockerfile
+FROM rust:1.75-slim as builder
+WORKDIR /app
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+
+# Copy manifests first for layer caching
+COPY Cargo.toml Cargo.lock ./
+COPY crates/ crates/
+COPY plugins/ plugins/
+
+# Build release binary
+RUN cargo build --release --bin zentra-api
+
+# Runtime image
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/target/release/zentra-api /usr/local/bin/zentra-api
+COPY deploy/sql/ /app/deploy/sql/
+
+EXPOSE 7001
+ENV RUST_LOG=info
+CMD ["zentra-api"]

@@ -1,0 +1,26 @@
+# ============================================
+# Zentra - Git Ignore
+# ============================================
+
+# Environment files (credentials)
+.env
+.env.local
+deploy/deploy.env
+
+# Build artifacts
+/target/
+build_output.txt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/settings.json
+.idea/
+*.suo
+*.user
+
+# Logs
+*.log
+/logs/

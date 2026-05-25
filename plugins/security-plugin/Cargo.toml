@@ -1,0 +1,17 @@
+[package]
+name = "security-plugin"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+zentra-core = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+sha2 = { workspace = true }
+md5 = "0.7"
+sha1 = "0.10"

@@ -1,0 +1,14 @@
+[package]
+name = "ai-plugin"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+regex = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+zentra-core = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }

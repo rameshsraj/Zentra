@@ -1,0 +1,62 @@
+# =============================================================================
+# Zentra — Docker Build Context Exclusions
+# Only allow pre-built artifacts into the image — NO source code, NO credentials
+# =============================================================================
+
+# ── Source code (NEVER include) ──
+crates/
+plugins/
+frontend/src/
+frontend/node_modules/
+frontend/package.json
+frontend/package-lock.json
+frontend/tsconfig*.json
+frontend/vite.config.ts
+frontend/tailwind.config.js
+frontend/postcss.config.js
+frontend/eslint.config.js
+frontend/index.html
+src/
+Cargo.toml
+Cargo.lock
+
+# ── Credentials & environment files (NEVER include) ──
+.env
+.env.*
+deploy/deploy.env
+
+# ── Build artifacts & caches ──
+target/debug/
+target/.rustc_info.json
+target/.cargo-lock
+target/release/build/
+target/release/deps/
+target/release/examples/
+target/release/incremental/
+target/release/.fingerprint/
+target/release/*.d
+# Allow: target/release/zentra-server (the binary)
+
+# ── Git & IDE ──
+.git/
+.gitignore
+.vscode/
+.idea/
+.claude/
+
+# ── Deploy & docs ──
+deploy/
+docs/
+*.md
+!docker/README.md
+
+# ── OS files ──
+.DS_Store
+._*
+Thumbs.db
+*.log
+
+# ── Backups ──
+backups/
+bin/
+logs/

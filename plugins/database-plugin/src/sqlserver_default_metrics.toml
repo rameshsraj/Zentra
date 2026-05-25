@@ -1,0 +1,72 @@
+## SQL Server Default Metrics — 10 Contexts
+
+[[metric]]
+context = "mssql_connections"
+labels = ["database_name"]
+metrics_desc = { user_connections = "User connections", active_sessions = "Active sessions" }
+metrics_type = { user_connections = "gauge", active_sessions = "gauge" }
+request = "SELECT DB_NAME(dbid) AS database_name, COUNT(*) AS user_connections, SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS active_sessions FROM sys.sysprocesses WHERE dbid > 0 GROUP BY dbid"
+
+[[metric]]
+context = "mssql_database_size"
+labels = ["database_name"]
+metrics_desc = { size_mb = "Database size (MB)", unallocated_mb = "Unallocated space (MB)", data_used_mb = "Data used (MB)", log_used_mb = "Log used (MB)" }
+metrics_type = { size_mb = "gauge", unallocated_mb = "gauge", data_used_mb = "gauge", log_used_mb = "gauge" }
+request = "SELECT d.name AS database_name, CAST(SUM(mf.size) * 8.0 / 1024 AS DECIMAL(10,2)) AS size_mb, CAST(SUM(CASE WHEN mf.type = 0 THEN mf.size ELSE 0 END) * 8.0 / 1024 AS DECIMAL(10,2)) AS data_used_mb, CAST(SUM(CASE WHEN mf.type = 1 THEN mf.size ELSE 0 END) * 8.0 / 1024 AS DECIMAL(10,2)) AS log_used_mb, 0 AS unallocated_mb FROM sys.databases d JOIN sys.master_files mf ON d.database_id = mf.database_id GROUP BY d.name"
+
+[[metric]]
+context = "mssql_wait_stats"
+labels = ["wait_type"]
+metrics_desc = { waiting_tasks_count = "Waiting tasks", wait_time_ms = "Wait time (ms)", signal_wait_time_ms = "Signal wait time (ms)" }
+metrics_type = { waiting_tasks_count = "counter", wait_time_ms = "counter", signal_wait_time_ms = "counter" }
+request = "SELECT TOP 20 wait_type, waiting_tasks_count, wait_time_ms, signal_wait_time_ms FROM sys.dm_os_wait_stats WHERE wait_type NOT LIKE '%SLEEP%' AND wait_type NOT LIKE '%IDLE%' AND wait_type NOT LIKE '%QUEUE%' ORDER BY wait_time_ms DESC"
+
+[[metric]]
+context = "mssql_buffer_cache"
+labels = []
+metrics_desc = { buffer_cache_hit_ratio = "Buffer cache hit ratio", page_life_expectancy = "Page life expectancy (secs)", lazy_writes_sec = "Lazy writes/sec", checkpoint_pages_sec = "Checkpoint pages/sec" }
+metrics_type = { buffer_cache_hit_ratio = "gauge", page_life_expectancy = "gauge", lazy_writes_sec = "gauge", checkpoint_pages_sec = "gauge" }
+request = "SELECT (SELECT cntr_value FROM sys.dm_os_performance_counters WHERE counter_name = 'Buffer cache hit ratio' AND object_name LIKE '%Buffer Manager%') AS buffer_cache_hit_ratio, (SELECT cntr_value FROM sys.dm_os_performance_counters WHERE counter_name = 'Page life expectancy' AND object_name LIKE '%Buffer Manager%') AS page_life_expectancy, (SELECT cntr_value FROM sys.dm_os_performance_counters WHERE counter_name = 'Lazy writes/sec' AND object_name LIKE '%Buffer Manager%') AS lazy_writes_sec, (SELECT cntr_value FROM sys.dm_os_performance_counters WHERE counter_name = 'Checkpoint pages/sec' AND object_name LIKE '%Buffer Manager%') AS checkpoint_pages_sec"
+
+[[metric]]
+context = "mssql_cpu"
+labels = []
+metrics_desc = { sql_cpu_percent = "SQL Server CPU percent", idle_cpu_percent = "Idle CPU percent", other_cpu_percent = "Other process CPU percent" }
+metrics_type = { sql_cpu_percent = "gauge", idle_cpu_percent = "gauge", other_cpu_percent = "gauge" }
+request = "SELECT TOP 1 SQLProcessUtilization AS sql_cpu_percent, SystemIdle AS idle_cpu_percent, 100 - SystemIdle - SQLProcessUtilization AS other_cpu_percent FROM (SELECT record.value('(./Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'int') AS SystemIdle, record.value('(./Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]', 'int') AS SQLProcessUtilization FROM (SELECT TOP 1 CONVERT(xml, record) AS record FROM sys.dm_os_ring_buffers WHERE ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR' ORDER BY timestamp DESC) AS x) AS y"
+
+[[metric]]
+context = "mssql_io"
+labels = ["database_name"]
+metrics_desc = { reads = "Physical reads", writes = "Physical writes", read_bytes = "Read bytes", write_bytes = "Write bytes" }
+metrics_type = { reads = "counter", writes = "counter", read_bytes = "counter", write_bytes = "counter" }
+request = "SELECT DB_NAME(database_id) AS database_name, SUM(num_of_reads) AS reads, SUM(num_of_writes) AS writes, SUM(num_of_bytes_read) AS read_bytes, SUM(num_of_bytes_written) AS write_bytes FROM sys.dm_io_virtual_file_stats(NULL, NULL) GROUP BY database_id"
+
+[[metric]]
+context = "mssql_memory"
+labels = []
+metrics_desc = { total_server_memory_mb = "Total server memory (MB)", target_server_memory_mb = "Target server memory (MB)", memory_grants_pending = "Memory grants pending" }
+metrics_type = { total_server_memory_mb = "gauge", target_server_memory_mb = "gauge", memory_grants_pending = "gauge" }
+request = "SELECT (SELECT cntr_value/1024 FROM sys.dm_os_performance_counters WHERE counter_name = 'Total Server Memory (KB)') AS total_server_memory_mb, (SELECT cntr_value/1024 FROM sys.dm_os_performance_counters WHERE counter_name = 'Target Server Memory (KB)') AS target_server_memory_mb, (SELECT cntr_value FROM sys.dm_os_performance_counters WHERE counter_name = 'Memory Grants Pending') AS memory_grants_pending"
+
+[[metric]]
+context = "mssql_slow_queries"
+labels = ["sql_handle"]
+metrics_desc = { execution_count = "Execution count", avg_elapsed_time_ms = "Avg elapsed time (ms)", total_logical_reads = "Total logical reads" }
+metrics_type = { execution_count = "counter", avg_elapsed_time_ms = "gauge", total_logical_reads = "counter" }
+request = "SELECT TOP 20 CONVERT(varchar(64), sql_handle, 1) AS sql_handle, execution_count, total_elapsed_time / NULLIF(execution_count, 0) / 1000 AS avg_elapsed_time_ms, total_logical_reads FROM sys.dm_exec_query_stats ORDER BY total_elapsed_time / NULLIF(execution_count, 0) DESC"
+
+[[metric]]
+context = "mssql_locks"
+labels = ["resource_type"]
+metrics_desc = { request_count = "Lock requests", wait_count = "Lock waits", deadlock_count = "Deadlocks" }
+metrics_type = { request_count = "counter", wait_count = "counter", deadlock_count = "counter" }
+request = "SELECT resource_type, COUNT(*) AS request_count, SUM(CASE WHEN request_status = 'WAIT' THEN 1 ELSE 0 END) AS wait_count, 0 AS deadlock_count FROM sys.dm_tran_locks GROUP BY resource_type"
+
+[[metric]]
+context = "mssql_availability_group"
+labels = ["ag_name", "replica_server"]
+metrics_desc = { synchronization_health = "Sync health (0=not healthy, 1=partially, 2=healthy)", connected_state = "Connected (0=disconnected, 1=connected)" }
+metrics_type = { synchronization_health = "gauge", connected_state = "gauge" }
+request = "SELECT ag.name AS ag_name, ar.replica_server_name AS replica_server, rs.synchronization_health AS synchronization_health, rs.connected_state AS connected_state FROM sys.availability_groups ag JOIN sys.availability_replicas ar ON ag.group_id = ar.group_id JOIN sys.dm_hadr_availability_replica_states rs ON ar.replica_id = rs.replica_id"
+ignore_zero_result = true

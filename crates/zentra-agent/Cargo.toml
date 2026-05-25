@@ -1,0 +1,33 @@
+[package]
+name = "zentra-agent"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "zentra-agent"
+path = "src/main.rs"
+
+[dependencies]
+zentra-core = { workspace = true }
+zentra-db = { workspace = true }
+zentra-stream = { workspace = true }
+zentra-ingestion = { workspace = true }
+zentra-log-engine = { workspace = true }
+network-plugin = { workspace = true }
+server-plugin = { workspace = true }
+database-plugin = { workspace = true }
+storage-plugin = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+dns-lookup = { workspace = true }
+dotenvy = { workspace = true }
+sqlx = { workspace = true }

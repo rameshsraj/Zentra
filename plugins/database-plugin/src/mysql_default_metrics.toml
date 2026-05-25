@@ -1,0 +1,66 @@
+## MySQL Default Metrics — 9 Contexts
+
+[[metric]]
+context = "mysql_connections"
+labels = []
+metrics_desc = { threads_connected = "Connected threads", threads_running = "Running threads", max_connections = "Max connections", connection_errors = "Total connection errors" }
+metrics_type = { threads_connected = "gauge", threads_running = "gauge", max_connections = "gauge", connection_errors = "counter" }
+request = "SELECT (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Threads_connected') AS threads_connected, (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Threads_running') AS threads_running, (SELECT VARIABLE_VALUE FROM performance_schema.global_variables WHERE VARIABLE_NAME='max_connections') AS max_connections, (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Connection_errors_internal') AS connection_errors"
+
+[[metric]]
+context = "mysql_innodb"
+labels = []
+metrics_desc = { buffer_pool_size = "Buffer pool size (bytes)", buffer_pool_hit_ratio = "Buffer pool hit ratio", rows_read = "InnoDB rows read", rows_inserted = "InnoDB rows inserted", rows_updated = "InnoDB rows updated", rows_deleted = "InnoDB rows deleted" }
+metrics_type = { buffer_pool_size = "gauge", buffer_pool_hit_ratio = "gauge", rows_read = "counter", rows_inserted = "counter", rows_updated = "counter", rows_deleted = "counter" }
+request = "SELECT (SELECT VARIABLE_VALUE FROM performance_schema.global_variables WHERE VARIABLE_NAME='innodb_buffer_pool_size') AS buffer_pool_size, ROUND(100 - ((SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_buffer_pool_reads') / NULLIF((SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_buffer_pool_read_requests'),0) * 100), 2) AS buffer_pool_hit_ratio, (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_rows_read') AS rows_read, (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_rows_inserted') AS rows_inserted, (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_rows_updated') AS rows_updated, (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Innodb_rows_deleted') AS rows_deleted"
+
+[[metric]]
+context = "mysql_replication"
+labels = ["channel_name"]
+metrics_desc = { seconds_behind_master = "Seconds behind master", slave_io_running = "IO thread running (1/0)", slave_sql_running = "SQL thread running (1/0)" }
+metrics_type = { seconds_behind_master = "gauge", slave_io_running = "gauge", slave_sql_running = "gauge" }
+request = "SELECT channel_name, IFNULL(seconds_behind_master, -1) AS seconds_behind_master, IF(slave_io_running='Yes',1,0) AS slave_io_running, IF(slave_sql_running='Yes',1,0) AS slave_sql_running FROM performance_schema.replication_applier_status_by_worker"
+ignore_zero_result = true
+
+[[metric]]
+context = "mysql_table_size"
+labels = ["table_schema", "table_name"]
+metrics_desc = { data_length = "Data length (bytes)", index_length = "Index length (bytes)", table_rows = "Approximate row count" }
+metrics_type = { data_length = "gauge", index_length = "gauge", table_rows = "gauge" }
+request = "SELECT table_schema, table_name, data_length, index_length, table_rows FROM information_schema.tables WHERE table_schema NOT IN ('mysql','information_schema','performance_schema','sys') ORDER BY data_length DESC LIMIT 50"
+
+[[metric]]
+context = "mysql_slow_queries"
+labels = []
+metrics_desc = { slow_queries = "Total slow queries", long_query_time = "Long query time threshold" }
+metrics_type = { slow_queries = "counter", long_query_time = "gauge" }
+request = "SELECT (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Slow_queries') AS slow_queries, (SELECT VARIABLE_VALUE FROM performance_schema.global_variables WHERE VARIABLE_NAME='long_query_time') AS long_query_time"
+
+[[metric]]
+context = "mysql_query_cache"
+labels = []
+metrics_desc = { qcache_hits = "Query cache hits", qcache_inserts = "Query cache inserts", qcache_not_cached = "Not cached" }
+metrics_type = { qcache_hits = "counter", qcache_inserts = "counter", qcache_not_cached = "counter" }
+request = "SELECT (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Qcache_hits') AS qcache_hits, (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Qcache_inserts') AS qcache_inserts, (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Qcache_not_cached') AS qcache_not_cached"
+ignore_zero_result = true
+
+[[metric]]
+context = "mysql_binlog"
+labels = []
+metrics_desc = { binlog_cache_disk_use = "Binlog cache disk use", binlog_cache_use = "Binlog cache use", binlog_stmt_cache_use = "Binlog stmt cache use" }
+metrics_type = { binlog_cache_disk_use = "counter", binlog_cache_use = "counter", binlog_stmt_cache_use = "counter" }
+request = "SELECT (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Binlog_cache_disk_use') AS binlog_cache_disk_use, (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Binlog_cache_use') AS binlog_cache_use, (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Binlog_stmt_cache_use') AS binlog_stmt_cache_use"
+
+[[metric]]
+context = "mysql_locks"
+labels = []
+metrics_desc = { table_locks_waited = "Table locks waited", table_locks_immediate = "Table locks immediate" }
+metrics_type = { table_locks_waited = "counter", table_locks_immediate = "counter" }
+request = "SELECT (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Table_locks_waited') AS table_locks_waited, (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Table_locks_immediate') AS table_locks_immediate"
+
+[[metric]]
+context = "mysql_handler"
+labels = []
+metrics_desc = { handler_read_first = "Handler read first", handler_read_key = "Handler read key", handler_read_next = "Handler read next", handler_read_rnd_next = "Handler read rnd next" }
+metrics_type = { handler_read_first = "counter", handler_read_key = "counter", handler_read_next = "counter", handler_read_rnd_next = "counter" }
+request = "SELECT (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Handler_read_first') AS handler_read_first, (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Handler_read_key') AS handler_read_key, (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Handler_read_next') AS handler_read_next, (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='Handler_read_rnd_next') AS handler_read_rnd_next"
