@@ -77,13 +77,13 @@ pub async fn trace_db_context(
     OrgId(org_id): OrgId,
     Path(trace_id): Path<String>,
 ) -> Result<Json<Vec<DbSpanContext>>, ApiError> {
-    // Find DB spans in this trace
+    // Find DB traces in this trace
     let db_spans = sqlx::query_as::<_, DbSpanRow>(
         r#"SELECT span_id, trace_id, service_name, operation_name,
                   duration_us, started_at,
                   tags->>'db.system' AS db_system,
                   tags->>'db.statement' AS db_statement
-           FROM spans
+           FROM traces
            WHERE trace_id = $1 AND tags ? 'db.system'
            ORDER BY started_at"#
     )
@@ -171,7 +171,7 @@ pub async fn db_slowness(
         r#"SELECT trace_id, service_name, operation_name, duration_us, started_at,
                   tags->>'db.system' AS db_system,
                   tags->>'db.statement' AS db_statement
-           FROM spans
+           FROM traces
            WHERE tags ? 'db.system'
              AND started_at >= $1 AND started_at <= $2
              AND duration_us / 1000.0 >= $3
@@ -206,7 +206,7 @@ pub async fn service_to_db_map(
                   tags->>'db.system' AS db_system,
                   COUNT(*) AS call_count,
                   PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_us / 1000.0) AS p95_ms
-           FROM spans
+           FROM traces
            WHERE tags ? 'db.system'
              AND started_at > NOW() - INTERVAL '24 hours'
            GROUP BY service_name, tags->>'db.system'

@@ -85,7 +85,7 @@ pub async fn list_apdex_scores(
                     COUNT(*) FILTER (WHERE s.duration_us / 1000.0 > COALESCE(c.satisfied_ms, 200)
                                       AND s.duration_us / 1000.0 <= COALESCE(c.satisfied_ms, 200) * 4) AS tolerating,
                     COUNT(*) FILTER (WHERE s.duration_us / 1000.0 > COALESCE(c.satisfied_ms, 200) * 4) AS frustrated
-                FROM spans s
+                FROM traces s
                 LEFT JOIN configs c ON c.service_name = s.service_name
                 WHERE s.started_at > NOW() - INTERVAL '{window}'
                 GROUP BY s.service_name, c.satisfied_ms
@@ -144,7 +144,7 @@ pub async fn get_service_apdex(
                                                AND s.duration_us / 1000.0 <= COALESCE((SELECT satisfied_ms FROM config), 200) * 4)::FLOAT * 0.5)
                           / COUNT(*)::FLOAT
                      ELSE 1.0 END AS apdex
-            FROM spans s
+            FROM traces s
             WHERE s.service_name = $2 AND s.started_at > NOW() - INTERVAL '{window}'"#,
             window = window
         )
@@ -154,7 +154,7 @@ pub async fn get_service_apdex(
     .fetch_optional(&state.tsdb_pool)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?
-    .ok_or_else(|| ApiError::NotFound(format!("No spans found for service '{}'", service)))?;
+    .ok_or_else(|| ApiError::NotFound(format!("No traces found for service '{}'", service)))?;
 
     Ok(Json(ApdexScore {
         service_name: row.service_name,

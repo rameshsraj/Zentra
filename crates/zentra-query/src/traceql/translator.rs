@@ -1,72 +1,152 @@
 //! TraceQL translator: converts parsed AST into SQL WHERE clauses.
+//!
+//! Supports:
+//! - Native column matching (service_name, operation_name, status)
+//! - Duration comparisons (stored as duration_us, input as milliseconds)
+//! - Arbitrary JSONB tag queries via `tags ->> 'key'` with parameterised binds
+//! - AND / OR logic with correct parenthesisation
+//! - Regex match (`=~`) and regex-no-match (`!~`) operators
 
 use super::parser::{Query, Condition, CompareOp, LogicOp};
 use super::{TraceSummary, TraceQlError};
 use chrono::{DateTime, Utc};
 
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
 /// Translate a parsed TraceQL query into a SQL WHERE fragment and bind values.
+///
+/// Bind numbering starts at `$3` because the caller reserves `$1` = from and
+/// `$2` = to for the time-range predicate.
 pub fn translate(query: &Query) -> Result<(String, Vec<BindValue>), TraceQlError> {
-    let mut parts = Vec::new();
+    if query.conditions.is_empty() {
+        return Ok(("TRUE".to_string(), vec![]));
+    }
+
     let mut binds = Vec::new();
 
-    for (i, cond) in query.conditions.iter().enumerate() {
-        let fragment = translate_condition(cond, &mut binds)?;
-        if i > 0 {
-            let logic = query.logic.get(i - 1).unwrap_or(&LogicOp::And);
-            let op = match logic {
-                LogicOp::And => "AND",
-                LogicOp::Or => "OR",
-            };
-            parts.push(format!(" {} {}", op, fragment));
-        } else {
-            parts.push(fragment);
+    // When the query mixes AND and OR we must group them to avoid ambiguity.
+    // Strategy: translate each condition into a fragment, then combine
+    // respecting the logic operators with parentheses around OR groups.
+    let mut fragments: Vec<String> = Vec::with_capacity(query.conditions.len());
+    for cond in &query.conditions {
+        fragments.push(translate_condition(cond, &mut binds)?);
+    }
+
+    // Build the combined expression.
+    // If there is only one condition, no grouping needed.
+    if fragments.len() == 1 {
+        return Ok((fragments.remove(0), binds));
+    }
+
+    // Check whether we have mixed AND/OR.
+    let has_and = query.logic.iter().any(|l| matches!(l, LogicOp::And));
+    let has_or  = query.logic.iter().any(|l| matches!(l, LogicOp::Or));
+
+    if has_and && has_or {
+        // Mixed operators: wrap OR-connected groups in parentheses so AND
+        // binds more tightly (standard precedence).
+        let result = build_mixed_logic(&fragments, &query.logic);
+        Ok((result, binds))
+    } else {
+        // Uniform logic – simple join.
+        let op_str = if has_or { " OR " } else { " AND " };
+        Ok((fragments.join(op_str), binds))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/// Build SQL for queries that mix AND and OR.
+///
+/// Groups consecutive AND-connected conditions together and parenthesises
+/// them so that `A && B || C && D` becomes `(A AND B) OR (C AND D)`.
+fn build_mixed_logic(fragments: &[String], logic: &[LogicOp]) -> String {
+    let mut groups: Vec<Vec<&str>> = vec![vec![&fragments[0]]];
+
+    for (i, op) in logic.iter().enumerate() {
+        match op {
+            LogicOp::And => {
+                groups.last_mut().unwrap().push(&fragments[i + 1]);
+            }
+            LogicOp::Or => {
+                groups.push(vec![&fragments[i + 1]]);
+            }
         }
     }
 
-    Ok((parts.join(""), binds))
+    let group_strs: Vec<String> = groups.iter().map(|g| {
+        if g.len() == 1 {
+            g[0].to_string()
+        } else {
+            format!("({})", g.join(" AND "))
+        }
+    }).collect();
+
+    group_strs.join(" OR ")
 }
 
 fn translate_condition(cond: &Condition, binds: &mut Vec<BindValue>) -> Result<String, TraceQlError> {
     match cond {
         Condition::StatusMatch { status } => {
             binds.push(BindValue::String(status.clone()));
-            Ok(format!("status = ${}", binds.len() + 2)) // +2 because $1=from, $2=to
+            Ok(format!("status = ${}", binds.len() + 2))
         }
         Condition::DurationMatch { op, duration_ms } => {
             let sql_op = compare_op_sql(op);
-            // duration stored as duration_us in spans table, convert ms to us
-            Ok(format!("duration_us {} {}", sql_op, duration_ms * 1000))
+            binds.push(BindValue::Int(*duration_ms * 1000));
+            Ok(format!("duration_us {} ${}", sql_op, binds.len() + 2))
         }
         Condition::AttributeMatch { attribute, op, value } => {
-            let column = attribute_to_column(attribute);
+            let col = resolve_column(attribute);
             let sql_op = compare_op_sql(op);
             binds.push(BindValue::String(value.clone()));
             let bind_num = binds.len() + 2;
 
             match op {
-                CompareOp::RegexMatch => Ok(format!("{} ~ ${}", column, bind_num)),
-                CompareOp::RegexNoMatch => Ok(format!("{} !~ ${}", column, bind_num)),
-                _ => Ok(format!("{} {} ${}", column, sql_op, bind_num)),
+                CompareOp::RegexMatch => Ok(format!("{} ~ ${}", col, bind_num)),
+                CompareOp::RegexNoMatch => Ok(format!("{} !~ ${}", col, bind_num)),
+                _ => Ok(format!("{} {} ${}", col, sql_op, bind_num)),
             }
         }
     }
 }
 
-fn attribute_to_column(attr: &str) -> String {
+/// Map a TraceQL attribute name to a SQL column expression.
+///
+/// Well-known semconv attributes are mapped to native indexed columns.
+/// Everything else becomes a JSONB `tags ->> 'key'` lookup so that
+/// arbitrary user-defined tags are queryable.
+fn resolve_column(attr: &str) -> String {
     match attr {
-        "service.name" => "service_name".to_string(),
-        "span.name" => "operation_name".to_string(),
-        "status" => "status".to_string(),
-        "duration" => "duration_us".to_string(),
+        // Native indexed columns
+        "service.name"    => "service_name".to_string(),
+        "span.name"       => "operation_name".to_string(),
+        "name"            => "operation_name".to_string(),
+        "status"          => "status".to_string(),
+        "duration"        => "duration_us".to_string(),
+        "trace_id"        => "trace_id".to_string(),
+        "span_id"         => "span_id".to_string(),
+
+        // Semconv shortcuts  (OTel semconv → native columns if available)
+        "http.method"     => "tags->>'http.method'".to_string(),
+        "http.status_code" => "(tags->>'http.status_code')::int".to_string(),
+
+        // span.* and resource.* prefixes → JSONB lookup
         a if a.starts_with("span.") => {
             let key = a.strip_prefix("span.").unwrap_or(a);
-            format!("tags->>'{}'", key)
+            format!("tags->>'{}'" , key)
         }
         a if a.starts_with("resource.") => {
             let key = a.strip_prefix("resource.").unwrap_or(a);
-            format!("tags->>'{}'", key)
+            format!("tags->>'{}'" , key)
         }
-        a => format!("tags->>'{}'", a),
+
+        // Fallback: treat as a tag key
+        a => format!("tags->>'{}'" , a),
     }
 }
 
@@ -83,9 +163,14 @@ fn compare_op_sql(op: &CompareOp) -> &'static str {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Bind values
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Clone)]
 pub enum BindValue {
     String(String),
+    Int(i64),
 }
 
 /// Execute the translated query against the database.
@@ -100,7 +185,7 @@ pub async fn execute_query(
     let sql = format!(
         r#"WITH matching_spans AS (
             SELECT trace_id, service_name, operation_name, duration_us, started_at, status
-            FROM spans
+            FROM traces
             WHERE started_at >= $1 AND started_at <= $2 AND {}
             ORDER BY started_at DESC
             LIMIT {}
@@ -128,6 +213,7 @@ pub async fn execute_query(
     for bind in binds {
         match bind {
             BindValue::String(s) => { query = query.bind(s.clone()); }
+            BindValue::Int(n) => { query = query.bind(*n); }
         }
     }
 

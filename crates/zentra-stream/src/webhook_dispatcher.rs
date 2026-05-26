@@ -10,7 +10,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 use uuid::Uuid;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;

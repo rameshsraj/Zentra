@@ -95,7 +95,8 @@ pub async fn llm_overview(
         "p95_latency_ms": row.p95_latency_ms,
         "error_count": row.error_count,
         "error_rate": row.error_rate,
-        "estimated_cost_usd": estimated_cost,
+        "total_cost": estimated_cost,
+        "models": 0, // Placeholder or query count(distinct model)
     })))
 }
 
@@ -132,13 +133,13 @@ pub async fn llm_models(
 
     let models: Vec<serde_json::Value> = rows.iter().map(|r| json!({
         "model": r.model,
-        "system": r.gen_ai_system,
+        "gen_ai_system": r.gen_ai_system,
         "request_count": r.request_count,
-        "input_tokens": r.input_tokens,
-        "output_tokens": r.output_tokens,
+        "total_input_tokens": r.input_tokens,
+        "total_output_tokens": r.output_tokens,
         "avg_latency_ms": r.avg_latency_ms,
         "p95_latency_ms": r.p95_latency_ms,
-        "error_count": r.error_count,
+        "error_rate": if r.request_count > 0 { (r.error_count as f64 / r.request_count as f64 * 100.0).round() / 100.0 } else { 0.0 },
     })).collect();
 
     Ok(Json(json!({ "models": models, "count": models.len() })))
@@ -176,15 +177,13 @@ pub async fn llm_cost_trend(
     let series: Vec<serde_json::Value> = rows.iter().map(|r| {
         let cost = (r.input_tokens as f64 * 0.00001) + (r.output_tokens as f64 * 0.00003);
         json!({
-            "timestamp": r.bucket,
-            "input_tokens": r.input_tokens,
-            "output_tokens": r.output_tokens,
-            "request_count": r.request_count,
-            "estimated_cost_usd": cost,
+            "bucket": r.bucket,
+            "cost": cost,
+            "tokens": r.input_tokens + r.output_tokens,
         })
     }).collect();
 
-    Ok(Json(json!({ "series": series, "count": series.len() })))
+    Ok(Json(json!({ "trend": series, "count": series.len() })))
 }
 
 /// GET /api/llm/latency-distribution?window= — histogram buckets
@@ -220,11 +219,11 @@ pub async fn llm_latency_distribution(
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let buckets: Vec<serde_json::Value> = rows.iter().map(|r| json!({
-        "bucket": r.bucket,
+        "range": r.bucket,
         "count": r.count,
     })).collect();
 
-    Ok(Json(json!({ "buckets": buckets })))
+    Ok(Json(json!({ "distribution": buckets })))
 }
 
 /// GET /api/llm/token-efficiency?window= — input vs output token ratio per model

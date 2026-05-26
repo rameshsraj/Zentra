@@ -1,4 +1,4 @@
-use axum::{Router, routing::{get, post}};
+use axum::{Router, routing::{get, post, delete}};
 use crate::state::AppState;
 use crate::handlers;
 
@@ -20,6 +20,7 @@ pub fn router() -> Router<AppState> {
         // OTel P05: Semantic Convention Attributes
         .route("/api/otel/attributes", get(handlers::otlp::otel_attributes))
         .route("/api/otel/attribute-values", get(handlers::otlp::otel_attribute_values))
+        .route("/api/otel/semconv", get(handlers::otlp::otel_semconv))
 
         // OTel P06: Resource Detection
         .route("/api/otel/resources", get(handlers::otlp::otel_resources))
@@ -35,4 +36,19 @@ pub fn router() -> Router<AppState> {
 
         // OTel P13: Collector Pipeline Topology
         .route("/api/otel/pipeline", get(handlers::otlp::otel_pipeline))
+
+        // OT-07: Span Metrics RED
+        .route("/api/otel/span-metrics", get(handlers::otlp::otel_span_metrics))
+
+        // OT-08: Signal Alert Rules
+        .route("/api/otel/alert-rules", get(handlers::otlp::otel_alert_rules_list).post(handlers::otlp::otel_alert_rules_create))
+        .route("/api/otel/alert-rules/evaluate", get(handlers::otlp::otel_alert_rules_evaluate))
+
+        // OT-09: GenAI Observability
+        .route("/api/otel/genai", get(handlers::otlp::otel_genai))
+
+        // OT-10: OTLP Security
+        .route("/api/otel/api-keys", get(handlers::otlp::otel_api_keys_list).post(handlers::otlp::otel_api_keys_create))
+        .route("/api/otel/api-keys/:id", delete(handlers::otlp::otel_api_keys_revoke))
+        .route("/api/otel/ingest-audit", get(handlers::otlp::otel_ingest_audit))
 }

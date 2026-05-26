@@ -69,14 +69,19 @@ const PredictiveAlertsPage = lazy(() => import('./pages/PredictiveAlerts'))
 const RCAPage = lazy(() => import('./pages/RCA'))
 const RunbooksPage = lazy(() => import('./pages/Runbooks'))
 const LLMObservabilityPage = lazy(() => import('./pages/LLMObservability'))
+const ProfilingPage = lazy(() => import('./pages/Profiling'))
 
 // OpenTelemetry
+const TracesPage = lazy(() => import('./pages/Traces'))
 const OTelCollectorConfigPage = lazy(() => import('./pages/OTelCollectorConfig'))
 const OTelSdkGuidePage = lazy(() => import('./pages/OTelSdkGuide'))
 const OTelResourcesPage = lazy(() => import('./pages/OTelResources'))
 const OTelDashboardPage = lazy(() => import('./pages/OTelDashboard'))
 const OTelConnectorsPage = lazy(() => import('./pages/OTelConnectors'))
 const OTelPipelinePage = lazy(() => import('./pages/OTelPipeline'))
+const OTelSpanMetricsPage = lazy(() => import('./pages/OTelSpanMetrics'))
+const OTelAlertRulesPage = lazy(() => import('./pages/OTelAlertRules'))
+const OTelSecurityPage = lazy(() => import('./pages/OTelSecurity'))
 
 export default function App() {
   return (
@@ -153,14 +158,19 @@ export default function App() {
             <Route path="rca" element={<RCAPage />} />
             <Route path="runbooks" element={<RunbooksPage />} />
             <Route path="llm-observability" element={<LLMObservabilityPage />} />
+            <Route path="profiling" element={<ProfilingPage />} />
 
             {/* OpenTelemetry */}
+            <Route path="traces" element={<TracesPage />} />
             <Route path="otel-config" element={<OTelCollectorConfigPage />} />
             <Route path="otel-sdk-guide" element={<OTelSdkGuidePage />} />
             <Route path="otel-resources" element={<OTelResourcesPage />} />
             <Route path="otel-dashboard" element={<OTelDashboardPage />} />
             <Route path="otel-connectors" element={<OTelConnectorsPage />} />
             <Route path="otel-pipeline" element={<OTelPipelinePage />} />
+            <Route path="otel-span-metrics" element={<OTelSpanMetricsPage />} />
+            <Route path="otel-alert-rules" element={<OTelAlertRulesPage />} />
+            <Route path="otel-security" element={<OTelSecurityPage />} />
 
             {/* Fallback — redirect unknown paths to dashboard */}
             <Route path="*" element={<Navigate to="/dashboard" replace />} />

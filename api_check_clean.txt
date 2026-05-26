@@ -1,0 +1,646 @@
+cargo : warning: unused import: `LicenseAssignment`
+At line:1 char:39
++ ... RGO_HTTP_CHECK_REVOKE="false"; cargo check -p zentra-api 2>&1 | Out-F ...
++                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (warning: unused...enseAssignment`:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+ --> crates\zentra-db\src\repositories\licenses.rs:3:18
+  |
+3 |     LicenseSeat, LicenseAssignment, ComplianceSummary,
+  |                  ^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `zentra-db` (lib) generated 1 warning (run `cargo fix --lib -p zentra-db` to apply 1 suggestion)
+warning: unused import: `info`
+ --> crates\zentra-predict\src\forecast.rs:8:15
+  |
+8 | use tracing::{info, debug};
+  |               ^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> crates\zentra-predict\src\kmeans.rs:348:13
+    |
+348 |         let mut anomalous = 0;
+    |             ----^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: `zentra-predict` (lib) generated 2 warnings (run `cargo fix --lib -p zentra-predict` to apply 2 suggestions)
+warning: unused import: `warn`
+  --> crates\zentra-stream\src\escalation_engine.rs:11:28
+   |
+11 | use tracing::{info, debug, warn};
+   |                            ^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `error` and `warn`
+  --> crates\zentra-stream\src\notifications.rs:14:21
+   |
+14 | use tracing::{info, warn, error};
+   |                     ^^^^  ^^^^^
+
+warning: unused imports: `error` and `warn`
+  --> crates\zentra-stream\src\rule_evaluator.rs:14:21
+   |
+14 | use tracing::{info, warn, error, debug};
+   |                     ^^^^  ^^^^^
+
+warning: unused import: `std::collections::HashMap`
+ --> crates\zentra-stream\src\webhook_dispatcher.rs:8:5
+  |
+8 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `error`
+  --> crates\zentra-stream\src\webhook_dispatcher.rs:13:27
+   |
+13 | use tracing::{info, warn, error};
+   |                           ^^^^^
+
+warning: unused variable: `resource_id`
+   --> crates\zentra-stream\src\notification_router.rs:267:17
+    |
+267 |                 resource_id,
+    |                 ^^^^^^^^^^^ help: try ignoring the field: `resource_id: _`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `rule_id`
+   --> crates\zentra-stream\src\notification_router.rs:308:9
+    |
+308 |         rule_id: Uuid,
+    |         ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_rule_id`
+
+warning: fields `alert_id` and `fired_at` are never read
+  --> crates\zentra-stream\src\escalation_engine.rs:37:9
+   |
+35 | struct EscalationState {
+   |        --------------- fields in this struct
+36 |     pub alert_rule_id: Uuid,
+37 |     pub alert_id: Uuid,
+   |         ^^^^^^^^
+38 |     pub fired_at: DateTime<Utc>,
+   |         ^^^^^^^^
+   |
+   = note: `EscalationState` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `dispatcher` is never read
+   --> crates\zentra-stream\src\notification_router.rs:157:5
+    |
+155 | pub struct NotificationRouter {
+    |            ------------------ field in this struct
+156 |     policies: Vec<NotificationPolicy>,
+157 |     dispatcher: NotificationDispatcher,
+    |     ^^^^^^^^^^
+
+warning: `zentra-stream` (lib) generated 9 warnings (run `cargo fix --lib -p zentra-stream` to apply 7 suggestions)
+warning: unused import: `std::collections::HashMap`
+  --> crates\zentra-query\src\promql.rs:13:5
+   |
+13 | use std::collections::HashMap;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `regex::Regex`
+  --> crates\zentra-query\src\promql.rs:15:5
+   |
+15 | use regex::Regex;
+   |     ^^^^^^^^^^^^
+
+warning: `zentra-query` (lib) generated 2 warnings (run `cargo fix --lib -p zentra-query` to apply 2 suggestions)
+warning: unused import: `crate::handlers::config::live_mode_no_data`
+  --> crates\zentra-api\src\handlers\network.rs:14:5
+   |
+14 | use crate::handlers::config::live_mode_no_data;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unnecessary parentheses around block return value
+    --> crates\zentra-api\src\handlers\network.rs:1495:5
+     |
+1495 |     ((t.subsec_nanos() as f64) / 1_000_000_000.0)
+     |     ^                                           ^
+     |
+     = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
+help: remove these parentheses
+     |
+1495 -     ((t.subsec_nanos() as f64) / 1_000_000_000.0)
+1495 +     (t.subsec_nanos() as f64) / 1_000_000_000.0
+     |
+
+warning: unused import: `uuid::Uuid`
+ --> crates\zentra-api\src\handlers\ai.rs:6:5
+  |
+6 | use uuid::Uuid;
+  |     ^^^^^^^^^^
+
+warning: unused imports: `DateTime` and `Utc`
+  --> crates\zentra-api\src\handlers\remote_write.rs:10:14
+   |
+10 | use chrono::{DateTime, Utc};
+   |              ^^^^^^^^  ^^^
+
+warning: unused import: `uuid::Uuid`
+  --> crates\zentra-api\src\handlers\remote_write.rs:12:5
+   |
+12 | use uuid::Uuid;
+   |     ^^^^^^^^^^
+
+warning: unused import: `http::header`
+ --> crates\zentra-api\src\handlers\config.rs:4:66
+  |
+4 | use axum::{extract::State, Json, response::{Html, IntoResponse}, http::header};
+  |                                                                  ^^^^^^^^^^^^
+
+warning: unused import: `Serialize`
+ --> crates\zentra-api\src\handlers\config.rs:6:26
+  |
+6 | use serde::{Deserialize, Serialize};
+  |                          ^^^^^^^^^
+
+warning: unused import: `uuid::Uuid`
+ --> crates\zentra-api\src\handlers\traces.rs:9:5
+  |
+9 | use uuid::Uuid;
+  |     ^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+  --> crates\zentra-api\src\handlers\traces.rs:11:5
+   |
+11 | use std::sync::Arc;
+   |     ^^^^^^^^^^^^^^
+
+warning: unused import: `parking_lot::RwLock`
+  --> crates\zentra-api\src\handlers\traces.rs:12:5
+   |
+12 | use parking_lot::RwLock;
+   |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Query`
+ --> crates\zentra-api\src\handlers\mute_timings.rs:4:35
+  |
+4 | use axum::{extract::{State, Path, Query}, Json};
+  |                                   ^^^^^
+
+warning: unused import: `std::sync::Arc`
+ --> crates\zentra-api\src\handlers\mute_timings.rs:9:5
+  |
+9 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused imports: `Query` and `State`
+ --> crates\zentra-api\src\handlers\collectors.rs:5:22
+  |
+5 | use axum::{extract::{State, Path, Query}, Json};
+  |                      ^^^^^        ^^^^^
+
+warning: unused import: `crate::state::AppState`
+  --> crates\zentra-api\src\handlers\collectors.rs:10:5
+   |
+10 | use crate::state::AppState;
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+ --> crates\zentra-api\src\handlers\oracle.rs:9:5
+  |
+9 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `tokio::io::AsyncWriteExt`
+    --> crates\zentra-api\src\handlers\oracle.rs:1089:17
+     |
+1089 |             use tokio::io::AsyncWriteExt;
+     |                 ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `chrono::Utc`
+ --> crates\zentra-api\src\handlers\service_discovery.rs:4:5
+  |
+4 | use chrono::Utc;
+  |     ^^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+ --> crates\zentra-api\src\handlers\monitoring_templates.rs:7:5
+  |
+7 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `uuid::Uuid`
+ --> crates\zentra-api\src\handlers\healthchecks.rs:7:5
+  |
+7 | use uuid::Uuid;
+  |     ^^^^^^^^^^
+
+warning: unused import: `uuid::Uuid`
+ --> crates\zentra-api\src\handlers\maintenance.rs:7:5
+  |
+7 | use uuid::Uuid;
+  |     ^^^^^^^^^^
+
+warning: unused import: `uuid::Uuid`
+ --> crates\zentra-api\src\handlers\dependencies.rs:7:5
+  |
+7 | use uuid::Uuid;
+  |     ^^^^^^^^^^
+
+warning: unused import: `uuid::Uuid`
+ --> crates\zentra-api\src\handlers\deployments.rs:4:5
+  |
+4 | use uuid::Uuid;
+  |     ^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+ --> crates\zentra-api\src\handlers\proxies.rs:6:5
+  |
+6 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+ --> crates\zentra-api\src\handlers\llm_security.rs:6:5
+  |
+6 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+ --> crates\zentra-api\src\handlers\oracle_metrics.rs:9:5
+  |
+9 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+  --> crates\zentra-api\src\handlers\database_metrics.rs:12:5
+   |
+12 | use std::sync::Arc;
+   |     ^^^^^^^^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+  --> crates\zentra-api\src\handlers\database_query.rs:14:5
+   |
+14 | use std::sync::Arc;
+   |     ^^^^^^^^^^^^^^
+
+warning: unused import: `Serialize`
+  --> crates\zentra-api\src\handlers\ai_database.rs:11:26
+   |
+11 | use serde::{Deserialize, Serialize};
+   |                          ^^^^^^^^^
+
+warning: unused import: `http::StatusCode`
+ --> crates\zentra-api\src\handlers\ha.rs:3:5
+  |
+3 |     http::StatusCode,
+  |     ^^^^^^^^^^^^^^^^
+
+warning: unused imports: `DateTime` and `Utc`
+ --> crates\zentra-api\src\handlers\apdex.rs:7:14
+  |
+7 | use chrono::{DateTime, Utc};
+  |              ^^^^^^^^  ^^^
+
+warning: unused import: `uuid::Uuid`
+ --> crates\zentra-api\src\handlers\apdex.rs:9:5
+  |
+9 | use uuid::Uuid;
+  |     ^^^^^^^^^^
+
+warning: unused import: `serde_json::json`
+ --> crates\zentra-api\src\handlers\trace_db_correlator.rs:9:5
+  |
+9 | use serde_json::json;
+  |     ^^^^^^^^^^^^^^^^
+
+warning: unused import: `Serialize`
+ --> crates\zentra-api\src\handlers\llm_observability.rs:8:26
+  |
+8 | use serde::{Deserialize, Serialize};
+  |                          ^^^^^^^^^
+
+warning: unused import: `uuid::Uuid`
+  --> crates\zentra-api\src\handlers\llm_observability.rs:10:5
+   |
+10 | use uuid::Uuid;
+   |     ^^^^^^^^^^
+
+warning: unused import: `Serialize`
+ --> crates\zentra-api\src\handlers\otlp.rs:8:26
+  |
+8 | use serde::{Deserialize, Serialize};
+  |                          ^^^^^^^^^
+
+warning: unused import: `Serialize`
+ --> crates\zentra-api\src\handlers\otel_connectors.rs:8:26
+  |
+8 | use serde::{Deserialize, Serialize};
+  |                          ^^^^^^^^^
+
+warning: unused import: `uuid::Uuid`
+  --> crates\zentra-api\src\handlers\otel_connectors.rs:10:5
+   |
+10 | use uuid::Uuid;
+   |     ^^^^^^^^^^
+
+warning: unused import: `error`
+  --> crates\zentra-api\src\provisioning.rs:20:27
+   |
+20 | use tracing::{info, warn, error};
+   |                           ^^^^^
+
+warning: unused import: `uuid::Uuid`
+  --> crates\zentra-api\src\provisioning.rs:21:5
+   |
+21 | use uuid::Uuid;
+   |     ^^^^^^^^^^
+
+warning: unused variable: `state`
+  --> crates\zentra-api\src\handlers\predictions.rs:56:11
+   |
+56 |     State(state): State<AppState>,
+   |           ^^^^^ help: if this is intentional, prefix it with an underscore: `_state`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `params`
+  --> crates\zentra-api\src\handlers\predictions.rs:57:11
+   |
+57 |     Query(params): Query<ForecastQuery>,
+   |           ^^^^^^ help: if this is intentional, prefix it with an underscore: `_params`
+
+warning: unused variable: `state`
+  --> crates\zentra-api\src\handlers\predictions.rs:82:11
+   |
+82 |     State(state): State<AppState>,
+   |           ^^^^^ help: if this is intentional, prefix it with an underscore: `_state`
+
+warning: unused variable: `params`
+  --> crates\zentra-api\src\handlers\predictions.rs:83:11
+   |
+83 |     Query(params): Query<AnomalyQuery>,
+   |           ^^^^^^ help: if this is intentional, prefix it with an underscore: `_params`
+
+warning: unused variable: `state`
+   --> crates\zentra-api\src\handlers\predictions.rs:111:11
+    |
+111 |     State(state): State<AppState>,
+    |           ^^^^^ help: if this is intentional, prefix it with an underscore: `_state`
+
+warning: unused variable: `params`
+   --> crates\zentra-api\src\handlers\predictions.rs:112:11
+    |
+112 |     Query(params): Query<TrendAlertQuery>,
+    |           ^^^^^^ help: if this is intentional, prefix it with an underscore: `_params`
+
+warning: unused variable: `params`
+  --> crates\zentra-api\src\handlers\annotations.rs:77:11
+   |
+77 |     Query(params): Query<AnnotationQuery>,
+   |           ^^^^^^ help: if this is intentional, prefix it with an underscore: `_params`
+
+warning: unused variable: `now`
+  --> crates\zentra-api\src\handlers\scrape.rs:84:9
+   |
+84 |     let now = Utc::now();
+   |         ^^^ help: if this is intentional, prefix it with an underscore: `_now`
+
+warning: unused variable: `now`
+   --> crates\zentra-api\src\handlers\scrape.rs:123:9
+    |
+123 |     let now = Utc::now();
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_now`
+
+warning: unused variable: `total`
+   --> crates\zentra-api\src\handlers\network.rs:465:9
+    |
+465 |     let total: u64 = 1_846_200;
+    |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_total`
+
+warning: unused variable: `state`
+   --> crates\zentra-api\src\handlers\network.rs:620:11
+    |
+620 |     State(state): State<AppState>,
+    |           ^^^^^ help: if this is intentional, prefix it with an underscore: `_state`
+
+warning: unused variable: `now`
+   --> crates\zentra-api\src\handlers\network.rs:851:9
+    |
+851 |     let now = Utc::now();
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_now`
+
+warning: unused variable: `base`
+    --> crates\zentra-api\src\handlers\network.rs:1374:9
+     |
+1374 |     let base: u32 = ((octets[0] as u32) << 24) | ((octets[1] as u32) << 16) | ((octets[2] as u32) << 8) | (octets[3] as u32);
+     |         ^^^^ help: if this is intentional, prefix it with an underscore: `_base`
+
+warning: unused variable: `status`
+    --> crates\zentra-api\src\handlers\network.rs:1826:61
+     |
+1826 |     for (target_id, name, host, port, subtype, description, status, last_check_at, created_at) in &rows {
+     |                                                             ^^^^^^ help: if this is intentional, prefix it with an underscore: `_status`
+
+warning: unused variable: `last_check_at`
+    --> crates\zentra-api\src\handlers\network.rs:1826:69
+     |
+1826 |     for (target_id, name, host, port, subtype, description, status, last_check_at, created_at) in &rows {
+     |                                                                     ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_last_check_at`
+
+warning: unused variable: `params`
+  --> crates\zentra-api\src\handlers\ai.rs:75:11
+   |
+75 |     Query(params): Query<ChatHistoryQuery>,
+   |           ^^^^^^ help: if this is intentional, prefix it with an underscore: `_params`
+
+warning: unused variable: `now`
+  --> crates\zentra-api\src\handlers\ai.rs:77:9
+   |
+77 |     let now = Utc::now();
+   |         ^^^ help: if this is intentional, prefix it with an underscore: `_now`
+
+warning: unused variable: `now`
+  --> crates\zentra-api\src\handlers\ai.rs:85:9
+   |
+85 |     let now = Utc::now();
+   |         ^^^ help: if this is intentional, prefix it with an underscore: `_now`
+
+warning: unused variable: `now`
+   --> crates\zentra-api\src\handlers\ai.rs:108:9
+    |
+108 |     let now = Utc::now();
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_now`
+
+warning: unused variable: `host`
+   --> crates\zentra-api\src\handlers\mcp.rs:869:9
+    |
+869 |     let host = params.get("host").and_then(|v| v.as_str()).unwrap_or("all");
+    |         ^^^^ help: if this is intentional, prefix it with an underscore: `_host`
+
+warning: unused variable: `tags`
+  --> crates\zentra-api\src\handlers\remote_write.rs:65:13
+   |
+65 |         let tags: std::collections::HashMap<String, String> = ts.labels.iter()
+   |             ^^^^ help: if this is intentional, prefix it with an underscore: `_tags`
+
+warning: unused variable: `state`
+  --> crates\zentra-api\src\handlers\query_history.rs:46:11
+   |
+46 |     State(state): State<AppState>,
+   |           ^^^^^ help: if this is intentional, prefix it with an underscore: `_state`
+
+warning: unused variable: `limit`
+  --> crates\zentra-api\src\handlers\query_history.rs:50:9
+   |
+50 |     let limit = params.limit.unwrap_or(50);
+   |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_limit`
+
+warning: unused variable: `state`
+   --> crates\zentra-api\src\handlers\query_history.rs:139:11
+    |
+139 |     State(state): State<AppState>,
+    |           ^^^^^ help: if this is intentional, prefix it with an underscore: `_state`
+
+warning: unused variable: `state`
+   --> crates\zentra-api\src\handlers\query_history.rs:168:11
+    |
+168 |     State(state): State<AppState>,
+    |           ^^^^^ help: if this is intentional, prefix it with an underscore: `_state`
+
+warning: unused variable: `state`
+  --> crates\zentra-api\src\handlers\config.rs:93:11
+   |
+93 |     State(state): State<AppState>,
+   |           ^^^^^ help: if this is intentional, prefix it with an underscore: `_state`
+
+warning: unused variable: `owned`
+   --> crates\zentra-api\src\handlers\postgres.rs:336:16
+    |
+336 |     let (pool, owned) = resolve_pool(&state, q.target_id).await?;
+    |                ^^^^^ help: if this is intentional, prefix it with an underscore: `_owned`
+
+warning: unused variable: `err`
+   --> crates\zentra-api\src\handlers\mysql_mon.rs:301:9
+    |
+301 |     let err = |e: String| ApiError::Internal(e);
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_err`
+
+warning: unused variable: `timestamp`
+   --> crates\zentra-api\src\handlers\log_engine.rs:281:71
+    |
+281 | ...ate>, Path((stream_id, timestamp)): Path<(String, String)>, Query(params): Query<ContextParams>) -> Result<Json<Vec<QueryEntry>>...
+    |                           ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_timestamp`
+
+warning: unused variable: `port`
+   --> crates\zentra-api\src\handlers\storage_arrays.rs:117:37
+    |
+117 |     for (i, (target_id, name, host, port, subtype, _description)) in rows.iter().enumerate() {
+    |                                     ^^^^ help: if this is intentional, prefix it with an underscore: `_port`
+
+warning: unused variable: `name`
+   --> crates\zentra-api\src\handlers\metric_collector.rs:220:25
+    |
+220 |     for (i, (target_id, name, host, _port, _subtype)) in rows.iter().enumerate() {
+    |                         ^^^^ help: if this is intentional, prefix it with an underscore: `_name`
+
+warning: unused variable: `name`
+   --> crates\zentra-api\src\handlers\metric_collector.rs:345:13
+    |
+345 |         let name = &t.name;
+    |             ^^^^ help: if this is intentional, prefix it with an underscore: `_name`
+
+warning: unused variable: `state`
+   --> crates\zentra-api\src\handlers\metric_collector.rs:416:62
+    |
+416 | async fn collect_oracle_metrics(pool: &PgPool, org_id: Uuid, state: &AppState) -> usize {
+    |                                                              ^^^^^ help: if this is intentional, prefix it with an underscore: `_state`
+
+warning: unused variable: `org_id`
+   --> crates\zentra-api\src\handlers\cilium.rs:270:11
+    |
+270 |     OrgId(org_id): OrgId,
+    |           ^^^^^^ help: if this is intentional, prefix it with an underscore: `_org_id`
+
+warning: unused variable: `org_id`
+   --> crates\zentra-api\src\handlers\otlp.rs:578:11
+    |
+578 |     OrgId(org_id): OrgId,
+    |           ^^^^^^ help: if this is intentional, prefix it with an underscore: `_org_id`
+
+warning: unused variable: `action`
+   --> crates\zentra-api\src\middleware.rs:369:17
+    |
+369 |             let action = format!("{} {}", method, path);
+    |                 ^^^^^^ help: if this is intentional, prefix it with an underscore: `_action`
+
+warning: unused variable: `resource_type`
+   --> crates\zentra-api\src\middleware.rs:370:17
+    |
+370 |             let resource_type = path.split('/').nth(2).unwrap_or("unknown").to_string();
+    |                 ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_resource_type`
+
+warning: unused variable: `status_str`
+   --> crates\zentra-api\src\middleware.rs:371:17
+    |
+371 |             let status_str = if response.status().is_success() { "success" } else { "error" };
+    |                 ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_status_str`
+
+warning: function `internal` is never used
+ --> crates\zentra-api\src\handlers\predictions.rs:8:4
+  |
+8 | fn internal(e: impl std::fmt::Display) -> ApiError {
+  |    ^^^^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `internal` is never used
+  --> crates\zentra-api\src\handlers\annotations.rs:13:4
+   |
+13 | fn internal(e: impl std::fmt::Display) -> ApiError {
+   |    ^^^^^^^^
+
+warning: function `validate_oracle_identifier` is never used
+  --> crates\zentra-api\src\handlers\oracle.rs:26:4
+   |
+26 | fn validate_oracle_identifier(s: &str) -> Result<(), String> {
+   |    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `span_kind_str` is never used
+   --> crates\zentra-api\src\otlp_proto.rs:394:4
+    |
+394 | fn span_kind_str(kind: i32) -> &'static str {
+    |    ^^^^^^^^^^^^^
+
+warning: function `status_code_str` is never used
+   --> crates\zentra-api\src\otlp_proto.rs:405:4
+    |
+405 | fn status_code_str(code: i32) -> &'static str {
+    |    ^^^^^^^^^^^^^^^
+
+warning: using `.clone()` on a double reference, which returns `&std::string::String` instead of cloning the inner type
+   --> crates\zentra-api\src\handlers\log_engine.rs:107:33
+    |
+107 |     pairs.sort_by_key(|(k, _)| k.clone());
+    |                                 ^^^^^^^^
+    |
+    = note: `#[warn(suspicious_double_ref_op)]` on by default
+
+warning: unused `axum::Json` that must be used
+   --> crates\zentra-api\src\handlers\oracle_metrics.rs:194:5
+    |
+194 |     Json(json!({"deleted": id}));
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+    |
+194 |     let _ = Json(json!({"deleted": id}));
+    |     +++++++
+
+warning: `zentra-api` (lib) generated 84 warnings (run `cargo fix --lib -p zentra-api` to apply 77 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.25s

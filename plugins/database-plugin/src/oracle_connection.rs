@@ -399,7 +399,7 @@ impl OracleConnectionPool {
         #[cfg(feature = "native-oracle")]
         if let Some(ref pool) = self.native_pool {
             let conn = pool.get().map_err(|e| OraError::classify(-1, &e.to_string()))?;
-            let stmt = conn.statement(sql).build()
+            let mut stmt = conn.statement(sql).build()
                 .map_err(|e| OraError::classify(-1, &e.to_string()))?;
             let result_set = stmt.query(&[])
                 .map_err(|e| OraError::classify(-1, &e.to_string()))?;

@@ -2,7 +2,7 @@ use axum::{extract::{State, Path, Query}, Json};
 use crate::state::AppState;
 use crate::error::ApiError;
 use crate::tenant::OrgId;
-use crate::ssh_utils;
+use zentra_core::ssh_utils;
 use crate::validation;
 use zentra_core::models::target::{CreateTargetRequest, Target, TargetCredentials, TargetSubtype};
 use serde::{Deserialize, Serialize};

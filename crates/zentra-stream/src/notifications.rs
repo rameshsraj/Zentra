@@ -11,7 +11,7 @@
 //! 8. Syslog (RFC 5424)
 
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn, error};
+use tracing::info;
 use std::collections::HashMap;
 
 /// Notification severity levels

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use crate::state::AppState;
 use crate::tenant::OrgId;
-use crate::ssh_utils;
+use zentra_core::ssh_utils;
 
 use crate::error::ApiError;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -42,6 +42,26 @@ pub struct ConnIdParam {
 /// Run a SQL query against an Oracle instance using local sqlplus (Oracle Instant Client).
 /// Looks up connection details from ORACLE_CONNECTIONS by connection_id.
 pub async fn oracle_local_query(connection_id: &str, sql: &str) -> Result<String, String> {
+    // Attempt native query first if available in the registry
+    if database_plugin::oracle_connection::pool_is_connected(connection_id) {
+        match database_plugin::oracle_connection::pool_query(connection_id, sql) {
+            Ok(res) => {
+                // Format results as newline-separated pipe-delimited strings to maintain
+                // compatibility with existing parsers that expect sqlplus-style output.
+                let output = res.rows.iter()
+                    .map(|row| row.join("|"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if !output.is_empty() {
+                    return Ok(output);
+                }
+            }
+            Err(e) => {
+                tracing::debug!("Native query failed for pool {}, falling back to sqlplus: {}", connection_id, e);
+            }
+        }
+    }
+
     let (host, port, service_name, username, password, role_str) = {
         let store = oracle_connections().read();
         let conn = store.iter().find(|c| c.id == connection_id)

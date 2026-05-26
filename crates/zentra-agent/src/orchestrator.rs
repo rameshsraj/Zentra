@@ -1,10 +1,13 @@
 use crate::plugin_manager::PluginInstance;
+use crate::collectors::ebpf_profiler::EbpfProfiler;
 use zentra_core::models::metric::MetricBatch;
-use zentra_core::models::target::Target;
+use zentra_core::models::target::{Target, TargetType};
 use zentra_stream::EventBus;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, error, warn, debug};
+use sqlx::PgPool;
+use uuid::Uuid;
 
 const MAX_CONSECUTIVE_FAILURES: u32 = 5;
 const BACKOFF_BASE_MS: u64 = 1000;
@@ -14,6 +17,7 @@ const MAX_BACKOFF_MS: u64 = 60_000;
 pub struct Orchestrator {
     event_bus: EventBus,
     metric_tx: mpsc::Sender<MetricBatch>,
+    profiler: EbpfProfiler,
     cancel: CancellationToken,
 }
 
@@ -21,9 +25,12 @@ impl Orchestrator {
     pub fn new(
         event_bus: EventBus,
         metric_tx: mpsc::Sender<MetricBatch>,
+        pool: sqlx::PgPool,
+        org_id: uuid::Uuid,
         cancel: CancellationToken,
     ) -> Self {
-        Self { event_bus, metric_tx, cancel }
+        let profiler = EbpfProfiler::new(pool, org_id);
+        Self { event_bus, metric_tx, profiler, cancel }
     }
 
     /// Start a collection loop for a single target + plugin pair.
@@ -35,7 +42,7 @@ impl Orchestrator {
     ) {
         let plugin_meta = plugin.metadata();
         let plugin_id = plugin_meta.id.to_string();
-        let target_name = target.name.clone();
+        let target_name = target.name.clone(); let target_type = target.target_type.clone();
 
         info!(plugin = %plugin_id, target = %target_name, "Starting collection loop");
 
@@ -92,12 +99,25 @@ impl Orchestrator {
 
         let interval = plugin.polling_interval();
         let mut consecutive_failures: u32 = 0;
+        let mut last_profile_at = tokio::time::Instant::now() - tokio::time::Duration::from_secs(3600);
 
         loop {
             // Check for shutdown
             if self.cancel.is_cancelled() {
                 info!(plugin = %plugin_id, target = %target_name, "Collection loop stopping (shutdown)");
                 break;
+            }
+
+            // Periodic profiling for server targets (every 1 hour)
+            if target_type == TargetType::Server && last_profile_at.elapsed() > tokio::time::Duration::from_secs(3600) {
+                let target_clone = target.clone();
+                let profiler = self.profiler.clone_with_pool();
+                tokio::spawn(async move {
+                    if let Err(e) = profiler.profile_target(&target_clone, 30, None).await {
+                        error!(target = %target_clone.name, error = %e, "Background profiling failed");
+                    }
+                });
+                last_profile_at = tokio::time::Instant::now();
             }
 
             // Collect metrics

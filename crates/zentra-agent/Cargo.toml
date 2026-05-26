@@ -15,7 +15,7 @@ zentra-ingestion = { workspace = true }
 zentra-log-engine = { workspace = true }
 network-plugin = { workspace = true }
 server-plugin = { workspace = true }
-database-plugin = { workspace = true }
+database-plugin = { workspace = true, features = ["native-oracle"] }
 storage-plugin = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
@@ -31,3 +31,10 @@ reqwest = { workspace = true }
 dns-lookup = { workspace = true }
 dotenvy = { workspace = true }
 sqlx = { workspace = true }
+tonic = { workspace = true }
+http = "1.1"
+prost = { workspace = true }
+prost-types = { workspace = true }
+
+[build-dependencies]
+prost-build = "0.13"

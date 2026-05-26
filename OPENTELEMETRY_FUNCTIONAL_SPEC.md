@@ -1,8 +1,8 @@
-# InfraScope — OpenTelemetry Module: Functional Specification
+# Zentra — OpenTelemetry Module: Functional Specification
 
 > **Version:** 1.0  
 > **Last Updated:** May 2026  
-> **Module Owner:** InfraScope Engineering  
+> **Module Owner:** Zentra Engineering  
 > **Status:** Implemented & Deployed
 
 ---
@@ -32,7 +32,7 @@
 
 ## 1. Module Overview
 
-The OpenTelemetry module makes InfraScope a **native OTLP backend** — any application instrumented with OpenTelemetry SDKs (Java, Python, Go, Node.js, .NET, Rust) can send traces, metrics, logs, and profiles directly to InfraScope without any intermediary.
+The OpenTelemetry module makes Zentra a **native OTLP backend** — any application instrumented with OpenTelemetry SDKs (Java, Python, Go, Node.js, .NET, Rust) can send traces, metrics, logs, and profiles directly to Zentra without any intermediary.
 
 ### Key Capabilities
 
@@ -41,7 +41,7 @@ The OpenTelemetry module makes InfraScope a **native OTLP backend** — any appl
 | **Signals** | Traces, Metrics, Logs, Profiles (4th signal, alpha) |
 | **Transports** | HTTP (:7001) + gRPC (:4317) |
 | **Encodings** | JSON (`application/json`) + Protobuf (`application/x-protobuf`) |
-| **Auth** | JWT Bearer, OTLP API Keys (`isok_` prefix), `X-InfraScope-Org-Id` header |
+| **Auth** | JWT Bearer, OTLP API Keys (`isok_` prefix), `X-Zentra-Org-Id` header |
 | **Standards** | OTLP v1.3.0, OTel Semantic Conventions |
 | **Storage** | PostgreSQL + TimescaleDB hypertables |
 
@@ -66,7 +66,7 @@ The OpenTelemetry module makes InfraScope a **native OTLP backend** — any appl
                │ OTLP/HTTP (JSON/Proto)   │ OTLP/gRPC (Proto)
                ▼                          ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│                      InfraScope Backend                          │
+│                      Zentra Backend                          │
 │                                                                  │
 │  HTTP Server (:7001)              gRPC Server (:4317)            │
 │  ├── POST /v1/traces              ├── TraceService/Export        │
@@ -74,7 +74,7 @@ The OpenTelemetry module makes InfraScope a **native OTLP backend** — any appl
 │  ├── POST /v1/logs                ├── LogsService/Export         │
 │  └── POST /v1/profiles            └── ProfilesService/Export     │
 │                                                                  │
-│  Auth Layer: JWT | OTLP API Key (isok_) | X-InfraScope-Org-Id   │
+│  Auth Layer: JWT | OTLP API Key (isok_) | X-Zentra-Org-Id   │
 │  Encoding:   JSON ←→ Protobuf (prost decode → JSON normalize)   │
 │  Enrichment: Semantic Convention extraction → indexed columns    │
 │                                                                  │
@@ -221,7 +221,7 @@ The OpenTelemetry module makes InfraScope a **native OTLP backend** — any appl
 
 ### 4.4 Collector Setup
 
-**Purpose:** Generate an OpenTelemetry Collector configuration file, and explain that direct-to-InfraScope is the primary path.
+**Purpose:** Generate an OpenTelemetry Collector configuration file, and explain that direct-to-Zentra is the primary path.
 
 **Route:** `/otel-config`  
 **API:** `GET /api/otel/collector-config?org_id=X&traces=true&metrics=true&logs=true&profiles=true`  
@@ -249,13 +249,13 @@ receivers:
 processors:
   batch: { timeout: 5s, send_batch_size: 1024 }
 exporters:
-  otlphttp/infrascope:
+  otlphttp/zentra:
     endpoint: http://<host>:<port>
     encoding: json
-    headers: { X-InfraScope-Org-Id: "<org-id>" }
+    headers: { X-Zentra-Org-Id: "<org-id>" }
 service:
   pipelines:
-    traces: { receivers: [otlp], processors: [batch], exporters: [otlphttp/infrascope] }
+    traces: { receivers: [otlp], processors: [batch], exporters: [otlphttp/zentra] }
     metrics: { ... }
     logs: { ... }
     profiles: { ... }
@@ -290,7 +290,7 @@ service:
 
 **User Flow:**
 1. User selects their language from the sidebar
-2. Edits the "InfraScope host" field to match their deployment
+2. Edits the "Zentra host" field to match their deployment
 3. Copies install command, adds to their build
 4. Copies run command or code snippet
 5. Sets env vars → application starts sending OTel data
@@ -299,7 +299,7 @@ service:
 
 ### 4.6 Pipeline Topology
 
-**Purpose:** Visualize the telemetry data flow: Application → (optional Collector) → InfraScope.
+**Purpose:** Visualize the telemetry data flow: Application → (optional Collector) → Zentra.
 
 **Route:** `/otel-pipeline`  
 **API:** `GET /api/otel/pipeline`  
@@ -309,7 +309,7 @@ service:
 - **Three-column flow diagram:**
   - **Applications** (blue) — services classified by `service.name`
   - **Collectors** (amber) — services matching `*otelcol*` or `*collector*`
-  - **InfraScope** (green) — the backend with all 4 signal endpoints
+  - **Zentra** (green) — the backend with all 4 signal endpoints
 - **Per Node:** service name, host, span count, last seen, active/stale indicator
 - **Summary Cards:** total applications, total collectors, backend status
 - **Auto-refresh:** every 30 seconds
@@ -466,7 +466,7 @@ service:
   - Per-request: signal, endpoint, status code, span count, payload bytes, remote IP, user agent, timestamp
   - Auto-refreshes every 15 seconds
 
-**API Key Format:** `isok_<random-32-chars>` (prefix `isok_` = InfraScope OTLP Key)
+**API Key Format:** `isok_<random-32-chars>` (prefix `isok_` = Zentra OTLP Key)
 
 **DB Tables:**
 
@@ -513,9 +513,9 @@ service:
 | POST | `/v1/profiles` | Profiles | `ingest_profiles()` |
 
 ### Auth Resolution Order
-1. **JWT Bearer** — standard InfraScope auth token → extracts `org_id` from claims
+1. **JWT Bearer** — standard Zentra auth token → extracts `org_id` from claims
 2. **OTLP API Key** — `Authorization: Bearer isok_...` → validates against `otlp_api_keys` table
-3. **Header Fallback** — `X-InfraScope-Org-Id: <uuid>` → direct org specification
+3. **Header Fallback** — `X-Zentra-Org-Id: <uuid>` → direct org specification
 
 ### Encoding Detection
 - `Content-Type: application/json` → JSON path (default)
@@ -669,7 +669,7 @@ SELECT create_hypertable('otlp_ingest_audit', 'created_at', if_not_exists => tru
 
 ## 7. Semantic Conventions
 
-InfraScope implements OTel Semantic Conventions for automatic attribute extraction and indexing.
+Zentra implements OTel Semantic Conventions for automatic attribute extraction and indexing.
 
 **Domains Covered:**
 
@@ -742,7 +742,7 @@ distributed trace spans ingested via OTLP.
 BACKEND (Rust/axum):
   Ingest Handler: POST /v1/traces
   - Accept application/json and application/x-protobuf (feature-gated)
-  - Auth: JWT | OTLP API key | X-InfraScope-Org-Id header
+  - Auth: JWT | OTLP API key | X-Zentra-Org-Id header
   - Walk resourceSpans → scopeSpans → spans
   - Extract service_name from resource attributes
   - Extract semconv fields: http_method, http_status_code, db_system,
@@ -811,13 +811,13 @@ DB: Uses existing `traces` hypertable (no new migrations)
 
 ```
 GOAL: Build the Collector Setup page (/otel-config) that explains how to send
-telemetry to InfraScope — primarily direct, optionally via Collector.
+telemetry to Zentra — primarily direct, optionally via Collector.
 
 BACKEND (Rust/axum):
   Handler: GET /api/otel/collector-config?org_id=X&traces=true&metrics=true&...
   - Generate a valid OTel Collector YAML configuration
   - Receivers: otlp (gRPC + HTTP)
-  - Exporters: otlphttp/infrascope with proper endpoint, auth headers
+  - Exporters: otlphttp/zentra with proper endpoint, auth headers
   - Pipelines: one per enabled signal
   - Return as text/yaml
 
@@ -827,7 +827,7 @@ BACKEND (Rust/axum):
 
 FRONTEND (React/TypeScript):
   Page: OTelCollectorConfig.tsx
-  - **Primary section** (green highlight): Direct-to-InfraScope env vars
+  - **Primary section** (green highlight): Direct-to-Zentra env vars
     - HTTP: OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_PROTOCOL=http/json
     - gRPC: OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_PROTOCOL=grpc
     - "No Collector, no Docker, no extra infrastructure"
@@ -877,7 +877,7 @@ DB: None (stateless, snippets are hardcoded in handler)
 
 ```
 GOAL: Build the Pipeline Topology page (/otel-pipeline) that visualizes the
-telemetry data flow from apps through collectors to InfraScope.
+telemetry data flow from apps through collectors to Zentra.
 
 BACKEND (Rust/axum):
   Handler: GET /api/otel/pipeline
@@ -897,7 +897,7 @@ FRONTEND (React/TypeScript):
   Page: OTelPipeline.tsx
   - 3 summary cards: Applications count, Collectors count, Backend status
   - 3-column flow diagram:
-    - Applications (blue cards) → arrow → Collectors (amber cards) → arrow → InfraScope (green)
+    - Applications (blue cards) → arrow → Collectors (amber cards) → arrow → Zentra (green)
   - Per node: service name, host, span count, last seen, active/stale dot
   - Empty state: prompt to use Collector Config or SDK Guide
   - "How Pipeline Detection Works" explanation section
@@ -1137,13 +1137,13 @@ BACKEND (Rust/axum):
   - OtlpGrpcService struct with AppState
   - export_traces(Request<ExportTraceServiceRequest>) → Response<ExportTraceServiceResponse>
   - export_metrics, export_logs, export_profiles (same pattern)
-  - Auth: resolve org_id from gRPC metadata (authorization, x-infrascope-org-id)
+  - Auth: resolve org_id from gRPC metadata (authorization, x-zentra-org-id)
   - Decode: prost Message::decode → proto_to_json_*() → shared ingest logic
 
   Server startup in main.rs:
   - Feature-gated: #[cfg(feature = "grpc")]
   - Spawned via tokio::spawn alongside HTTP server
-  - Port: INFRASCOPE_GRPC_PORT env var or default 4317
+  - Port: ZENTRA_GRPC_PORT env var or default 4317
   - tonic::transport::Server with all 4 service implementations
 
   Feature gate: `grpc` in Cargo.toml (implies `otlp-proto`)
@@ -1156,7 +1156,7 @@ DB: No changes — gRPC handlers reuse the same insert logic as HTTP
 
 ## End of Document
 
-This document covers the complete OpenTelemetry module of InfraScope:
+This document covers the complete OpenTelemetry module of Zentra:
 - **10 UI pages** with frontend components and API endpoints
 - **13 workable prompts** for implementing each feature
 - **Full database schema** for all OTel tables

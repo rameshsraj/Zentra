@@ -6,12 +6,9 @@ use axum::{extract::{State, Path, Query}, Json};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use uuid::Uuid;
 use std::collections::HashMap;
-use std::sync::Arc;
-use parking_lot::RwLock;
 use crate::state::AppState;
-
+use crate::tenant::OrgId;
 use crate::error::ApiError;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -51,13 +48,6 @@ pub struct TraceSummary {
     pub started_at: DateTime<Utc>,
 }
 
-// In-memory trace store (MVP — replace with DB in production)
-fn trace_store() -> &'static RwLock<Vec<Span>> {
-    static INSTANCE: std::sync::OnceLock<RwLock<Vec<Span>>> = std::sync::OnceLock::new();
-    INSTANCE.get_or_init(|| RwLock::new(Vec::new()))
-}
-
-
 // ═══════════════════════════════════════════════════════════════════════════
 // Handlers
 // ═══════════════════════════════════════════════════════════════════════════
@@ -75,102 +65,171 @@ pub struct TraceSearchParams {
 
 /// GET /api/traces — search traces
 pub async fn search_traces(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
     Query(params): Query<TraceSearchParams>,
-) -> Json<Value> {
-    let store = trace_store().read();
-    let limit = params.limit.unwrap_or(20);
-
-    // Group spans by trace_id
-    let mut trace_map: HashMap<String, Vec<&Span>> = HashMap::new();
-    for span in store.iter() {
-        trace_map.entry(span.trace_id.clone()).or_default().push(span);
+) -> Result<Json<Value>, ApiError> {
+    let limit = params.limit.unwrap_or(20) as i64;
+    let mut where_clauses = vec!["org_id = $1".to_string()];
+    
+    if params.service.is_some() {
+        where_clauses.push(format!("service_name = ${}", where_clauses.len() + 1));
+    }
+    if params.operation.is_some() {
+        where_clauses.push(format!("operation_name LIKE ${}", where_clauses.len() + 1));
+    }
+    if params.min_duration_us.is_some() {
+        where_clauses.push(format!("duration_us >= ${}", where_clauses.len() + 1));
     }
 
-    let mut summaries: Vec<TraceSummary> = trace_map.into_iter().filter_map(|(trace_id, spans)| {
-        let root = spans.iter().find(|s| s.parent_span_id.is_none())?;
+    let sql = format!(
+        "SELECT DISTINCT trace_id, service_name as root_service, operation_name as root_operation, 
+                duration_us as total_duration_us, started_at,
+                (SELECT count(*) FROM traces s2 WHERE s2.trace_id = traces.trace_id) as span_count,
+                (SELECT EXISTS(SELECT 1 FROM traces s3 WHERE s3.trace_id = traces.trace_id AND status = 'error')) as has_errors
+         FROM traces 
+         WHERE {} 
+         AND parent_span_id IS NULL
+         ORDER BY started_at DESC 
+         LIMIT ${}",
+        where_clauses.join(" AND "),
+        where_clauses.len() + 1
+    );
 
-        // Apply filters
-        if let Some(ref svc) = params.service {
-            if !spans.iter().any(|s| s.service_name.eq_ignore_ascii_case(svc)) { return None; }
-        }
-        if let Some(ref op) = params.operation {
-            if !spans.iter().any(|s| s.operation_name.contains(op.as_str())) { return None; }
-        }
-        if let Some(min_d) = params.min_duration_us {
-            if root.duration_us < min_d { return None; }
-        }
-        if let Some(max_d) = params.max_duration_us {
-            if root.duration_us > max_d { return None; }
-        }
+    let mut query = sqlx::query_as::<_, TraceSummaryRow>(&sql)
+        .bind(org_id);
 
-        let services: Vec<String> = spans.iter().map(|s| s.service_name.clone()).collect::<std::collections::HashSet<_>>().into_iter().collect();
-        let has_errors = spans.iter().any(|s| s.status == "ERROR" || s.tags.get("error").map_or(false, |v| v == "true"));
+    if let Some(ref svc) = params.service {
+        query = query.bind(svc);
+    }
+    if let Some(ref op) = params.operation {
+        query = query.bind(format!("%{}%", op));
+    }
+    if let Some(min_d) = params.min_duration_us {
+        query = query.bind(min_d);
+    }
+    query = query.bind(limit);
 
-        Some(TraceSummary {
-            trace_id,
-            root_service: root.service_name.clone(),
-            root_operation: root.operation_name.clone(),
-            total_duration_us: root.duration_us,
-            span_count: spans.len(),
-            has_errors,
-            services,
-            started_at: root.start_time,
-        })
+    let rows = query
+        .fetch_all(&state.tsdb_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let summaries: Vec<TraceSummary> = rows.into_iter().map(|r| TraceSummary {
+        trace_id: r.trace_id,
+        root_service: r.root_service,
+        root_operation: r.root_operation,
+        total_duration_us: r.total_duration_us,
+        span_count: r.span_count as usize,
+        has_errors: r.has_errors,
+        services: vec![],
+        started_at: r.started_at,
     }).collect();
 
-    summaries.sort_by(|a, b| b.started_at.cmp(&a.started_at));
-    summaries.truncate(limit);
-
-    Json(json!({ "traces": summaries, "count": summaries.len() }))
+    Ok(Json(json!({ "traces": summaries, "count": summaries.len() })))
 }
 
-/// GET /api/traces/:traceId — get all spans for a trace
+#[derive(sqlx::FromRow)]
+struct TraceSummaryRow {
+    trace_id: String,
+    root_service: String,
+    root_operation: String,
+    total_duration_us: i64,
+    span_count: i64,
+    has_errors: bool,
+    started_at: DateTime<Utc>,
+}
+
+/// GET /api/traces/:traceId — get all traces for a trace
 pub async fn get_trace(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
     Path(trace_id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
-    let store = trace_store().read();
-    let spans: Vec<&Span> = store.iter().filter(|s| s.trace_id == trace_id).collect();
+    let traces = sqlx::query_as::<_, DbSpanRow>(
+        "SELECT span_id, trace_id, parent_span_id, operation_name, service_name, duration_us, started_at, status, tags, events
+         FROM traces WHERE trace_id = $1 AND org_id = $2 ORDER BY started_at ASC"
+    )
+    .bind(&trace_id)
+    .bind(org_id)
+    .fetch_all(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    if spans.is_empty() {
+    if traces.is_empty() {
         return Err(ApiError::NotFound(format!("Trace '{}' not found", trace_id)));
     }
 
     Ok(Json(json!({
         "trace_id": trace_id,
-        "spans": spans,
-        "span_count": spans.len(),
+        "traces": traces,
+        "span_count": traces.len(),
     })))
 }
 
-/// GET /api/traces/services — list known services
-pub async fn list_services() -> Json<Value> {
-    let store = trace_store().read();
-    let services: Vec<String> = store.iter().map(|s| s.service_name.clone())
-        .collect::<std::collections::HashSet<_>>().into_iter().collect();
-    Json(json!({ "services": services }))
+#[derive(sqlx::FromRow, Serialize)]
+struct DbSpanRow {
+    span_id: String,
+    trace_id: String,
+    parent_span_id: Option<String>,
+    operation_name: String,
+    service_name: String,
+    duration_us: i64,
+    started_at: DateTime<Utc>,
+    status: String,
+    tags: Value,
+    events: Value,
 }
 
-/// GET /api/traces/operations?service=<name> — list operations for service
+/// GET /api/traces/services — list known services
+pub async fn list_services(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+) -> Result<Json<Value>, ApiError> {
+    let services = sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT service_name FROM traces WHERE org_id = $1 ORDER BY service_name"
+    )
+    .bind(org_id)
+    .fetch_all(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    Ok(Json(json!({ "services": services })))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct OperationsQuery {
     pub service: Option<String>,
 }
 
+/// GET /api/traces/operations?service=<name> — list operations for service
 pub async fn list_operations(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
     Query(params): Query<OperationsQuery>,
-) -> Json<Value> {
-    let store = trace_store().read();
-    let ops: Vec<String> = store.iter()
-        .filter(|s| params.service.as_ref().map_or(true, |svc| s.service_name.eq_ignore_ascii_case(svc)))
-        .map(|s| s.operation_name.clone())
-        .collect::<std::collections::HashSet<_>>().into_iter().collect();
-    Json(json!({ "operations": ops }))
+) -> Result<Json<Value>, ApiError> {
+    let mut sql = "SELECT DISTINCT operation_name FROM traces WHERE org_id = $1".to_string();
+    if params.service.is_some() {
+        sql.push_str(" AND service_name = $2");
+    }
+    sql.push_str(" ORDER BY operation_name");
+
+    let mut query = sqlx::query_scalar::<_, String>(&sql).bind(org_id);
+    if let Some(ref svc) = params.service {
+        query = query.bind(svc);
+    }
+
+    let ops = query
+        .fetch_all(&state.tsdb_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    Ok(Json(json!({ "operations": ops })))
 }
 
 /// POST /api/v1/traces — ingest OTLP JSON traces
 #[derive(Debug, Deserialize)]
 pub struct OtlpIngestRequest {
-    pub resource_spans: Option<Vec<Value>>,
     pub spans: Option<Vec<IngestSpan>>,
 }
 
@@ -194,6 +253,7 @@ pub struct IngestSpan {
 /// POST /api/query/traceql — execute TraceQL expression
 pub async fn traceql_query(
     State(state): State<AppState>,
+    OrgId(_org_id): OrgId,
     Json(body): Json<zentra_query::traceql::TraceQlQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let results = zentra_query::traceql::run(&body, &state.tsdb_pool)
@@ -231,6 +291,7 @@ pub struct TempoSearchQuery {
 /// GET /tempo/api/search?q={...}&start=&end=&limit= — Tempo-compatible search
 pub async fn tempo_search(
     State(state): State<AppState>,
+    OrgId(_org_id): OrgId,
     Query(params): Query<TempoSearchQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let expr = params.q.unwrap_or_else(|| "{status=error}".into());
@@ -269,34 +330,26 @@ pub async fn tempo_search(
     })))
 }
 
-/// GET /tempo/api/traces/:traceID — Tempo-compatible trace detail
+/// GET /tempo/api/traces/:traceId — Tempo-compatible trace detail
 pub async fn tempo_trace(
     State(state): State<AppState>,
+    OrgId(_org_id): OrgId,
     Path(trace_id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     // Query spans from DB
-    let spans = sqlx::query_as::<_, TempoSpanRow>(
-        "SELECT span_id, trace_id, parent_span_id, operation_name, service_name, duration_us, started_at, status, tags FROM spans WHERE trace_id = $1 ORDER BY started_at"
+    let traces = sqlx::query_as::<_, DbSpanRow>(
+        "SELECT span_id, trace_id, parent_span_id, operation_name, service_name, duration_us, started_at, status, tags, events FROM traces WHERE trace_id = $1 ORDER BY started_at"
     )
     .bind(&trace_id)
     .fetch_all(&state.tsdb_pool)
     .await
     .unwrap_or_default();
 
-    if spans.is_empty() {
-        // Fall back to in-memory store
-        let store = trace_store().read();
-        let mem_spans: Vec<&Span> = store.iter().filter(|s| s.trace_id == trace_id).collect();
-        if mem_spans.is_empty() {
-            return Err(ApiError::NotFound(format!("Trace '{}' not found", trace_id)));
-        }
-        return Ok(Json(json!({
-            "traceID": trace_id,
-            "spans": mem_spans,
-        })));
+    if traces.is_empty() {
+        return Err(ApiError::NotFound(format!("Trace '{}' not found", trace_id)));
     }
 
-    let tempo_spans: Vec<Value> = spans.iter().map(|s| json!({
+    let tempo_spans: Vec<Value> = traces.iter().map(|s| json!({
         "spanID": s.span_id,
         "traceID": s.trace_id,
         "operationName": s.operation_name,
@@ -314,54 +367,55 @@ pub async fn tempo_trace(
     })))
 }
 
-#[derive(sqlx::FromRow)]
-#[allow(dead_code)]
-struct TempoSpanRow {
-    span_id: String,
-    trace_id: String,
-    parent_span_id: Option<String>,
-    operation_name: String,
-    service_name: String,
-    duration_us: i64,
-    started_at: DateTime<Utc>,
-    status: String,
-    tags: Option<serde_json::Value>,
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // OTLP Ingest
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub async fn ingest_traces(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
     Json(req): Json<OtlpIngestRequest>,
-) -> Json<Value> {
+) -> Result<Json<Value>, ApiError> {
     let mut count = 0;
 
     if let Some(spans) = req.spans {
-        let mut store = trace_store().write();
         for s in spans {
             let start = s.start_time_unix_nano
                 .and_then(|ns| DateTime::from_timestamp_nanos(ns).into())
                 .unwrap_or_else(Utc::now);
-            store.push(Span {
-                trace_id: s.trace_id,
-                span_id: s.span_id,
-                parent_span_id: s.parent_span_id,
-                operation_name: s.operation_name,
-                service_name: s.service_name,
-                start_time: start,
-                duration_us: s.duration_us.unwrap_or(0),
-                status: s.status.unwrap_or_else(|| "OK".into()),
-                tags: s.tags.unwrap_or_default(),
-                events: vec![],
-            });
+                
+            let duration_us = s.duration_us.unwrap_or(0);
+            let end = start + chrono::Duration::microseconds(duration_us);
+
+            sqlx::query(
+                r#"INSERT INTO traces (org_id, trace_id, span_id, parent_span_id, operation_name, service_name, 
+                                     started_at, ended_at, duration_us, status, tags, events)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                   ON CONFLICT DO NOTHING"#
+            )
+            .bind(org_id)
+            .bind(&s.trace_id)
+            .bind(&s.span_id)
+            .bind(&s.parent_span_id)
+            .bind(&s.operation_name)
+            .bind(&s.service_name)
+            .bind(start)
+            .bind(end)
+            .bind(duration_us)
+            .bind(s.status.unwrap_or_else(|| "OK".into()))
+            .bind(serde_json::to_value(&s.tags).unwrap_or(json!({})))
+            .bind(json!([]))
+            .execute(&state.tsdb_pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+            
             count += 1;
         }
     }
 
-    Json(json!({
+    Ok(Json(json!({
         "status": "success",
         "spans_ingested": count,
         "timestamp": Utc::now().to_rfc3339()
-    }))
+    })))
 }

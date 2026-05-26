@@ -106,6 +106,12 @@ async fn main() {
     info!(demo = state.is_demo_mode(), "Demo mode initialized");
 
     // ============================================================
+    // Start Background Jobs (Automation)
+    // ============================================================
+    zentra_api::background_jobs::start_background_jobs(state.clone());
+    info!("Background jobs started (RED metrics refresh, alert evaluation)");
+
+    // ============================================================
     // Reload middleware instances from DB into in-memory stores
     // ============================================================
     zentra_api::handlers::targets::load_middleware_from_db(&state.pool, config.org_id).await;
@@ -203,6 +209,18 @@ async fn main() {
             .expect("invalid governor config"),
     );
     let governor_layer = GovernorLayer { config: governor_conf };
+
+    // ============================================================
+    // gRPC server for OTLP (port 4317) — feature-gated
+    // ============================================================
+    #[cfg(feature = "grpc")]
+    {
+        let grpc_state = state.clone();
+        tokio::spawn(async move {
+            zentra_api::grpc::start_grpc_server(grpc_state).await;
+        });
+        info!("OTLP gRPC server spawned (default port 4317)");
+    }
 
     // ============================================================
     // Build the layered app

@@ -36,7 +36,9 @@ export default function OTelResources() {
   )
 
   const totalServices = resources.length
-  const withTraces = resources.filter(r => (r.span_count ?? 0) > 0).length
+  const withTraces = resources.filter(r => r.signals?.traces).length
+  const withMetrics = resources.filter(r => r.signals?.metrics).length
+  const withLogs = resources.filter(r => r.signals?.logs).length
 
   return (
     <div className="space-y-6">
@@ -49,8 +51,8 @@ export default function OTelResources() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <SummaryCard icon={Server} label="Total Services" value={totalServices} color="cyan" />
         <SummaryCard icon={Activity} label="With Traces" value={withTraces} color="blue" />
-        <SummaryCard icon={Cpu} label="With Metrics" value={0} color="emerald" />
-        <SummaryCard icon={ScrollText} label="With Logs" value={0} color="amber" />
+        <SummaryCard icon={Cpu} label="With Metrics" value={withMetrics} color="emerald" />
+        <SummaryCard icon={ScrollText} label="With Logs" value={withLogs} color="amber" />
       </div>
 
       {/* Search */}

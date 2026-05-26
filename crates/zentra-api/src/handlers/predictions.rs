@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::error::ApiError;
 
-fn internal(e: impl std::fmt::Display) -> ApiError {
+fn _internal(e: impl std::fmt::Display) -> ApiError {
     ApiError::Internal(e.to_string())
 }
 

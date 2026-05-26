@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use crate::state::AppState;
 use crate::tenant::OrgId;
-use crate::ssh_utils;
+use zentra_core::ssh_utils;
 use uuid::Uuid;
 
 use crate::error::ApiError;

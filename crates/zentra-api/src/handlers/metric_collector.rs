@@ -4,7 +4,7 @@
 //! storage arrays) and persists metrics into the `metrics` TimescaleDB hypertable
 //! for historical analysis. Data persists until the target is removed from monitoring.
 
-use crate::ssh_utils;
+use zentra_core::ssh_utils;
 use crate::state::AppState;
 use crate::handlers::{
     middleware_nginx, middleware_apache, middleware_haproxy, middleware_tomcat,

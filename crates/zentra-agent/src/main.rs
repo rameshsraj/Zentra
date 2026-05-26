@@ -76,6 +76,8 @@ async fn main() {
                 let orch = Orchestrator::new(
                     event_bus.clone(),
                     metric_tx.clone(),
+                    pool.clone(),
+                    config.org_id,
                     cancel.clone(),
                 );
                 tokio::spawn(async move {
@@ -122,6 +124,8 @@ async fn main() {
                     let orch = Orchestrator::new(
                         reload_event_bus.clone(),
                         reload_metric_tx.clone(),
+                        reload_pool.clone(),
+                        reload_org_id,
                         reload_cancel.clone(),
                     );
                     tokio::spawn(async move {
@@ -137,6 +141,19 @@ async fn main() {
     });
 
     info!("Target reload loop running (30s interval)");
+
+    // ============================================================
+    // Start Hubble gRPC Flow Collector (Cilium)
+    // ============================================================
+    let hubble_relay = std::env::var("HUBBLE_RELAY_ADDRESS").unwrap_or_else(|_| "hubble-relay:4245".into());
+    let hubble_collector = zentra_agent::collectors::hubble::HubbleCollector::new(
+        pool.clone(),
+        hubble_relay,
+        config.org_id,
+    );
+    tokio::spawn(async move {
+        hubble_collector.run().await;
+    });
 
     tokio::signal::ctrl_c().await.ok();
     info!("Shutdown signal received, stopping agent...");

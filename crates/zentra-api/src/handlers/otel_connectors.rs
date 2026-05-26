@@ -1,6 +1,6 @@
 //! OTel P09: Span-to-Metrics Connector.
 //!
-//! Derives RED metrics (Rate, Error, Duration) from ingested spans
+//! Derives RED metrics (Rate, Error, Duration) from ingested traces
 //! and stores them in `otel_derived_metrics`.
 
 use axum::{extract::{State, Query}, Json};
@@ -54,7 +54,7 @@ pub async fn list_connectors() -> Json<serde_json::Value> {
             {
                 "type": "span-to-metrics",
                 "enabled": true,
-                "description": "Derives RED metrics (Rate, Error rate, Duration percentiles) from ingested trace spans",
+                "description": "Derives RED metrics (Rate, Error rate, Duration percentiles) from ingested trace traces",
                 "dimensions": ["http_method", "http_route", "db_system", "rpc_service"],
                 "interval_seconds": 60,
                 "metrics_generated": ["request_count", "error_count", "duration_p50", "duration_p95", "duration_p99"],

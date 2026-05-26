@@ -149,6 +149,7 @@ const navItems: NavItem[] = [
       { to: '/rca', label: 'Root Cause', icon: SearchCode },
       { to: '/runbooks', label: 'RunBooks', icon: RotateCcw },
       { to: '/llm-observability', label: 'LLM Observability', icon: Brain },
+      { to: '/profiling', label: 'Profiling', icon: Cpu },
     ],
   },
   {
@@ -157,11 +158,15 @@ const navItems: NavItem[] = [
     icon: Activity,
     children: [
       { to: '/otel-dashboard', label: 'Telemetry Health', icon: Activity },
+      { to: '/traces', label: 'Traces', icon: Layers },
       { to: '/otel-resources', label: 'Resources', icon: Server },
       { to: '/otel-config', label: 'Collector Setup', icon: Settings },
       { to: '/otel-sdk-guide', label: 'SDK Guide', icon: Layers },
       { to: '/otel-connectors', label: 'Signal Connectors', icon: Layers },
       { to: '/otel-pipeline', label: 'Pipeline Topology', icon: Globe },
+      { to: '/otel-span-metrics', label: 'Span Metrics (RED)', icon: Activity },
+      { to: '/otel-alert-rules', label: 'Signal Alerts', icon: Bell },
+      { to: '/otel-security', label: 'OTLP Security', icon: Shield },
     ],
   },
   {

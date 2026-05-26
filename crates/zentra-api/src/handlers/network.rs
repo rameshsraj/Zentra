@@ -12,7 +12,7 @@ use sqlx;
 use crate::state::AppState;
 use crate::tenant::OrgId;
 use crate::handlers::config::live_mode_no_data;
-use crate::ssh_utils;
+use zentra_core::ssh_utils;
 
 use crate::error::ApiError;
 

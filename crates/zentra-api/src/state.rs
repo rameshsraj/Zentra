@@ -6,6 +6,7 @@ use zentra_query::log_query::LogQueryService;
 use zentra_query::global_search::GlobalSearchService;
 use zentra_log_engine::correlation::CorrelationEngine;
 use crate::target_pool::SharedTargetPoolCache;
+use dashmap::DashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -22,6 +23,8 @@ pub struct AppState {
     pub global_search: Arc<GlobalSearchService>,
     pub correlation: Arc<CorrelationEngine>,
     pub org_id: uuid::Uuid,
+    /// Cached OTLP API keys: hash -> (org_id, permissions)
+    pub otlp_key_cache: Arc<DashMap<String, (uuid::Uuid, Vec<String>)>>,
     /// Validated JWT signing secret (single source of truth).
     pub jwt_secret: Arc<str>,
     /// Cached outbound PgPools for monitored targets (max 64, 5-min idle TTL).
@@ -44,6 +47,7 @@ impl AppState {
             correlation: Arc::new(CorrelationEngine::new(tsdb_pool.clone())),
             event_history: Arc::new(EventHistory::new(10_000)),
             target_pools: crate::target_pool::new_cache(),
+            otlp_key_cache: Arc::new(DashMap::new()),
             jwt_secret: jwt_secret.into(),
             pool,
             tsdb_pool,

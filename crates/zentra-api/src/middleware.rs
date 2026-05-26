@@ -366,9 +366,9 @@ pub async fn audit_middleware(
     // Only audit write operations
     if matches!(method.as_str(), "POST" | "PUT" | "PATCH" | "DELETE") {
         if let Some(auth) = auth {
-            let action = format!("{} {}", method, path);
-            let resource_type = path.split('/').nth(2).unwrap_or("unknown").to_string();
-            let status_str = if response.status().is_success() { "success" } else { "error" };
+            let _action = format!("{} {}", method, path);
+            let _resource_type = path.split('/').nth(2).unwrap_or("unknown").to_string();
+            let _status_str = if response.status().is_success() { "success" } else { "error" };
 
             tracing::info!(
                 user_id = %auth.user_id,
