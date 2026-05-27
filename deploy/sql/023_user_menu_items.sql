@@ -51,14 +51,14 @@ DECLARE
     v_admin_id UUID;
 BEGIN
     -- Resolve user IDs
-    SELECT user_id INTO v_admin_id FROM users WHERE email = 'admin@zentra.local' AND org_id = v_org_id LIMIT 1;
+    SELECT id INTO v_admin_id FROM users WHERE email = 'admin@zentra.local' AND org_id = v_org_id LIMIT 1;
     IF v_admin_id IS NULL THEN
-        SELECT user_id INTO v_admin_id FROM users WHERE username = 'admin' AND org_id = v_org_id LIMIT 1;
+        SELECT id INTO v_admin_id FROM users WHERE username = 'admin' AND org_id = v_org_id LIMIT 1;
     END IF;
 
-    SELECT user_id INTO v_satheesh_id FROM users WHERE email = 'satheesh@zentra.local' AND org_id = v_org_id LIMIT 1;
-    SELECT user_id INTO v_jimmy_id FROM users WHERE email = 'jimmy@zentra.local' AND org_id = v_org_id LIMIT 1;
-    SELECT user_id INTO v_anand_id FROM users WHERE email = 'anand@zentra.local' AND org_id = v_org_id LIMIT 1;
+    SELECT id INTO v_satheesh_id FROM users WHERE email = 'satheesh@zentra.local' AND org_id = v_org_id LIMIT 1;
+    SELECT id INTO v_jimmy_id FROM users WHERE email = 'jimmy@zentra.local' AND org_id = v_org_id LIMIT 1;
+    SELECT id INTO v_anand_id FROM users WHERE email = 'anand@zentra.local' AND org_id = v_org_id LIMIT 1;
 
     -- ═══════════════════════════════════════════════════════════════════
     -- satheesh: command_center, infrastructure, database, middleware, alerts_events

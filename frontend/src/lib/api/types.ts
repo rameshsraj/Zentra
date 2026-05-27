@@ -889,6 +889,8 @@ export interface UserProfile extends UserSummary {
   permissions: { resource: string; action: string }[]
   module_access: string[]
   menu_items: string[]
+  is_admin: boolean
+  is_super_admin: boolean
 }
 export interface UserSession { id: string; ip_address: string | null; user_agent: string | null; expires_at: string; created_at: string }
 export interface MfaSetupResponse { secret: string; qr_uri: string }

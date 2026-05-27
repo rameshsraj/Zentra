@@ -22,9 +22,9 @@ use validator::Validate;
 
 const JWT_EXPIRY_HOURS: i64 = 8;
 const REFRESH_EXPIRY_DAYS: i64 = 30;
-const MAX_LOGIN_ATTEMPTS: i64 = 5;
-const LOCKOUT_WINDOW_MINUTES: i64 = 15;
-const LOCKOUT_DURATION_MINUTES: i64 = 30;
+const MAX_LOGIN_ATTEMPTS: i64 = 20;
+const LOCKOUT_WINDOW_MINUTES: i64 = 5;
+const LOCKOUT_DURATION_MINUTES: i64 = 15;
 
 fn hash_token(token: &str) -> String {
     let mut hasher = Sha256::new();
@@ -621,15 +621,37 @@ pub async fn me(
         .collect();
 
     // Get module access + menu items for this user, scoped by org_id
-    let is_admin = roles.iter().any(|r| r == "Admin" || r == "Super Admin");
+    let is_super_admin = roles.iter().any(|r| r == "Super Admin");
+    let is_admin = roles.iter().any(|r| r == "Admin") || is_super_admin;
     let org_id = user.1; // org_id from the user query
-    let (module_access, menu_items): (Vec<String>, Vec<String>) = if is_admin {
-        // Admin gets all modules, empty menu_items = see everything
-        (vec![
-            "command_center".into(), "infrastructure".into(), "database".into(),
-            "middleware".into(), "security".into(), "logs".into(),
-            "alerts_events".into(), "ai_analytics".into(), "opentelemetry".into(), "admin".into(),
-        ], vec![])
+
+    let all_modules = vec![
+        "command_center".into(), "infrastructure".into(), "database".into(),
+        "middleware".into(), "security".into(), "logs".into(),
+        "alerts_events".into(), "ai_analytics".into(), "opentelemetry".into(), "admin".into(),
+    ];
+
+    let (module_access, menu_items): (Vec<String>, Vec<String>) = if is_super_admin {
+        // Super Admin: unconditionally gets ALL modules, no sub-item filtering
+        (all_modules, vec![])
+    } else if is_admin {
+        // Admin: gets all modules by default but module access CAN be configured
+        // If they have explicit module_access rows, use those; otherwise fall back to all
+        let explicit: Vec<String> = sqlx::query_scalar::<_, String>(
+            "SELECT module_id FROM user_module_access WHERE user_id = $1 AND (org_id = $2 OR org_id IS NULL) ORDER BY module_id"
+        )
+        .bind(claims.sub)
+        .bind(org_id)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default();
+        if explicit.is_empty() {
+            (all_modules, vec![])
+        } else {
+            let modules = explicit.iter().filter(|m| !m.contains('.')).cloned().collect();
+            let items = explicit.iter().filter(|m| m.contains('.')).cloned().collect();
+            (modules, items)
+        }
     } else {
         let all: Vec<String> = sqlx::query_scalar::<_, String>(
             "SELECT module_id FROM user_module_access WHERE user_id = $1 AND (org_id = $2 OR org_id IS NULL) ORDER BY module_id"
@@ -665,6 +687,8 @@ pub async fn me(
         "permissions": perm_list,
         "module_access": module_access,
         "menu_items": menu_items,
+        "is_admin": is_admin,
+        "is_super_admin": is_super_admin,
     }))).into_response()
 }
 

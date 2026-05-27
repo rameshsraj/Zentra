@@ -14,6 +14,8 @@ pub fn router() -> Router<AppState> {
         .route("/api/users/:id/lock", post(handlers::users::lock_user))
         .route("/api/users/:id/unlock", post(handlers::users::unlock_user))
         .route("/api/users/:id/password", put(handlers::users::reset_password))
+        .route("/api/users/:id/modules", get(handlers::users::get_user_modules))
+        .route("/api/users/:id/modules", put(handlers::users::set_user_modules))
 
         // User Groups (V5 Prompt 2)
         .route("/api/user-groups", get(handlers::user_groups::list_groups))

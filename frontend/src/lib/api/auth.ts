@@ -72,6 +72,12 @@ export const getPermissions = () => fetchJSON<Record<string, PermissionItem[]>>(
 export const assignUserRoles = (userId: string, role_ids: string[]) =>
   fetchJSON<any>(`/users/${userId}/roles`, { method: 'POST', body: JSON.stringify({ role_ids }) })
 
+// Module Access (RBAC)
+export const getUserModules = (userId: string) =>
+  fetchJSON<{ user_id: string; modules: string[] }>(`/users/${userId}/modules`)
+export const setUserModules = (userId: string, modules: string[]) =>
+  fetchJSON<any>(`/users/${userId}/modules`, { method: 'PUT', body: JSON.stringify({ modules }) })
+
 // Audit Log (V5 Prompt 3)
 export const getAuditLog = (params?: Record<string, string>) => {
   const qs = params ? '?' + new URLSearchParams(params).toString() : ''

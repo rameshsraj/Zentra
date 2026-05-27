@@ -19,6 +19,7 @@ interface AuthContextType extends AuthState {
   moduleAccess: string[]
   menuItems: string[]
   isAdmin: boolean
+  isSuperAdmin: boolean
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -100,23 +101,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return state.user?.roles?.includes(role) ?? false
   }, [state.user])
 
-  const isAdmin = state.user?.roles?.some(r => r === 'Admin' || r === 'Super Admin') ?? false
+  const isSuperAdmin = state.user?.is_super_admin ?? state.user?.roles?.includes('Super Admin') ?? false
+  const isAdmin = isSuperAdmin || (state.user?.is_admin ?? state.user?.roles?.some(r => r === 'Admin') ?? false)
 
   const moduleAccess = state.user?.module_access ?? []
   const menuItems = state.user?.menu_items ?? []
 
   const hasModule = useCallback((moduleId: string): boolean => {
     if (!state.user) return false
-    if (isAdmin) return true
+    if (isSuperAdmin) return true // Super Admin always has all modules
     return state.user.module_access?.includes(moduleId) ?? false
-  }, [state.user, isAdmin])
+  }, [state.user, isSuperAdmin])
 
   // Check sub-menu item access. menuItemId format: 'module.item' e.g. 'infrastructure.servers'
   // Rule: if no sub-items exist for that module prefix, user sees ALL children.
   //       if sub-items exist, only those specific items are visible.
   const hasMenuItem = useCallback((menuItemId: string): boolean => {
     if (!state.user) return false
-    if (isAdmin) return true
+    if (isSuperAdmin) return true // Super Admin always has all menu items
     const items = state.user.menu_items ?? []
     // Extract module prefix (e.g. 'infrastructure' from 'infrastructure.servers')
     const modulePrefix = menuItemId.split('.')[0]
@@ -125,7 +127,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!hasAnySubItem) return true
     // Otherwise, check specific item
     return items.includes(menuItemId)
-  }, [state.user, isAdmin])
+  }, [state.user, isSuperAdmin])
 
   return (
     <AuthContext.Provider value={{
@@ -140,6 +142,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       moduleAccess,
       menuItems,
       isAdmin,
+      isSuperAdmin,
     }}>
       {children}
     </AuthContext.Provider>

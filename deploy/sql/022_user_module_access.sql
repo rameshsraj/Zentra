@@ -35,14 +35,14 @@ DECLARE
     v_admin_role_id UUID;
     v_pw_hash TEXT;
 BEGIN
-    -- Get admin user id (users table PK is user_id, auth code aliases it as id)
-    SELECT user_id INTO v_admin_id FROM users WHERE email = 'admin@zentra.local' LIMIT 1;
+    -- Get admin user id
+    SELECT id INTO v_admin_id FROM users WHERE email = 'admin@zentra.local' LIMIT 1;
     IF v_admin_id IS NULL THEN
-        SELECT user_id INTO v_admin_id FROM users WHERE username = 'admin' LIMIT 1;
+        SELECT id INTO v_admin_id FROM users WHERE username = 'admin' LIMIT 1;
     END IF;
 
     -- Reuse the admin's password hash so new users start with the same password
-    SELECT password_hash INTO v_pw_hash FROM users WHERE user_id = v_admin_id;
+    SELECT password_hash INTO v_pw_hash FROM users WHERE id = v_admin_id;
     IF v_pw_hash IS NULL THEN
         -- fallback: bcrypt hash for 'Admin@12345'
         v_pw_hash := '$2b$12$3koL0Rcqt5g3YdxIsq/g1u3h0gWbUGaj9uh2KFchf1xPkkPGS74gS';
@@ -64,10 +64,10 @@ BEGIN
     -- Create user: satheesh
     -- ═══════════════════════════════════════════════════════════════════
     v_satheesh_id := gen_random_uuid();
-    INSERT INTO users (user_id, org_id, email, username, password_hash, display_name, is_active)
+    INSERT INTO users (id, org_id, email, username, password_hash, display_name, is_active)
     VALUES (v_satheesh_id, v_org_id, 'satheesh@zentra.local', 'satheesh', v_pw_hash, 'Satheesh', true)
-    ON CONFLICT (email) DO UPDATE SET display_name = 'Satheesh', is_active = true
-    RETURNING user_id INTO v_satheesh_id;
+    ON CONFLICT (org_id, email) DO UPDATE SET display_name = 'Satheesh', is_active = true
+    RETURNING id INTO v_satheesh_id;
 
     -- Assign Viewer role
     INSERT INTO user_roles (user_id, role_id, org_id) VALUES (v_satheesh_id, v_viewer_role_id, v_org_id)
@@ -86,10 +86,10 @@ BEGIN
     -- Create user: jimmy
     -- ═══════════════════════════════════════════════════════════════════
     v_jimmy_id := gen_random_uuid();
-    INSERT INTO users (user_id, org_id, email, username, password_hash, display_name, is_active)
+    INSERT INTO users (id, org_id, email, username, password_hash, display_name, is_active)
     VALUES (v_jimmy_id, v_org_id, 'jimmy@zentra.local', 'jimmy', v_pw_hash, 'Jimmy', true)
-    ON CONFLICT (email) DO UPDATE SET display_name = 'Jimmy', is_active = true
-    RETURNING user_id INTO v_jimmy_id;
+    ON CONFLICT (org_id, email) DO UPDATE SET display_name = 'Jimmy', is_active = true
+    RETURNING id INTO v_jimmy_id;
 
     INSERT INTO user_roles (user_id, role_id, org_id) VALUES (v_jimmy_id, v_viewer_role_id, v_org_id)
     ON CONFLICT DO NOTHING;
@@ -107,10 +107,10 @@ BEGIN
     -- Create user: anand
     -- ═══════════════════════════════════════════════════════════════════
     v_anand_id := gen_random_uuid();
-    INSERT INTO users (user_id, org_id, email, username, password_hash, display_name, is_active)
+    INSERT INTO users (id, org_id, email, username, password_hash, display_name, is_active)
     VALUES (v_anand_id, v_org_id, 'anand@zentra.local', 'anand', v_pw_hash, 'Anand', true)
-    ON CONFLICT (email) DO UPDATE SET display_name = 'Anand', is_active = true
-    RETURNING user_id INTO v_anand_id;
+    ON CONFLICT (org_id, email) DO UPDATE SET display_name = 'Anand', is_active = true
+    RETURNING id INTO v_anand_id;
 
     INSERT INTO user_roles (user_id, role_id, org_id) VALUES (v_anand_id, v_viewer_role_id, v_org_id)
     ON CONFLICT DO NOTHING;

@@ -331,7 +331,7 @@ Invoke-SSH "chmod +x $DEPLOY_PATH/start.sh"
 Write-Host ""
 Write-Host "STEP 8: Running SQL migrations..." -ForegroundColor Green
 
-Invoke-SSH "cd $DEPLOY_PATH/deploy/sql && export PGPASSWORD='zantaz' && for f in 001_schema.sql 002_indexes.sql 003_license_management.sql 004_predictions.sql 005_scrape_targets.sql 006_annotations.sql 007_dashboards.sql 008_timescaledb_enhance.sql 009_dashboard_enhance.sql 010_rbac_audit.sql 011_favorites_blacklist.sql 012_auth_system.sql 013_network_security.sql 014_oracle_monitoring.sql; do echo Applying: `$f; psql -h 10.88.11.162 -p 5434 -U postgres -d postgres -f `$f 2>&1 | tail -2; done && echo ALL_MIGRATIONS_APPLIED"
+Invoke-SSH "cd $DEPLOY_PATH/deploy/sql && export PGPASSWORD='zantaz' && for f in 001_schema.sql 002_indexes.sql 003_license_management.sql 004_predictions.sql 005_scrape_targets.sql 006_annotations.sql 007_dashboards.sql 008_timescaledb_enhance.sql 009_dashboard_enhance.sql 010_rbac_audit.sql 011_favorites_blacklist.sql 012_auth_system.sql 013_network_security.sql 014_oracle_monitoring.sql 022_user_module_access.sql 023_user_menu_items.sql; do echo Applying: `$f; psql -h 10.88.11.162 -p 5434 -U postgres -d zentra -f `$f 2>&1 | tail -2; done && echo ALL_MIGRATIONS_APPLIED"
 
 # =============================================================
 # STEP 9: Start services

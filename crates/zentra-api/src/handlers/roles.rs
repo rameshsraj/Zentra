@@ -189,6 +189,58 @@ pub async fn assign_user_roles(
     Path(user_id): Path<Uuid>,
     Json(req): Json<AssignRolesRequest>,
 ) -> impl IntoResponse {
+    // Resolve Super Admin role_id
+    let super_admin_role_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT role_id FROM roles WHERE name = 'Super Admin' AND org_id = $1 LIMIT 1"
+    )
+    .bind(org_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    // Check if Super Admin role is being assigned
+    if let Some(sa_id) = super_admin_role_id {
+        let assigning_super = req.role_ids.iter().any(|r| *r == sa_id);
+        if assigning_super {
+            // Check if another user already holds Super Admin
+            let current_holder: Option<Uuid> = sqlx::query_scalar(
+                "SELECT user_id FROM user_roles WHERE role_id = $1 AND org_id = $2 LIMIT 1"
+            )
+            .bind(sa_id)
+            .bind(org_id)
+            .fetch_optional(&state.pool)
+            .await
+            .unwrap_or(None);
+
+            if let Some(holder) = current_holder {
+                if holder != user_id {
+                    return (StatusCode::CONFLICT, Json(json!({
+                        "error": "super_admin_exists",
+                        "message": "Only one Super Admin is allowed per system. Transfer the role first by removing it from the current holder."
+                    }))).into_response();
+                }
+            }
+        }
+
+        // Prevent removing Super Admin role from the holder if they are the only one
+        let is_current_super: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM user_roles WHERE user_id = $1 AND role_id = $2 AND org_id = $3)"
+        )
+        .bind(user_id)
+        .bind(sa_id)
+        .bind(org_id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(false);
+
+        if is_current_super && !req.role_ids.iter().any(|r| *r == sa_id) {
+            return (StatusCode::FORBIDDEN, Json(json!({
+                "error": "cannot_remove_super_admin",
+                "message": "Cannot remove Super Admin role. Transfer it to another user first."
+            }))).into_response();
+        }
+    }
+
     let _ = sqlx::query("DELETE FROM user_roles WHERE user_id = $1 AND org_id = $2")
         .bind(user_id).bind(org_id).execute(&state.pool).await;
 

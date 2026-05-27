@@ -331,6 +331,14 @@ pub async fn delete_user(
     State(state): State<AppState>,
     Path(user_id): Path<Uuid>,
 ) -> impl IntoResponse {
+    // Prevent deactivating the Super Admin
+    let is_super: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM user_roles ur JOIN roles r ON r.role_id = ur.role_id WHERE ur.user_id = $1 AND r.name = 'Super Admin')"
+    ).bind(user_id).fetch_one(&state.pool).await.unwrap_or(false);
+    if is_super {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "cannot_deactivate_super_admin", "message": "The Super Admin account cannot be deactivated."}))).into_response();
+    }
+
     let _ = sqlx::query("UPDATE users SET is_active = false, updated_at = NOW() WHERE id = $1")
         .bind(user_id)
         .execute(&state.pool)
@@ -347,6 +355,14 @@ pub async fn lock_user(
     State(state): State<AppState>,
     Path(user_id): Path<Uuid>,
 ) -> impl IntoResponse {
+    // Prevent locking the Super Admin
+    let is_super: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM user_roles ur JOIN roles r ON r.role_id = ur.role_id WHERE ur.user_id = $1 AND r.name = 'Super Admin')"
+    ).bind(user_id).fetch_one(&state.pool).await.unwrap_or(false);
+    if is_super {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "cannot_lock_super_admin", "message": "The Super Admin account cannot be locked."}))).into_response();
+    }
+
     let _ = sqlx::query("UPDATE users SET is_locked = true, updated_at = NOW() WHERE id = $1")
         .bind(user_id)
         .execute(&state.pool)
@@ -446,5 +462,82 @@ pub async fn bulk_action(
     (StatusCode::OK, Json(json!({
         "message": format!("Bulk {} completed", req.action),
         "affected": affected
+    }))).into_response()
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GET /api/users/:id/modules — get a user's module access list
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub async fn get_user_modules(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    Path(user_id): Path<Uuid>,
+) -> impl IntoResponse {
+    let modules: Vec<String> = sqlx::query_scalar::<_, String>(
+        "SELECT module_id FROM user_module_access WHERE user_id = $1 AND (org_id = $2 OR org_id IS NULL) ORDER BY module_id"
+    )
+    .bind(user_id)
+    .bind(org_id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    (StatusCode::OK, Json(json!({ "user_id": user_id, "modules": modules }))).into_response()
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PUT /api/users/:id/modules — replace a user's module access list
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Deserialize)]
+pub struct SetModulesRequest {
+    pub modules: Vec<String>,
+}
+
+pub async fn set_user_modules(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    Path(user_id): Path<Uuid>,
+    Json(req): Json<SetModulesRequest>,
+) -> impl IntoResponse {
+    // Verify user exists
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND org_id = $2)")
+        .bind(user_id)
+        .bind(org_id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(false);
+
+    if !exists {
+        return (StatusCode::NOT_FOUND, Json(json!({ "error": "user_not_found" }))).into_response();
+    }
+
+    // Delete existing module access for this user+org
+    let _ = sqlx::query("DELETE FROM user_module_access WHERE user_id = $1 AND org_id = $2")
+        .bind(user_id)
+        .bind(org_id)
+        .execute(&state.pool)
+        .await;
+
+    // Insert new module access entries
+    let mut inserted = 0i64;
+    for module_id in &req.modules {
+        let r = sqlx::query(
+            "INSERT INTO user_module_access (org_id, user_id, module_id) VALUES ($1, $2, $3) ON CONFLICT (org_id, user_id, module_id) DO NOTHING"
+        )
+        .bind(org_id)
+        .bind(user_id)
+        .bind(module_id)
+        .execute(&state.pool)
+        .await;
+        if let Ok(r) = r { inserted += r.rows_affected() as i64; }
+    }
+
+    (StatusCode::OK, Json(json!({
+        "message": "Module access updated",
+        "user_id": user_id,
+        "modules_set": inserted,
+        "modules": req.modules,
     }))).into_response()
 }
