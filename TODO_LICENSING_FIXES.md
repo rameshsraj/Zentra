@@ -226,10 +226,10 @@ Every prompt below assumes this constraint. If a prompt mentions enforcement, ca
 
 1. **Do P0-3 first.** It establishes the `prod-license` feature flag and the cfg-gating skeleton that every other prompt assumes. After P0-3, dev builds are guaranteed to have zero licensing code paths active, so subsequent prompts can be developed and tested without breaking the dev workflow.
 2. **P0-1, P0-2 together** as a single PR — they're entangled (you'll touch `license_verifier.rs` for both) and together close the cryptographic holes. Both must remain inside the `#[cfg(feature = "prod-license")]` gate created in P0-3.
-2. **P1-1** — quick win, removes per-request I/O.
-3. **P1-2** — refactor; do this before P2-1 because P2-1 builds on per-route gating.
-4. **P1-3** — operator-facing improvement; can ship independently of P2-x.
-5. **P2-1**, then **P2-2** — schema evolution; do once and bump the format version.
-6. **P3-1**, **P3-2** — tooling polish.
+3. **P1-1** — quick win, removes per-request I/O.
+4. **P1-2** — refactor; do this before P2-1 because P2-1 builds on per-route gating.
+5. **P1-3** — operator-facing improvement; can ship independently of P2-x.
+6. **P2-1**, then **P2-2** — schema evolution; do once and bump the format version.
+7. **P3-1**, **P3-2** — tooling polish. (P3-1, the signer CLI, is the only piece that *must* build without `prod-license` since it generates licenses for the prod build to verify — but it should live in its own crate, not pull in any of the verifier's cfg-gated symbols.)
 
 Before starting P0-1, verify the public key embedded in the binary won't break any existing in-the-wild license files. If signed licenses are already deployed to customers, plan a transition window where the verifier accepts both old (HMAC) and new (Ed25519) formats keyed by `format_version`, then sunset HMAC after a deprecation period.
