@@ -63,4 +63,7 @@ pub fn router() -> Router<AppState> {
         // V5 Prompt 19: Data Audit
         .route("/api/audit/data-sources", get(handlers::data_audit::data_source_audit))
         .route("/api/audit/mock-data", get(handlers::data_audit::mock_data_check))
+
+        // Dynamic System License Status & UI Menu Access controls
+        .route("/api/system/license-status", get(handlers::license_status::get_license_status))
 }

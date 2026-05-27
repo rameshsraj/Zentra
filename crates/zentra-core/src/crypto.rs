@@ -11,6 +11,8 @@ use aes_gcm::{
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use rand::RngCore;
 
+pub mod license_verifier;
+
 /// Minimum expected length: 12-byte nonce + 16-byte tag = 28 bytes decoded.
 const MIN_DECODED_LEN: usize = 12 + 16;
 

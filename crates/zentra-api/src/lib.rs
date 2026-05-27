@@ -15,6 +15,7 @@ pub mod openapi;
 pub mod observability;
 pub mod semconv;
 pub mod background_jobs;
+pub mod license_middleware;
 
 #[cfg(feature = "otlp-proto")]
 pub mod otlp_proto;

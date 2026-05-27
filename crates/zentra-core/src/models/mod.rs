@@ -9,3 +9,4 @@ pub mod license_policy;
 pub mod asset_lifecycle;
 pub mod auth;
 pub mod vault;
+pub mod license_verification;

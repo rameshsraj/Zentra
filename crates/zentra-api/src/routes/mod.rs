@@ -76,6 +76,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(monitoring::router())
         .merge(ai::router())
         .merge(otlp::router())
+        .layer(middleware::from_fn(crate::license_middleware::enforce_license_middleware))
         .layer(middleware::from_fn(rewrite_v1))
         .with_state(state)
 }

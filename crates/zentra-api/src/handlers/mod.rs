@@ -89,3 +89,4 @@ pub mod llm_observability;
 pub mod profiling;
 pub mod otlp;
 pub mod otel_connectors;
+pub mod license_status;
