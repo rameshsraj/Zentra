@@ -269,7 +269,7 @@ export default function Layout() {
   const [expanded, setExpanded] = useState<string[]>([])
   const [paletteOpen, setPaletteOpen] = useState(false)
   const location = useLocation()
-  const { isAdmin: userIsAdmin } = useAuth()
+  const { isAdmin: userIsAdmin, hasModule, hasMenuItem } = useAuth()
 
   const { data: mwDashboard = [] } = useQuery({
     queryKey: ['middleware-dashboard-nav'],
@@ -277,6 +277,93 @@ export default function Layout() {
     staleTime: 60_000,
     refetchInterval: 120_000,
   })
+
+  // Map nav labels to module IDs for access control
+  const NAV_MODULE_MAP: Record<string, string> = {
+    'Command Center': 'command_center',
+    'Infrastructure': 'infrastructure',
+    'Database': 'database',
+    'Middleware': 'middleware',
+    'Security': 'security',
+    'Logs': 'logs',
+    'Alerts & Events': 'alerts_events',
+    'AI & Analytics': 'ai_analytics',
+    'OpenTelemetry': 'opentelemetry',
+    'Admin': 'admin',
+  }
+
+  // Map child routes to sub-module menu_item IDs for fine-grained access
+  const NAV_CHILD_MAP: Record<string, string> = {
+    // Infrastructure
+    '/infrastructure': 'infrastructure.dashboard',
+    '/servers': 'infrastructure.servers',
+    '/storage-arrays': 'infrastructure.storage',
+    '/network': 'infrastructure.network',
+    '/cilium': 'infrastructure.ebpf',
+    // Database
+    '/databases': 'database.dashboard',
+    '/oracle': 'database.oracle',
+    // Security
+    '/security/dashboard': 'security.dashboard',
+    '/security/hunt': 'security.hunt',
+    '/security/firewall': 'security.firewall',
+    // Logs
+    '/log-explorer': 'logs.explorer',
+    '/log-sources': 'logs.sources',
+    '/log-alerts': 'logs.alerts',
+    '/log-analytics': 'logs.analytics',
+    // Alerts & Events
+    '/alerts': 'alerts_events.active',
+    '/alerts/rules': 'alerts_events.rules',
+    '/notifications': 'alerts_events.channels',
+    // AI & Analytics
+    '/ai-insights': 'ai_analytics.insights',
+    '/predictive-alerts': 'ai_analytics.predictive',
+    '/rca': 'ai_analytics.rca',
+    '/runbooks': 'ai_analytics.runbooks',
+    '/llm-observability': 'ai_analytics.llm',
+    '/profiling': 'ai_analytics.profiling',
+    // OpenTelemetry
+    '/otel-dashboard': 'opentelemetry.health',
+    '/traces': 'opentelemetry.traces',
+    '/otel-resources': 'opentelemetry.resources',
+    '/otel-config': 'opentelemetry.config',
+    '/otel-sdk-guide': 'opentelemetry.sdk_guide',
+    '/otel-connectors': 'opentelemetry.connectors',
+    '/otel-pipeline': 'opentelemetry.pipeline',
+    '/otel-span-metrics': 'opentelemetry.span_metrics',
+    '/otel-alert-rules': 'opentelemetry.alert_rules',
+    '/otel-security': 'opentelemetry.security',
+    // Admin
+    '/admin/users': 'admin.users',
+    '/admin/groups': 'admin.groups',
+    '/admin/roles': 'admin.roles',
+    '/admin/profile': 'admin.profile',
+  }
+
+  // Filter children based on sub-module access
+  const filterChildren = (children: NavChild[]): NavChild[] => {
+    return children.filter(child => {
+      const menuId = NAV_CHILD_MAP[child.to]
+      if (!menuId) return true // not mapped = always visible
+      return hasMenuItem(menuId)
+    }).map(child => {
+      // Also filter nested grandchildren (e.g. Oracle sub-items)
+      if (child.children) {
+        const filtered = child.children.filter(sub => {
+          const menuId = NAV_CHILD_MAP[sub.to]
+          if (!menuId) return true
+          return hasMenuItem(menuId)
+        })
+        return { ...child, children: filtered.length > 0 ? filtered : undefined }
+      }
+      return child
+    }).filter(child => {
+      // Remove parents whose all children were filtered out
+      if (child.children !== undefined && child.children.length === 0) return false
+      return true
+    })
+  }
 
   const dynamicNav = useMemo(() => {
     const activeTypes = [...new Set(mwDashboard.map((s: MiddlewareServiceStatus) => s.service_type))]
@@ -366,6 +453,8 @@ export default function Layout() {
         <nav role="navigation" aria-label="Main navigation" className="flex-1 py-3 px-2 space-y-0.5 overflow-y-auto custom-scrollbar">
           {dynamicNav.filter(item => {
             if (item.label === 'Administration') return userIsAdmin
+            const moduleId = NAV_MODULE_MAP[item.label]
+            if (moduleId && !hasModule(moduleId)) return false
             return true
           }).map((item) => {
             const hasChildren = item.children && item.children.length > 0
@@ -399,7 +488,7 @@ export default function Layout() {
                   </button>
                   {isExp && !collapsed && (
                     <div className="ml-4 mt-0.5 space-y-0.5 border-l border-white/10 pl-2">
-                      {item.children!.map((child) => {
+                      {filterChildren(item.children!).map((child) => {
                         const hasSubChildren = child.children && child.children.length > 0
                         const isSubExp = expanded.includes(child.label)
                         if (hasSubChildren) {

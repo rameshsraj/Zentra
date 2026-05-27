@@ -620,9 +620,34 @@ pub async fn me(
         .map(|(r, a)| json!({"resource": r, "action": a}))
         .collect();
 
+    // Get module access + menu items for this user, scoped by org_id
+    let is_admin = roles.iter().any(|r| r == "Admin" || r == "Super Admin");
+    let org_id = user.1; // org_id from the user query
+    let (module_access, menu_items): (Vec<String>, Vec<String>) = if is_admin {
+        // Admin gets all modules, empty menu_items = see everything
+        (vec![
+            "command_center".into(), "infrastructure".into(), "database".into(),
+            "middleware".into(), "security".into(), "logs".into(),
+            "alerts_events".into(), "ai_analytics".into(), "opentelemetry".into(), "admin".into(),
+        ], vec![])
+    } else {
+        let all: Vec<String> = sqlx::query_scalar::<_, String>(
+            "SELECT module_id FROM user_module_access WHERE user_id = $1 AND (org_id = $2 OR org_id IS NULL) ORDER BY module_id"
+        )
+        .bind(claims.sub)
+        .bind(org_id)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default();
+        // Split: entries without dots are top-level modules, with dots are sub-menu items
+        let modules = all.iter().filter(|m| !m.contains('.')).cloned().collect();
+        let items = all.iter().filter(|m| m.contains('.')).cloned().collect();
+        (modules, items)
+    };
+
     (StatusCode::OK, Json(json!({
         "id": user.0,
-        "org_id": user.1,
+        "org_id": org_id,
         "email": user.2,
         "username": user.3,
         "display_name": user.4,
@@ -638,6 +663,8 @@ pub async fn me(
         "updated_at": user.14,
         "roles": roles,
         "permissions": perm_list,
+        "module_access": module_access,
+        "menu_items": menu_items,
     }))).into_response()
 }
 

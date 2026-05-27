@@ -14,6 +14,10 @@ interface AuthContextType extends AuthState {
   refreshProfile: () => Promise<void>
   hasPermission: (resource: string, action: string) => boolean
   hasRole: (role: string) => boolean
+  hasModule: (moduleId: string) => boolean
+  hasMenuItem: (menuItemId: string) => boolean
+  moduleAccess: string[]
+  menuItems: string[]
   isAdmin: boolean
 }
 
@@ -98,6 +102,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const isAdmin = state.user?.roles?.some(r => r === 'Admin' || r === 'Super Admin') ?? false
 
+  const moduleAccess = state.user?.module_access ?? []
+  const menuItems = state.user?.menu_items ?? []
+
+  const hasModule = useCallback((moduleId: string): boolean => {
+    if (!state.user) return false
+    if (isAdmin) return true
+    return state.user.module_access?.includes(moduleId) ?? false
+  }, [state.user, isAdmin])
+
+  // Check sub-menu item access. menuItemId format: 'module.item' e.g. 'infrastructure.servers'
+  // Rule: if no sub-items exist for that module prefix, user sees ALL children.
+  //       if sub-items exist, only those specific items are visible.
+  const hasMenuItem = useCallback((menuItemId: string): boolean => {
+    if (!state.user) return false
+    if (isAdmin) return true
+    const items = state.user.menu_items ?? []
+    // Extract module prefix (e.g. 'infrastructure' from 'infrastructure.servers')
+    const modulePrefix = menuItemId.split('.')[0]
+    // If user has NO sub-items for this module → they see all children
+    const hasAnySubItem = items.some(i => i.startsWith(modulePrefix + '.'))
+    if (!hasAnySubItem) return true
+    // Otherwise, check specific item
+    return items.includes(menuItemId)
+  }, [state.user, isAdmin])
+
   return (
     <AuthContext.Provider value={{
       ...state,
@@ -106,6 +135,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refreshProfile,
       hasPermission,
       hasRole,
+      hasModule,
+      hasMenuItem,
+      moduleAccess,
+      menuItems,
       isAdmin,
     }}>
       {children}

@@ -51,56 +51,35 @@ impl Plugin for AiPlugin {
     }
 
     async fn collect_metrics(&self, target: &Target) -> Result<Vec<Metric>> {
-        let now = Utc::now();
         let mut metrics = Vec::new();
 
-        metrics.push(Metric {
-            id: Uuid::new_v4(),
-            org_id: target.org_id,
-            target_id: target.id,
-            metric_name: "ai_anomaly_score".into(),
-            value: 0.0,
-            unit: Some("score".into()),
-            resource_id: Some(target.id.to_string()),
-            timestamp: now,
-            labels: Default::default(),
-        });
+        metrics.push(
+            Metric::new("ai_anomaly_score", 0.0, target.name.clone())
+                .with_context(target.org_id, target.target_id)
+                .with_unit("score")
+                .with_resource_type("ai")
+        );
 
-        metrics.push(Metric {
-            id: Uuid::new_v4(),
-            org_id: target.org_id,
-            target_id: target.id,
-            metric_name: "ai_model_drift".into(),
-            value: 0.0,
-            unit: Some("score".into()),
-            resource_id: Some(target.id.to_string()),
-            timestamp: now,
-            labels: Default::default(),
-        });
+        metrics.push(
+            Metric::new("ai_model_drift", 0.0, target.name.clone())
+                .with_context(target.org_id, target.target_id)
+                .with_unit("score")
+                .with_resource_type("ai")
+        );
 
-        metrics.push(Metric {
-            id: Uuid::new_v4(),
-            org_id: target.org_id,
-            target_id: target.id,
-            metric_name: "ai_inference_latency_ms".into(),
-            value: 0.0,
-            unit: Some("ms".into()),
-            resource_id: Some(target.id.to_string()),
-            timestamp: now,
-            labels: Default::default(),
-        });
+        metrics.push(
+            Metric::new("ai_inference_latency_ms", 0.0, target.name.clone())
+                .with_context(target.org_id, target.target_id)
+                .with_unit("ms")
+                .with_resource_type("ai")
+        );
 
-        metrics.push(Metric {
-            id: Uuid::new_v4(),
-            org_id: target.org_id,
-            target_id: target.id,
-            metric_name: "ai_predictions_total".into(),
-            value: 0.0,
-            unit: Some("count".into()),
-            resource_id: Some(target.id.to_string()),
-            timestamp: now,
-            labels: Default::default(),
-        });
+        metrics.push(
+            Metric::new("ai_predictions_total", 0.0, target.name.clone())
+                .with_context(target.org_id, target.target_id)
+                .with_unit("count")
+                .with_resource_type("ai")
+        );
 
         Ok(metrics)
     }

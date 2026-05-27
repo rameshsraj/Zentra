@@ -22,6 +22,7 @@ import ProgressBar from '@/components/charts/ProgressBar'
 import StatusGrid from '@/components/charts/StatusGrid'
 import TimelineList from '@/components/charts/TimelineList'
 import PageHeader from '@/components/PageHeader'
+import { useAuth } from '@/contexts/AuthContext'
 
 // Deterministic sparkline: monotonically stable values derived from a seed number
 const spark = (seed: number, len = 20) =>
@@ -29,6 +30,7 @@ const spark = (seed: number, len = 20) =>
 
 export default function DashboardPage() {
   const qc = useQueryClient()
+  const { hasModule, hasMenuItem } = useAuth()
   const { data: status } = useQuery({ queryKey: ['system-status'], queryFn: getSystemStatus })
   const { data: stats } = useQuery({ queryKey: ['event-stats'], queryFn: getEventStats })
   const { data: alerts } = useQuery({ queryKey: ['alerts'], queryFn: getAlerts })
@@ -123,16 +125,18 @@ export default function DashboardPage() {
       </div>
 
       {/* ═══════════ ROW 2: Infrastructure Fleet Health ═══════════ */}
+      {hasModule('infrastructure') && (
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard title="Servers" value={serverCount} icon={Server} iconColor="text-blue-400" subtitle={`${targets?.filter(t => t.target_type === 'server' && t.status === 'healthy').length ?? 0} healthy`} sparkData={spark(serverCount)} sparkColor="#3b82f6" />
-        <StatCard title="Databases" value={dbCount} icon={Database} iconColor="text-purple-400" subtitle={`${targets?.filter(t => t.target_type === 'database' && t.status === 'healthy').length ?? 0} healthy`} sparkData={spark(dbCount)} sparkColor="#8b5cf6" />
-        <StatCard title="Storage Arrays" value={storageCount} icon={HardDrive} iconColor="text-amber-400" subtitle={`${targets?.filter(t => t.target_type === 'storage' && t.status === 'healthy').length ?? 0} healthy`} sparkData={spark(storageCount)} sparkColor="#f59e0b" />
-        <StatCard title="Network Devices" value={networkCount} icon={Network} iconColor="text-emerald-400" subtitle={`${targets?.filter(t => t.target_type === 'network' && t.status === 'healthy').length ?? 0} healthy`} sparkData={spark(networkCount)} sparkColor="#22c55e" />
+        {hasMenuItem('infrastructure.servers') && <StatCard title="Servers" value={serverCount} icon={Server} iconColor="text-blue-400" subtitle={`${targets?.filter(t => t.target_type === 'server' && t.status === 'healthy').length ?? 0} healthy`} sparkData={spark(serverCount)} sparkColor="#3b82f6" />}
+        {hasMenuItem('infrastructure.storage') && <StatCard title="Storage Arrays" value={storageCount} icon={HardDrive} iconColor="text-amber-400" subtitle={`${targets?.filter(t => t.target_type === 'storage' && t.status === 'healthy').length ?? 0} healthy`} sparkData={spark(storageCount)} sparkColor="#f59e0b" />}
+        {hasMenuItem('infrastructure.network') && <StatCard title="Network Devices" value={networkCount} icon={Network} iconColor="text-emerald-400" subtitle={`${targets?.filter(t => t.target_type === 'network' && t.status === 'healthy').length ?? 0} healthy`} sparkData={spark(networkCount)} sparkColor="#22c55e" />}
       </div>
+      )}
 
       {/* ═══════════ ROW 3: Main 12-col Grid ═══════════ */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left: Infrastructure Status + Fleet Health Gauge */}
+        {hasModule('infrastructure') && (
         <div className="lg:col-span-3 space-y-4">
           <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4">
             <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-4 border-b border-white/10 pb-2">
@@ -184,9 +188,10 @@ export default function DashboardPage() {
             </div>
           </div>
         </div>
+        )}
 
         {/* Center: Traffic Chart */}
-        <div className="lg:col-span-6 space-y-6">
+        <div className={`space-y-6 ${hasModule('infrastructure') ? 'lg:col-span-6' : 'lg:col-span-9'}`}>
           <div className="bg-slate-900/80 border border-white/10 rounded-xl overflow-hidden relative shadow-2xl">
             <div className="absolute top-4 left-4 z-10 bg-slate-900/90 backdrop-blur border border-white/10 px-3 py-1 rounded text-xs font-mono text-emerald-400 flex items-center gap-2">
               <Zap className="w-3 h-3" />
@@ -250,6 +255,7 @@ export default function DashboardPage() {
 
         {/* Right: Live Feed + AI Insights */}
         <div className="lg:col-span-3 space-y-4">
+          {hasModule('alerts_events') && (
           <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4">
             <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-4 border-b border-white/10 pb-2 flex justify-between items-center">
               <span>Live Feed</span>
@@ -273,8 +279,10 @@ export default function DashboardPage() {
               maxItems={8}
             />
           </div>
+          )}
 
           {/* AI Insights Panel */}
+          {hasModule('ai_analytics') && (
           <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4">
             <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-3 flex items-center gap-2">
               <Brain className="w-4 h-4 text-purple-400" />
@@ -300,9 +308,10 @@ export default function DashboardPage() {
               ))}
             </div>
           </div>
+          )}
 
           {/* Predictive Summary */}
-          {predSummary && (
+          {hasModule('ai_analytics') && predSummary && (
             <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4">
               <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-3 flex items-center gap-2">
                 <TrendingUp className="w-3.5 h-3.5 text-orange-400" />
@@ -321,6 +330,7 @@ export default function DashboardPage() {
       {/* ═══════════ ROW 4: Bottom Section ═══════════ */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Alert Summary */}
+        {hasModule('alerts_events') && (
         <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-5">
           <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2">
             <Bell className="w-4 h-4 text-amber-400" />
@@ -350,8 +360,10 @@ export default function DashboardPage() {
             )}
           </div>
         </div>
+        )}
 
         {/* Threat Intelligence */}
+        {hasModule('security') && (
         <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-5">
           <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2">
             <Shield className="w-4 h-4 text-red-400" />
@@ -392,8 +404,10 @@ export default function DashboardPage() {
             ))}
           </div>
         </div>
+        )}
 
         {/* Network & Capture Summary */}
+        {hasModule('infrastructure') && (
         <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-5">
           <h3 className="text-sm font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2">
             <Network className="w-4 h-4 text-cyan-400" />
@@ -427,6 +441,7 @@ export default function DashboardPage() {
             </div>
           )}
         </div>
+        )}
       </div>
     </div>
   )
