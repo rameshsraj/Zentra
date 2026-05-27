@@ -14,3 +14,5 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 reqwest = { workspace = true }
 regex = { workspace = true }
+parking_lot = { workspace = true }
+futures = { workspace = true }

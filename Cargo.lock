@@ -5190,6 +5190,8 @@ name = "zentra-scrape"
 version = "1.0.0"
 dependencies = [
  "chrono",
+ "futures",
+ "parking_lot",
  "regex",
  "reqwest",
  "serde",

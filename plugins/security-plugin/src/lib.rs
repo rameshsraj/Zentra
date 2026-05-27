@@ -63,65 +63,40 @@ impl Plugin for SecurityPlugin {
         let now = Utc::now();
         let mut metrics = Vec::new();
 
-        metrics.push(Metric {
-            id: Uuid::new_v4(),
-            org_id: target.org_id,
-            target_id: target.id,
-            metric_name: "security_ids_alerts_total".into(),
-            value: 0.0,
-            unit: Some("count".into()),
-            resource_id: Some(target.id.to_string()),
-            timestamp: now,
-            labels: Default::default(),
-        });
+        metrics.push(
+            Metric::new("security_ids_alerts_total", 0.0, target.target_id.to_string())
+                .with_context(target.org_id, target.target_id, "security-plugin")
+                .with_resource_type("security")
+                .with_unit("count")
+        );
 
-        metrics.push(Metric {
-            id: Uuid::new_v4(),
-            org_id: target.org_id,
-            target_id: target.id,
-            metric_name: "security_connections_blocked".into(),
-            value: 0.0,
-            unit: Some("count".into()),
-            resource_id: Some(target.id.to_string()),
-            timestamp: now,
-            labels: Default::default(),
-        });
+        metrics.push(
+            Metric::new("security_connections_blocked", 0.0, target.target_id.to_string())
+                .with_context(target.org_id, target.target_id, "security-plugin")
+                .with_resource_type("security")
+                .with_unit("count")
+        );
 
-        metrics.push(Metric {
-            id: Uuid::new_v4(),
-            org_id: target.org_id,
-            target_id: target.id,
-            metric_name: "security_dns_anomalies_detected".into(),
-            value: 0.0,
-            unit: Some("count".into()),
-            resource_id: Some(target.id.to_string()),
-            timestamp: now,
-            labels: Default::default(),
-        });
+        metrics.push(
+            Metric::new("security_dns_anomalies_detected", 0.0, target.target_id.to_string())
+                .with_context(target.org_id, target.target_id, "security-plugin")
+                .with_resource_type("security")
+                .with_unit("count")
+        );
 
-        metrics.push(Metric {
-            id: Uuid::new_v4(),
-            org_id: target.org_id,
-            target_id: target.id,
-            metric_name: "security_ssl_cert_expiry_days".into(),
-            value: 365.0,
-            unit: Some("days".into()),
-            resource_id: Some(target.id.to_string()),
-            timestamp: now,
-            labels: Default::default(),
-        });
+        metrics.push(
+            Metric::new("security_ssl_cert_expiry_days", 365.0, target.target_id.to_string())
+                .with_context(target.org_id, target.target_id, "security-plugin")
+                .with_resource_type("security")
+                .with_unit("days")
+        );
 
-        metrics.push(Metric {
-            id: Uuid::new_v4(),
-            org_id: target.org_id,
-            target_id: target.id,
-            metric_name: "security_firewall_rules_hit".into(),
-            value: 0.0,
-            unit: Some("count".into()),
-            resource_id: Some(target.id.to_string()),
-            timestamp: now,
-            labels: Default::default(),
-        });
+        metrics.push(
+            Metric::new("security_firewall_rules_hit", 0.0, target.target_id.to_string())
+                .with_context(target.org_id, target.target_id, "security-plugin")
+                .with_resource_type("security")
+                .with_unit("count")
+        );
 
         Ok(metrics)
     }

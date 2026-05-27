@@ -54,7 +54,7 @@ impl AwsCloudWatchCollector {
             }
         };
 
-        let subtype = target.subtype.as_deref().unwrap_or("aws").to_lowercase();
+        let subtype = target.target_subtype.as_str().to_lowercase();
         let client = build_client();
         let mut metrics = Vec::new();
 
@@ -176,10 +176,10 @@ async fn fetch_cloudwatch_metrics(
         match call_cloudwatch(client, creds, &params).await {
             Ok(val) => {
                 out.push(
-                    Metric::new(infra_metric, val, &target.name)
+                    Metric::new(*infra_metric, val, target.name.clone())
                         .with_context(target.org_id, target.target_id, "cloud-plugin")
                         .with_resource_type("cloud")
-                        .with_unit(unit)
+                        .with_unit(*unit)
                         .with_tag("provider", "aws")
                         .with_tag("region", &creds.region)
                 );
@@ -337,49 +337,59 @@ fn build_client() -> Client {
 
 fn parse_credentials(target: &Target) -> Option<AwsCredentials> {
     let creds = target.credentials.as_ref()?;
+    let access_key_id = creds.username.clone()?;
+    let secret_access_key = creds.decrypt_password();
+    if access_key_id.is_empty() || secret_access_key.is_empty() {
+        return None;
+    }
+    
+    let region = target.connection_options.get("region")
+        .and_then(|v| v.as_str())
+        .unwrap_or("us-east-1")
+        .to_string();
+        
+    let session_token = target.connection_options.get("session_token")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
     Some(AwsCredentials {
-        access_key_id: creds.get("access_key_id")?.as_str()?.to_string(),
-        secret_access_key: creds.get("secret_access_key")?.as_str()?.to_string(),
-        region: creds.get("region").and_then(|v| v.as_str()).unwrap_or("us-east-1").to_string(),
-        session_token: creds.get("session_token").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        access_key_id,
+        secret_access_key,
+        region,
+        session_token,
     })
 }
 
 fn instance_id_from_target(target: &Target) -> String {
-    target.credentials.as_ref()
-        .and_then(|c| c.get("instance_id"))
+    target.connection_options.get("instance_id")
         .and_then(|v| v.as_str())
         .unwrap_or(&target.host)
         .to_string()
 }
 
 fn db_instance_id_from_target(target: &Target) -> String {
-    target.credentials.as_ref()
-        .and_then(|c| c.get("db_instance_identifier"))
+    target.connection_options.get("db_instance_identifier")
         .and_then(|v| v.as_str())
         .unwrap_or(&target.host)
         .to_string()
 }
 
 fn lb_name_from_target(target: &Target) -> String {
-    target.credentials.as_ref()
-        .and_then(|c| c.get("load_balancer_arn"))
+    target.connection_options.get("load_balancer_arn")
         .and_then(|v| v.as_str())
         .unwrap_or(&target.host)
         .to_string()
 }
 
 fn fn_name_from_target(target: &Target) -> String {
-    target.credentials.as_ref()
-        .and_then(|c| c.get("function_name"))
+    target.connection_options.get("function_name")
         .and_then(|v| v.as_str())
         .unwrap_or(&target.host)
         .to_string()
 }
 
 fn cluster_name_from_target(target: &Target) -> String {
-    target.credentials.as_ref()
-        .and_then(|c| c.get("cluster_name"))
+    target.connection_options.get("cluster_name")
         .and_then(|v| v.as_str())
         .unwrap_or(&target.host)
         .to_string()

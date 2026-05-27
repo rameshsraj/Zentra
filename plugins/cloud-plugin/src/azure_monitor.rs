@@ -47,7 +47,7 @@ impl AzureMonitorCollector {
             }
         };
 
-        let subtype = target.subtype.as_deref().unwrap_or("azure").to_lowercase();
+        let subtype = target.target_subtype.as_str().to_lowercase();
         let mut metrics = Vec::new();
 
         match subtype.as_str() {
@@ -170,10 +170,10 @@ async fn fetch_azure_metrics(
                 // Find matching infra metric name
                 if let Some((_, infra_name, unit)) = metric_defs.iter().find(|(n, _, _)| *n == name) {
                     out.push(
-                        Metric::new(infra_name, val, &target.name)
+                        Metric::new(*infra_name, val, target.name.clone())
                             .with_context(target.org_id, target.target_id, "cloud-plugin")
                             .with_resource_type("cloud")
-                            .with_unit(unit)
+                            .with_unit(*unit)
                             .with_tag("provider", "azure")
                             .with_tag("subscription", &creds.subscription_id)
                     );
@@ -205,13 +205,23 @@ async fn get_token(client: &Client, creds: &AzureCredentials) -> Result<String, 
 }
 
 fn parse_credentials(target: &Target) -> Option<AzureCredentials> {
-    let c = target.credentials.as_ref()?;
+    let creds = target.credentials.as_ref()?;
+    let client_id = creds.username.clone()?;
+    let client_secret = creds.decrypt_password();
+    if client_id.is_empty() || client_secret.is_empty() {
+        return None;
+    }
+
+    let tenant_id = target.connection_options.get("tenant_id")?.as_str()?.to_string();
+    let subscription_id = target.connection_options.get("subscription_id")?.as_str()?.to_string();
+    let resource_id = target.connection_options.get("resource_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
     Some(AzureCredentials {
-        tenant_id: c.get("tenant_id")?.as_str()?.to_string(),
-        client_id: c.get("client_id")?.as_str()?.to_string(),
-        client_secret: c.get("client_secret")?.as_str()?.to_string(),
-        subscription_id: c.get("subscription_id")?.as_str()?.to_string(),
-        resource_id: c.get("resource_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        tenant_id,
+        client_id,
+        client_secret,
+        subscription_id,
+        resource_id,
     })
 }
 

@@ -48,7 +48,7 @@ impl Plugin for CloudPlugin {
     }
 
     async fn test_connection(&self, target: &Target) -> Result<bool> {
-        let subtype = target.subtype.as_deref().unwrap_or("").to_lowercase();
+        let subtype = target.target_subtype.as_str().to_lowercase();
         match subtype.as_str() {
             s if s.starts_with("aws") => {
                 Ok(aws_cloudwatch::AwsCloudWatchCollector::test(target).await)
@@ -64,7 +64,7 @@ impl Plugin for CloudPlugin {
     }
 
     async fn collect_metrics(&self, target: &Target) -> Result<Vec<Metric>> {
-        let subtype = target.subtype.as_deref().unwrap_or("").to_lowercase();
+        let subtype = target.target_subtype.as_str().to_lowercase();
         let metrics = match subtype.as_str() {
             s if s.starts_with("aws") => {
                 aws_cloudwatch::AwsCloudWatchCollector::collect(target).await

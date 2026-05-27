@@ -60,7 +60,7 @@ impl GcpMonitoringCollector {
             }
         };
 
-        let subtype = target.subtype.as_deref().unwrap_or("gcp").to_lowercase();
+        let subtype = target.target_subtype.as_str().to_lowercase();
         let mut metrics = Vec::new();
 
         match subtype.as_str() {
@@ -188,10 +188,10 @@ async fn fetch_gcp_metrics(
                 let val = raw * multiplier;
 
                 out.push(
-                    Metric::new(infra_metric, val, &target.name)
+                    Metric::new(*infra_metric, val, target.name.clone())
                         .with_context(target.org_id, target.target_id, "cloud-plugin")
                         .with_resource_type("cloud")
-                        .with_unit(unit)
+                        .with_unit(*unit)
                         .with_tag("provider", "gcp")
                         .with_tag("project", &creds.project_id)
                 );
@@ -272,14 +272,17 @@ fn rs256_sign(pem: &str, data: &[u8]) -> Result<String, String> {
 }
 
 fn parse_credentials(target: &Target) -> Option<GcpCredentials> {
-    let c = target.credentials.as_ref()?;
-    let project_id = c.get("project_id")?.as_str()?.to_string();
+    let creds = target.credentials.as_ref()?;
+    let project_id = target.connection_options.get("project_id")?.as_str()?.to_string();
 
-    let auth_method = if let Some(key) = c.get("api_key").and_then(|v| v.as_str()) {
+    let auth_method = if let Some(key) = target.connection_options.get("api_key").and_then(|v| v.as_str()) {
         GcpAuth::ApiKey(key.to_string())
     } else {
-        let email = c.get("service_account_email")?.as_str()?.to_string();
-        let key = c.get("private_key")?.as_str()?.to_string();
+        let email = creds.username.clone()?;
+        let key = creds.decrypt_password();
+        if email.is_empty() || key.is_empty() {
+            return None;
+        }
         GcpAuth::ServiceAccount { email, private_key_pem: key }
     };
 
@@ -287,8 +290,7 @@ fn parse_credentials(target: &Target) -> Option<GcpCredentials> {
 }
 
 fn instance_id_from_target(target: &Target) -> String {
-    target.credentials.as_ref()
-        .and_then(|c| c.get("instance_id"))
+    target.connection_options.get("instance_id")
         .and_then(|v| v.as_str())
         .unwrap_or(&target.host)
         .to_string()
