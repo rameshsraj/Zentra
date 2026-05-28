@@ -55,28 +55,28 @@ impl Plugin for AiPlugin {
 
         metrics.push(
             Metric::new("ai_anomaly_score", 0.0, target.name.clone())
-                .with_context(target.org_id, target.target_id)
+                .with_context(target.org_id, target.target_id, "ai-plugin")
                 .with_unit("score")
                 .with_resource_type("ai")
         );
 
         metrics.push(
             Metric::new("ai_model_drift", 0.0, target.name.clone())
-                .with_context(target.org_id, target.target_id)
+                .with_context(target.org_id, target.target_id, "ai-plugin")
                 .with_unit("score")
                 .with_resource_type("ai")
         );
 
         metrics.push(
             Metric::new("ai_inference_latency_ms", 0.0, target.name.clone())
-                .with_context(target.org_id, target.target_id)
+                .with_context(target.org_id, target.target_id, "ai-plugin")
                 .with_unit("ms")
                 .with_resource_type("ai")
         );
 
         metrics.push(
             Metric::new("ai_predictions_total", 0.0, target.name.clone())
-                .with_context(target.org_id, target.target_id)
+                .with_context(target.org_id, target.target_id, "ai-plugin")
                 .with_unit("count")
                 .with_resource_type("ai")
         );
