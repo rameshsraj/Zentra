@@ -8,6 +8,7 @@ use zentra_core::crypto::license_verifier::{check_license_active, load_and_verif
 
 /// Axum Middleware to validate license integrity and limits dynamically on production builds.
 /// In local development or with licensing disabled, it passes through.
+#[cfg(feature = "prod-license")]
 pub async fn enforce_license_middleware(
     request: Request,
     next: Next,
@@ -52,5 +53,14 @@ pub async fn enforce_license_middleware(
         }
     }
 
+    Ok(next.run(request).await)
+}
+
+/// Axum Middleware to validate license integrity (dev/test stub - pass through).
+#[cfg(not(feature = "prod-license"))]
+pub async fn enforce_license_middleware(
+    request: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
     Ok(next.run(request).await)
 }

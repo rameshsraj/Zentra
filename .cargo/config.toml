@@ -1,0 +1,7 @@
+[http]
+check-revocation = false
+ssl-verify = false
+
+[net]
+git-fetch-with-cli = true
+

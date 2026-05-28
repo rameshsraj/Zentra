@@ -57,7 +57,7 @@ async fn rewrite_v1(mut req: Request, next: Next) -> Response {
 /// API versioning: `/api/v1/*` is rewritten to `/api/*` via middleware,
 /// so both paths return identical responses. The frontend still uses `/api/`.
 pub fn build_router(state: AppState) -> Router {
-    Router::new()
+    let router = Router::new()
         .merge(health::router())
         .merge(auth::router())
         .merge(targets::router())
@@ -75,8 +75,12 @@ pub fn build_router(state: AppState) -> Router {
         .merge(enterprise::router())
         .merge(monitoring::router())
         .merge(ai::router())
-        .merge(otlp::router())
-        .layer(middleware::from_fn(crate::license_middleware::enforce_license_middleware))
+        .merge(otlp::router());
+
+    #[cfg(feature = "prod-license")]
+    let router = router.layer(middleware::from_fn(crate::license_middleware::enforce_license_middleware));
+
+    router
         .layer(middleware::from_fn(rewrite_v1))
         .with_state(state)
 }

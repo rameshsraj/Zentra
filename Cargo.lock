@@ -5045,6 +5045,7 @@ dependencies = [
  "hmac",
  "hostname",
  "rand 0.8.6",
+ "ring",
  "serde",
  "serde_json",
  "sha2",

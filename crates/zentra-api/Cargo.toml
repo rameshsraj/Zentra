@@ -59,3 +59,4 @@ prost-types = { workspace = true, optional = true }
 default = ["otlp-proto", "grpc"]
 otlp-proto = ["dep:prost", "dep:prost-types"]
 grpc = ["otlp-proto"]
+prod-license = ["zentra-core/prod-license"]

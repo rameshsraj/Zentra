@@ -85,6 +85,7 @@ jsonwebtoken = "9.3"
 hmac = "0.12"
 hex = "0.4"
 aes-gcm = "0.10"
+ring = "0.17.14"
 
 # Data structures
 dashmap = "6.0"

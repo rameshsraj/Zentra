@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LicenseFeatures {
@@ -22,6 +23,10 @@ pub struct LicensePayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LicenseFile {
-    pub payload: LicensePayload,
+    pub format_version: u32,
+    pub algorithm: String,
+    pub key_id: String,
+    pub payload: Box<RawValue>,
+    /// 64-byte Ed25519 signature hex-encoded
     pub signature_hex: String,
 }

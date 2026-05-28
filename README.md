@@ -565,3 +565,9 @@ docker exec -it zentra bash
 ## License
 
 Proprietary — Zentra Team
+
+### Production Releases
+Production binaries MUST be built via the `release-prod` target using the Makefile to enable runtime licensing enforcement. A binary built without this compile-time feature will refuse to enforce licensing.
+```bash
+make release-prod
+```
