@@ -1,5 +1,5 @@
 # =============================================================================
-# Zentra — Runtime-Only Docker Image
+# Zentra — Hardened Runtime-Only Docker Image
 # Rocky Linux 8.10 + PostgreSQL 16 + TimescaleDB + Nginx + zentra-server
 # Contains ONLY pre-built artifacts — NO source code, NO credentials
 #
@@ -36,6 +36,7 @@ RUN dnf clean all \
         findutils \
         openssh-clients \
         sshpass \
+        file \
     && dnf clean all
 
 # Install TimescaleDB from official repo
@@ -55,11 +56,24 @@ RUN dnf install -y timescaledb-2-postgresql-16 \
 RUN dnf install -y libaio && \
     dnf install -y \
         https://download.oracle.com/otn_software/linux/instantclient/2114000/oracle-instantclient-basiclite-21.14.0.0.0-1.el8.x86_64.rpm \
-        https://download.oracle.com/otn_software/linux/instantclient/2114000/oracle-instantclient-sqlplus-21.14.0.0.0-1.el8.x86_64.rpm \
     && dnf clean all
 
 ENV LD_LIBRARY_PATH=/usr/lib/oracle/21/client64/lib:${LD_LIBRARY_PATH}
 ENV PATH="/usr/lib/oracle/21/client64/bin:${PATH}"
+
+# ---------------------------------------------------------------------------
+# D06: Remove unnecessary development packages and reduce attack surface
+# ---------------------------------------------------------------------------
+RUN dnf remove -y gcc make cpp gdb strace ltrace 2>/dev/null || true \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf /tmp/* /var/tmp/*
+
+# Disable core dumps
+RUN echo '* hard core 0' >> /etc/security/limits.conf \
+    && echo '* soft core 0' >> /etc/security/limits.conf
+
+# Remove unnecessary SUID/SGID binaries
+RUN find / -perm /6000 -type f -exec chmod a-s {} \; 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # PostgreSQL configuration
@@ -72,10 +86,18 @@ RUN mkdir -p /var/lib/postgresql/data /var/run/postgresql /var/log/postgresql \
     && chown -R postgres:postgres /var/lib/postgresql /var/run/postgresql /var/log/postgresql
 
 # ---------------------------------------------------------------------------
+# D06: Create dedicated non-root runtime user for zentra-server
+# ---------------------------------------------------------------------------
+RUN useradd -r -s /sbin/nologin -d /opt/zentra zentra
+
+# ---------------------------------------------------------------------------
 # Copy pre-built backend binary (NO source code)
 # ---------------------------------------------------------------------------
 COPY target/release/zentra-server /usr/local/bin/zentra-server
-RUN chmod +x /usr/local/bin/zentra-server
+
+# D03: Strip the binary to remove debug symbols and reduce size
+RUN strip /usr/local/bin/zentra-server 2>/dev/null || true \
+    && chmod 550 /usr/local/bin/zentra-server
 
 # ---------------------------------------------------------------------------
 # Copy SQL migrations (needed at startup for schema + admin user creation)
@@ -112,15 +134,60 @@ RUN rm -f /etc/nginx/conf.d/default.conf && \
 
 # Create log directories and SSH directory
 RUN mkdir -p /opt/zentra/logs /var/log/supervisor /root/.ssh \
-    && chmod 700 /root/.ssh
+    && chmod 700 /root/.ssh \
+    && chown zentra:zentra /opt/zentra/logs
 
 # ---------------------------------------------------------------------------
-# Ports & Volumes
+# D02: Build metadata (written at image build time)
 # ---------------------------------------------------------------------------
-# 5010 = Nginx (frontend + API proxy)  — primary entry point
-# 5006 = Backend API (internal, proxied by nginx)
-# PostgreSQL (5434) is internal only - not exposed externally
-EXPOSE 5010 5006
+RUN echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /opt/zentra/.build-info && \
+    echo "image_version=1.0.0" >> /opt/zentra/.build-info && \
+    chmod 400 /opt/zentra/.build-info
+
+# ---------------------------------------------------------------------------
+# D04: Restrict file permissions on sensitive contents
+# ---------------------------------------------------------------------------
+RUN chmod 400 /opt/zentra/migrations/*.sql && \
+    chmod 600 /etc/supervisord.conf && \
+    chmod 600 /etc/nginx/conf.d/zentra.conf && \
+    chmod 750 /usr/pgsql-16/bin/psql
+
+# ---------------------------------------------------------------------------
+# D03: Verify no source code leaked into the image
+# ---------------------------------------------------------------------------
+RUN test ! -d /opt/zentra/crates && \
+    test ! -d /opt/zentra/.git && \
+    test ! -f /opt/zentra/Cargo.toml && \
+    test ! -d /opt/zentra/frontend/src && \
+    test ! -d /opt/zentra/frontend/node_modules && \
+    echo "[build] Source-code verification PASSED"
+
+# ---------------------------------------------------------------------------
+# D07: Generate integrity manifest for tamper protection
+# ---------------------------------------------------------------------------
+RUN sha256sum \
+    /usr/local/bin/zentra-server \
+    /opt/zentra/frontend/dist/index.html \
+    /etc/nginx/conf.d/zentra.conf \
+    /etc/supervisord.conf \
+    /usr/local/bin/docker-entrypoint.sh \
+    > /opt/zentra/.integrity && \
+    chmod 400 /opt/zentra/.integrity && \
+    sha256sum /opt/zentra/.integrity | cut -d' ' -f1 > /opt/zentra/.manifest-hash && \
+    chmod 400 /opt/zentra/.manifest-hash
+
+# ---------------------------------------------------------------------------
+# D06: Final cleanup — remove build caches, temp files, shell history
+# ---------------------------------------------------------------------------
+RUN rm -rf /root/.bash_history /root/.cache /tmp/* /var/tmp/* && \
+    history -c 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# D05: Only expose frontend port — API is internal (proxied by nginx)
+# ---------------------------------------------------------------------------
+# 5010 = Nginx (frontend + API proxy) — the ONLY externally accessible port
+# PostgreSQL (5434) and API (5006) are internal only
+EXPOSE 5010
 
 # Persist database data across container restarts
 VOLUME ["/var/lib/postgresql/data"]

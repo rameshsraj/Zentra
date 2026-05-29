@@ -1,5 +1,5 @@
 # =============================================================================
-# Zentra — Docker Build Context Exclusions
+# Zentra — Docker Build Context Exclusions (Hardened)
 # Only allow pre-built artifacts into the image — NO source code, NO credentials
 # =============================================================================
 
@@ -19,6 +19,8 @@ frontend/index.html
 src/
 Cargo.toml
 Cargo.lock
+*.rs
+*.toml
 
 # ── Credentials & environment files (NEVER include) ──
 .env
@@ -35,28 +37,56 @@ target/release/examples/
 target/release/incremental/
 target/release/.fingerprint/
 target/release/*.d
+target/release/zentra-agent
 # Allow: target/release/zentra-server (the binary)
 
 # ── Git & IDE ──
 .git/
+.github/
 .gitignore
+.gitattributes
 .vscode/
 .idea/
 .claude/
+.cargo/
+.windsurf/
 
 # ── Deploy & docs ──
 deploy/
 docs/
+tools/
 *.md
 !docker/README.md
+
+# ── Log & check files (dev artifacts) ──
+*.log
+*.txt
+agent_check.log
+api_check.log
+build_diagnostics.txt
+check_output.txt
+check_db_removal.txt
+full_cargo_check*.txt
+full_check.txt
+last_check.txt
+server_stdout.log
+server_stderr.log
+errors.txt
+errors_only.txt
+last_errors.txt
+api_errors.txt
+agent_errors.txt
 
 # ── OS files ──
 .DS_Store
 ._*
 Thumbs.db
-*.log
 
-# ── Backups ──
+# ── Backups & binaries ──
 backups/
 bin/
 logs/
+
+# ── Docker image tarballs (don't nest images inside the build) ──
+docker/zentra-latest.tar.gz
+docker/simulation/

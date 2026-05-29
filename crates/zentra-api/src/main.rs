@@ -251,8 +251,12 @@ async fn main() {
         .layer(RequestBodyLimitLayer::new(2 * 1024 * 1024)) // 2 MB
         .layer(CompressionLayer::new());
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], config.api_port));
-    info!(port = config.api_port, "Zentra API listening");
+    let bind_addr: std::net::Ipv4Addr = std::env::var("ZENTRA_BIND_ADDR")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(std::net::Ipv4Addr::UNSPECIFIED);
+    let addr = SocketAddr::from((bind_addr, config.api_port));
+    info!(bind = %bind_addr, port = config.api_port, "Zentra API listening");
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
