@@ -635,7 +635,7 @@ echo "===UPTIME==="
 cat /proc/uptime 2>/dev/null | awk '{print $1}'
 echo "===END==="
 "#;
-    let result = ssh_utils::ssh_exec(&host, &user, script).await;
+    let result = zentra_core::ssh_pool::pooled_ssh_exec(&host, &user, script).await;
     if result.success {
         let sections = ssh_utils::parse_sections(&result.stdout);
         let mut total_rx: u64 = 0;
@@ -766,7 +766,7 @@ echo "===UDP6==="
 cat /proc/net/udp6 2>/dev/null | tail -n +2 | wc -l
 echo "===END==="
 "#;
-    let result = ssh_utils::ssh_exec(&host, &user, script).await;
+    let result = zentra_core::ssh_pool::pooled_ssh_exec(&host, &user, script).await;
     if result.success {
         let sections = ssh_utils::parse_sections(&result.stdout);
         let tcp: u64 = sections.get("TCP").and_then(|s| s.trim().parse().ok()).unwrap_or(0);
@@ -865,7 +865,7 @@ echo "===UDP==="
 cat /proc/net/udp 2>/dev/null | tail -n +2 | head -200
 echo "===END==="
 "#;
-        let result = ssh_utils::ssh_exec(&host, &user, script).await;
+        let result = zentra_core::ssh_pool::pooled_ssh_exec(&host, &user, script).await;
         if result.success {
             let sections = ssh_utils::parse_sections(&result.stdout);
             let mut conns = Vec::new();
@@ -1385,7 +1385,7 @@ pub async fn scan_subnet(
         timeout_ms / 1000 + 5, cidr, num_hosts.min(254), base_ip
     );
 
-    let scan_result = ssh_utils::ssh_exec(&ssh_host, &ssh_user, &scan_cmd).await;
+    let scan_result = zentra_core::ssh_pool::pooled_ssh_exec(&ssh_host, &ssh_user, &scan_cmd).await;
     if scan_result.success {
         let live_ips: Vec<&str> = scan_result.stdout.lines()
             .filter(|l| !l.is_empty() && l.contains('.'))
@@ -1395,7 +1395,7 @@ pub async fn scan_subnet(
         for ip in &live_ips {
             // Try to get hostname
             let hostname_cmd = format!("getent hosts {} 2>/dev/null | awk '{{print $2}}' || echo ''", ip);
-            let hn_result = ssh_utils::ssh_exec(&ssh_host, &ssh_user, &hostname_cmd).await;
+            let hn_result = zentra_core::ssh_pool::pooled_ssh_exec(&ssh_host, &ssh_user, &hostname_cmd).await;
             let hostname = if hn_result.success { hn_result.stdout.trim().to_string() } else { String::new() };
 
             // Try SNMP sysDescr
@@ -1403,7 +1403,7 @@ pub async fn scan_subnet(
                 "snmpget -v2c -c {} -t1 -r0 {} .1.3.6.1.2.1.1.1.0 2>/dev/null | sed 's/.*STRING: //'",
                 community, ip
             );
-            let snmp_result = ssh_utils::ssh_exec(&ssh_host, &ssh_user, &snmp_cmd).await;
+            let snmp_result = zentra_core::ssh_pool::pooled_ssh_exec(&ssh_host, &ssh_user, &snmp_cmd).await;
             let sys_descr = if snmp_result.success { snmp_result.stdout.trim().to_string() } else { String::new() };
             let snmp_ok = !sys_descr.is_empty() && !sys_descr.contains("Timeout") && !sys_descr.contains("No Response") && !sys_descr.contains("No Such");
 
@@ -1412,7 +1412,7 @@ pub async fn scan_subnet(
                 "snmpget -v2c -c {} -t1 -r0 {} .1.3.6.1.2.1.1.5.0 2>/dev/null | sed 's/.*STRING: //'",
                 community, ip
             );
-            let sysname_result = ssh_utils::ssh_exec(&ssh_host, &ssh_user, &sysname_cmd).await;
+            let sysname_result = zentra_core::ssh_pool::pooled_ssh_exec(&ssh_host, &ssh_user, &sysname_cmd).await;
             let sys_name = if sysname_result.success { sysname_result.stdout.trim().to_string() } else { String::new() };
 
             // Detect device type from sysDescr
@@ -1444,7 +1444,7 @@ pub async fn scan_subnet(
 
             // Check SSH reachability (port 22)
             let ssh_cmd = format!("timeout 1 bash -c 'echo >/dev/tcp/{}/22' 2>/dev/null && echo OK || echo FAIL", ip);
-            let ssh_result = ssh_utils::ssh_exec(&ssh_host, &ssh_user, &ssh_cmd).await;
+            let ssh_result = zentra_core::ssh_pool::pooled_ssh_exec(&ssh_host, &ssh_user, &ssh_cmd).await;
             let ssh_ok = ssh_result.success && ssh_result.stdout.contains("OK");
 
             devices.push(DiscoveredDevice {
@@ -1530,7 +1530,7 @@ pub async fn test_device(
         }
     };
 
-    let result = ssh_utils::ssh_exec(&ssh_host, &ssh_user, &cmd).await;
+    let result = zentra_core::ssh_pool::pooled_ssh_exec(&ssh_host, &ssh_user, &cmd).await;
     let output_trimmed = result.stdout.trim().to_string();
     let success = match protocol.as_str() {
         "snmp" => output_trimmed.contains("STRING:") || output_trimmed.contains("INTEGER:"),
@@ -1835,7 +1835,7 @@ pub async fn list_network_devices(
             "snmpget -v2c -c public -t2 -r0 {} .1.3.6.1.2.1.1.1.0 2>&1",
             snmp_target
         );
-        let result = ssh_utils::ssh_exec(&ssh_host, &ssh_user, &snmp_cmd).await;
+        let result = zentra_core::ssh_pool::pooled_ssh_exec(&ssh_host, &ssh_user, &snmp_cmd).await;
         let output = result.stdout.trim().to_string();
         let snmp_ok = output.contains("STRING:");
 
@@ -1876,7 +1876,7 @@ pub async fn list_network_devices(
             "snmpget -v2c -c public -t1 -r0 {} .1.3.6.1.2.1.1.5.0 2>/dev/null | sed 's/.*STRING: //'",
             snmp_target
         );
-        let sn_result = ssh_utils::ssh_exec(&ssh_host, &ssh_user, &sysname_cmd).await;
+        let sn_result = zentra_core::ssh_pool::pooled_ssh_exec(&ssh_host, &ssh_user, &sysname_cmd).await;
         let sys_name = if sn_result.success {
             let n = sn_result.stdout.trim().to_string();
             if !n.is_empty() && !n.contains("Timeout") && !n.contains("No Response") { Some(n) } else { None }
@@ -1887,7 +1887,7 @@ pub async fn list_network_devices(
             "snmpget -v2c -c public -t1 -r0 {} .1.3.6.1.2.1.1.3.0 2>/dev/null | sed 's/.*Timeticks: //'",
             snmp_target
         );
-        let up_result = ssh_utils::ssh_exec(&ssh_host, &ssh_user, &uptime_cmd).await;
+        let up_result = zentra_core::ssh_pool::pooled_ssh_exec(&ssh_host, &ssh_user, &uptime_cmd).await;
         let uptime = if up_result.success {
             let u = up_result.stdout.trim().to_string();
             if !u.is_empty() && !u.contains("Timeout") { Some(u) } else { None }

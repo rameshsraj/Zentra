@@ -83,6 +83,12 @@ const OTelSpanMetricsPage = lazy(() => import('./pages/OTelSpanMetrics'))
 const OTelAlertRulesPage = lazy(() => import('./pages/OTelAlertRules'))
 const OTelSecurityPage = lazy(() => import('./pages/OTelSecurity'))
 
+// Cloud Monitoring (P10)
+const CloudMonitoringPage = lazy(() => import('./pages/CloudMonitoring'))
+
+// Storage Deep-Dive (P11)
+const StorageDeepDivePage = lazy(() => import('./pages/StorageDeepDive'))
+
 export default function App() {
   return (
     <AuthProvider>
@@ -171,6 +177,12 @@ export default function App() {
             <Route path="otel-span-metrics" element={<OTelSpanMetricsPage />} />
             <Route path="otel-alert-rules" element={<OTelAlertRulesPage />} />
             <Route path="otel-security" element={<OTelSecurityPage />} />
+
+            {/* Cloud Monitoring (P10) */}
+            <Route path="cloud-monitoring" element={<CloudMonitoringPage />} />
+
+            {/* Storage Deep-Dive (P11) */}
+            <Route path="storage-deep-dive" element={<StorageDeepDivePage />} />
 
             {/* Fallback — redirect unknown paths to dashboard */}
             <Route path="*" element={<Navigate to="/dashboard" replace />} />

@@ -455,44 +455,7 @@ fn discovery_store() -> &'static RwLock<Vec<DiscoveryRule>> {
 }
 
 fn init_discovery_store() -> Vec<DiscoveryRule> {
-    let now = Utc::now();
-    vec![
-        DiscoveryRule {
-            id: "dr-001".into(), name: "Filesystem Discovery".into(), rule_type: "filesystem".into(), target_id: "10.88.11.162".into(),
-            interval_secs: 3600, enabled: true, config: serde_json::json!({"min_size_gb": 1}),
-            auto_create_checks: true, template_id: None, last_run: Some((now - Duration::minutes(30)).to_rfc3339()),
-            discovered_items: vec![
-                DiscoveredItem { key: "/".into(), name: "Root filesystem".into(), item_type: "mount_point".into(), properties: serde_json::json!({"size_gb": 50, "used_pct": 62, "fs_type": "ext4"}), discovered_at: (now - Duration::minutes(30)).to_rfc3339(), check_id: Some("hc-disk-root".into()) },
-                DiscoveredItem { key: "/data".into(), name: "Data filesystem".into(), item_type: "mount_point".into(), properties: serde_json::json!({"size_gb": 500, "used_pct": 78, "fs_type": "xfs"}), discovered_at: (now - Duration::minutes(30)).to_rfc3339(), check_id: Some("hc-disk-data".into()) },
-                DiscoveredItem { key: "/boot".into(), name: "Boot partition".into(), item_type: "mount_point".into(), properties: serde_json::json!({"size_gb": 1, "used_pct": 35, "fs_type": "ext4"}), discovered_at: (now - Duration::minutes(30)).to_rfc3339(), check_id: None },
-            ],
-        },
-        DiscoveryRule {
-            id: "dr-002".into(), name: "Port Scan".into(), rule_type: "port_scan".into(), target_id: "10.88.11.162".into(),
-            interval_secs: 7200, enabled: true, config: serde_json::json!({"port_range": "1-65535"}),
-            auto_create_checks: false, template_id: None, last_run: Some((now - Duration::hours(1)).to_rfc3339()),
-            discovered_items: vec![
-                DiscoveredItem { key: "22".into(), name: "SSH".into(), item_type: "listening_port".into(), properties: serde_json::json!({"protocol": "tcp", "program": "sshd"}), discovered_at: (now - Duration::hours(1)).to_rfc3339(), check_id: None },
-                DiscoveredItem { key: "80".into(), name: "HTTP".into(), item_type: "listening_port".into(), properties: serde_json::json!({"protocol": "tcp", "program": "nginx"}), discovered_at: (now - Duration::hours(1)).to_rfc3339(), check_id: None },
-                DiscoveredItem { key: "5432".into(), name: "PostgreSQL".into(), item_type: "listening_port".into(), properties: serde_json::json!({"protocol": "tcp", "program": "postgres"}), discovered_at: (now - Duration::hours(1)).to_rfc3339(), check_id: None },
-                DiscoveredItem { key: "7001".into(), name: "Zentra API".into(), item_type: "listening_port".into(), properties: serde_json::json!({"protocol": "tcp", "program": "zentra-server"}), discovered_at: (now - Duration::hours(1)).to_rfc3339(), check_id: None },
-            ],
-        },
-        DiscoveryRule {
-            id: "dr-003".into(), name: "Docker Containers".into(), rule_type: "docker_container".into(), target_id: "10.88.11.162".into(),
-            interval_secs: 1800, enabled: true, config: serde_json::json!({}),
-            auto_create_checks: true, template_id: None, last_run: Some((now - Duration::minutes(15)).to_rfc3339()),
-            discovered_items: vec![
-                DiscoveredItem { key: "a1b2c3d4".into(), name: "nginx-proxy".into(), item_type: "container".into(), properties: serde_json::json!({"image": "nginx:1.25", "status": "running"}), discovered_at: (now - Duration::minutes(15)).to_rfc3339(), check_id: None },
-                DiscoveredItem { key: "b2c3d4e5".into(), name: "api-server".into(), item_type: "container".into(), properties: serde_json::json!({"image": "Zentra/api:latest", "status": "running"}), discovered_at: (now - Duration::minutes(15)).to_rfc3339(), check_id: None },
-            ],
-        },
-        DiscoveryRule {
-            id: "dr-004".into(), name: "Network Interfaces".into(), rule_type: "network_interface".into(), target_id: "10.88.11.162".into(),
-            interval_secs: 3600, enabled: false, config: serde_json::json!({}),
-            auto_create_checks: false, template_id: None, last_run: None, discovered_items: vec![],
-        },
-    ]
+    Vec::new()
 }
 
 pub async fn list_discovery_rules(State(_s): State<AppState>) -> Result<Json<Vec<DiscoveryRule>>, ApiError> { Ok(Json(discovery_store().read().clone())) }

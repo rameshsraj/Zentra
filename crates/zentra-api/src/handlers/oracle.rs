@@ -162,7 +162,7 @@ async fn oracle_ssh_query(state: &AppState, org_id: uuid::Uuid, sql: &str) -> Re
         target.port,
         shell_quote(&db_name),
     );
-    let result = ssh_utils::ssh_exec(host, &ssh_user, &cmd).await;
+    let result = zentra_core::ssh_pool::pooled_ssh_exec(host, &ssh_user, &cmd).await;
     if !result.success {
         return Err(ssh_utils::friendly_error(host, &result.stderr));
     }
@@ -174,6 +174,7 @@ async fn oracle_ssh_query(state: &AppState, org_id: uuid::Uuid, sql: &str) -> Re
 // ============================================================================
 
 /// GET /api/oracle/overview
+#[tracing::instrument(skip(state, org_id), fields(otel.kind = "client", db.system = "oracle"))]
 pub async fn overview(
     State(state): State<AppState>,
     OrgId(org_id): OrgId,
@@ -325,6 +326,7 @@ pub async fn rac_overview(
 // ============================================================================
 
 /// GET /api/oracle/sysmetrics
+#[tracing::instrument(skip(state, org_id), fields(otel.kind = "client", db.system = "oracle"))]
 pub async fn sysmetrics(
     State(state): State<AppState>,
     OrgId(org_id): OrgId,
@@ -426,6 +428,7 @@ pub async fn wait_classes(
 // ============================================================================
 
 /// GET /api/oracle/tablespaces
+#[tracing::instrument(skip(state, org_id), fields(otel.kind = "client", db.system = "oracle"))]
 pub async fn tablespaces(
     State(state): State<AppState>,
     OrgId(org_id): OrgId,
@@ -632,6 +635,7 @@ pub async fn cache_hit_ratio(
 // ============================================================================
 
 /// GET /api/oracle/dataguard
+#[tracing::instrument(skip(state, org_id), fields(otel.kind = "client", db.system = "oracle"))]
 pub async fn dataguard(
     State(state): State<AppState>,
     OrgId(org_id): OrgId,
@@ -661,6 +665,7 @@ pub async fn dataguard(
 // ============================================================================
 
 /// GET /api/oracle/rman
+#[tracing::instrument(skip(state, org_id), fields(otel.kind = "client", db.system = "oracle"))]
 pub async fn rman(
     State(state): State<AppState>,
     OrgId(org_id): OrgId,
@@ -967,21 +972,7 @@ pub struct UpdateConnectionRequest {
 
 pub fn oracle_connections() -> &'static RwLock<Vec<OracleConnection>> {
     static INSTANCE: std::sync::OnceLock<RwLock<Vec<OracleConnection>>> = std::sync::OnceLock::new();
-    INSTANCE.get_or_init(|| RwLock::new(vec![
-        OracleConnection {
-            id: "oracle-xe-prod".into(), name: "XEPDB1".into(),
-            host: "10.88.218.59".into(), port: 1521, service_name: "XE".into(),
-            username: "system".into(), password: "OraclePass#21".into(), auth_mode: "password".into(), role: "DEFAULT".into(),
-            tns_admin_path: None,
-            pool_min: 2, pool_max: 10, pool_increment: 1,
-            conn_max_lifetime_secs: 3600, query_timeout_secs: 30,
-            labels: json!({"env": "production"}),
-            is_active: true, status: "connected".into(),
-            last_ping: Some(Utc::now().to_rfc3339()), last_error: None,
-            created_at: Utc::now().to_rfc3339(),
-            updated_at: Utc::now().to_rfc3339(),
-        },
-    ]))
+    INSTANCE.get_or_init(|| RwLock::new(Vec::new()))
 }
 
 /// GET /api/oracle/connections — list all Oracle connections with status
@@ -1211,40 +1202,7 @@ pub struct AlertLogQuery {
 
 fn alert_log_store() -> &'static RwLock<Vec<AlertLogEntry>> {
     static INSTANCE: std::sync::OnceLock<RwLock<Vec<AlertLogEntry>>> = std::sync::OnceLock::new();
-    INSTANCE.get_or_init(|| {
-        let now = Utc::now();
-        let entries = vec![
-            ("critical", "rdbms", "ORA-04031: unable to allocate 4096 bytes of shared memory", Some(4031)),
-            ("warning", "rdbms", "Archived Log: Thread 1 Sequence 23456 completed", None),
-            ("info", "rdbms", "ALTER SYSTEM SET memory_target=8G SCOPE=SPFILE", None),
-            ("critical", "rdbms", "ORA-00600: internal error code, arguments: [kdsgrp1]", Some(600)),
-            ("warning", "asm", "WARNING: Data file 7 has been offline for 2 hours", None),
-            ("info", "rdbms", "Starting ORACLE instance (normal)", None),
-            ("warning", "rdbms", "ORA-01555: snapshot too old: rollback segment too small", Some(1555)),
-            ("info", "rdbms", "Recovery of Online Redo Log: Thread 1 Group 3 Seq 23457", None),
-            ("critical", "dg", "FAL[server]: Error 12514 connecting to standby", Some(12514)),
-            ("info", "rdbms", "Checkpoint not complete - retry logging", None),
-            ("warning", "rdbms", "ORA-01652: unable to extend temp segment by 128 in tablespace TEMP", Some(1652)),
-            ("info", "asm", "SUCCESS: disk group DATA mounted", None),
-            ("warning", "rdbms", "ORA-12012: error on auto execute of job SYS.MMON_SLAVE", Some(12012)),
-            ("info", "rdbms", "Thread 1 advanced to log sequence 23458 (LGWR switch)", None),
-            ("critical", "rdbms", "ORA-27300: OS system dependent operation:fork failed", Some(27300)),
-        ];
-        RwLock::new(entries.into_iter().enumerate().map(|(i, (level, comp, msg, code))| {
-            AlertLogEntry {
-                id: format!("alog-{}", i),
-                connection_id: "oracle-xe-prod".into(),
-                database_name: "ORCLPDB1".into(),
-                timestamp: (now - Duration::minutes(i as i64 * 15)).to_rfc3339(),
-                level: level.to_string(),
-                component: comp.to_string(),
-                message: msg.to_string(),
-                ora_code: code,
-                host: "orarac01.dc1.local".into(),
-                instance_name: "ORCL1".into(),
-            }
-        }).collect())
-    })
+    INSTANCE.get_or_init(|| RwLock::new(Vec::new()))
 }
 
 /// GET /api/oracle/alertlog — entries with filters
@@ -1332,25 +1290,14 @@ pub async fn scrape_metrics(State(_s): State<AppState>) -> Json<Value> {
 
 /// GET /api/oracle/txeventq — list queues with stats
 pub async fn txeventq_list(State(_s): State<AppState>) -> Json<Value> {
-    let queues = vec![
-        json!({ "queue_name": "APP_EVENT_Q", "owner": "APP_SCHEMA", "queue_type": "NORMAL_QUEUE",
-                "enqueue_enabled": true, "dequeue_enabled": true, "subscribers": 3,
-                "messages_ready": 1250, "messages_processed": 45000, "messages_expired": 12,
-                "avg_latency_ms": 45.2, "throughput_per_sec": 125.0, "oldest_message_age_secs": 180, "status": "active" }),
-        json!({ "queue_name": "ORDER_EVENT_Q", "owner": "ORDER_SCHEMA", "queue_type": "NORMAL_QUEUE",
-                "enqueue_enabled": true, "dequeue_enabled": true, "subscribers": 5,
-                "messages_ready": 350, "messages_processed": 128000, "messages_expired": 3,
-                "avg_latency_ms": 12.8, "throughput_per_sec": 420.0, "oldest_message_age_secs": 45, "status": "active" }),
-        json!({ "queue_name": "AUDIT_EVENT_Q", "owner": "AUDIT_SCHEMA", "queue_type": "NORMAL_QUEUE",
-                "enqueue_enabled": true, "dequeue_enabled": true, "subscribers": 1,
-                "messages_ready": 8500, "messages_processed": 220000, "messages_expired": 0,
-                "avg_latency_ms": 180.5, "throughput_per_sec": 35.0, "oldest_message_age_secs": 3600, "status": "backlog" }),
-        json!({ "queue_name": "NOTIFICATION_Q", "owner": "NOTIFY_SCHEMA", "queue_type": "EXCEPTION_QUEUE",
-                "enqueue_enabled": false, "dequeue_enabled": true, "subscribers": 2,
-                "messages_ready": 0, "messages_processed": 5000, "messages_expired": 50,
-                "avg_latency_ms": 0.0, "throughput_per_sec": 0.0, "oldest_message_age_secs": 0, "status": "disabled" }),
-    ];
-    Json(json!({ "queues": queues, "total": 4 }))
+    // Real queue data is fetched from Oracle connections when available.
+    // Returns empty list when no Oracle connections are configured.
+    let conns = oracle_connections().read();
+    if conns.is_empty() {
+        return Json(json!({ "queues": [], "total": 0, "message": "No Oracle connections configured. Add a connection to monitor TxEventQ queues." }));
+    }
+    // TODO: Query actual TxEventQ stats from connected Oracle instances via SSH/sqlplus
+    Json(json!({ "queues": [], "total": 0, "message": "Connect to an Oracle instance with TxEventQ enabled to see queue statistics." }))
 }
 
 /// GET /api/oracle/txeventq/:queue_name — detail
@@ -1360,42 +1307,266 @@ pub async fn txeventq_detail(
 ) -> Json<Value> {
     Json(json!({
         "queue_name": name,
-        "owner": "APP_SCHEMA",
-        "queue_table": format!("{}_QT", name),
-        "queue_type": "NORMAL_QUEUE",
-        "enqueue_enabled": true,
-        "dequeue_enabled": true,
-        "retention": "604800",
-        "subscribers": [
-            { "name": "SUB_1", "protocol": 0, "address": null, "rule": null },
-            { "name": "SUB_2", "protocol": 0, "address": null, "rule": null },
-        ],
-        "throughput_history": [
-            { "time": (Utc::now() - Duration::hours(4)).to_rfc3339(), "enqueue": 120, "dequeue": 115 },
-            { "time": (Utc::now() - Duration::hours(3)).to_rfc3339(), "enqueue": 135, "dequeue": 130 },
-            { "time": (Utc::now() - Duration::hours(2)).to_rfc3339(), "enqueue": 150, "dequeue": 140 },
-            { "time": (Utc::now() - Duration::hours(1)).to_rfc3339(), "enqueue": 125, "dequeue": 125 },
-            { "time": Utc::now().to_rfc3339(), "enqueue": 130, "dequeue": 128 },
-        ],
-        "latency_history": [
-            { "time": (Utc::now() - Duration::hours(4)).to_rfc3339(), "avg_ms": 42, "p99_ms": 180 },
-            { "time": (Utc::now() - Duration::hours(3)).to_rfc3339(), "avg_ms": 38, "p99_ms": 165 },
-            { "time": (Utc::now() - Duration::hours(2)).to_rfc3339(), "avg_ms": 55, "p99_ms": 220 },
-            { "time": (Utc::now() - Duration::hours(1)).to_rfc3339(), "avg_ms": 45, "p99_ms": 185 },
-            { "time": Utc::now().to_rfc3339(), "avg_ms": 40, "p99_ms": 170 },
-        ],
+        "message": "Queue detail requires a live Oracle connection with TxEventQ enabled.",
+        "subscribers": [],
+        "throughput_history": [],
+        "latency_history": [],
     }))
 }
 
 /// GET /api/oracle/txeventq/stats — aggregates
 pub async fn txeventq_stats(State(_s): State<AppState>) -> Json<Value> {
     Json(json!({
-        "total_queues": 4,
-        "active_queues": 3,
-        "total_ready": 10100,
-        "total_processed": 398000,
-        "avg_latency_ms": 79.5,
-        "max_latency_ms": 180.5,
-        "backlog_alert_count": 1,
+        "total_queues": 0,
+        "active_queues": 0,
+        "total_ready": 0,
+        "total_processed": 0,
+        "avg_latency_ms": 0.0,
+        "max_latency_ms": 0.0,
+        "backlog_alert_count": 0,
+        "message": "No Oracle TxEventQ data available. Configure an Oracle connection to monitor queues."
     }))
+}
+
+// ============================================================================
+// Oracle Schema Object Browser
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct SchemaObjectParams {
+    pub connection_id: Option<String>,
+    pub owner: Option<String>,
+}
+
+/// Helper: run a SQL via oracle_local_query against a selected connection and
+/// parse pipe-delimited rows into JSON objects using given column names.
+async fn schema_object_query(
+    state: &AppState,
+    org_id: uuid::Uuid,
+    cp: &SchemaObjectParams,
+    sql: &str,
+    columns: &[&str],
+) -> Vec<Value> {
+    // Try native connection first
+    if let Some(cid) = &cp.connection_id {
+        if let Ok(raw) = oracle_local_query(cid, sql).await {
+            return parse_pipe_rows(&raw, columns);
+        }
+    }
+    // Collect connection IDs before await to avoid holding RwLockReadGuard across .await
+    let conn_ids: Vec<String> = {
+        let store = oracle_connections().read();
+        store.iter().map(|c| c.id.clone()).collect()
+    };
+    for cid in &conn_ids {
+        if let Ok(raw) = oracle_local_query(cid, sql).await {
+            return parse_pipe_rows(&raw, columns);
+        }
+    }
+    // Fallback: SSH query
+    if let Ok(raw) = oracle_ssh_query(state, org_id, sql).await {
+        return parse_pipe_rows(&raw, columns);
+    }
+    Vec::new()
+}
+
+fn parse_pipe_rows(raw: &str, columns: &[&str]) -> Vec<Value> {
+    raw.lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|line| {
+            let parts: Vec<&str> = line.splitn(columns.len(), '|').collect();
+            let mut obj = serde_json::Map::new();
+            for (i, col) in columns.iter().enumerate() {
+                obj.insert(
+                    col.to_string(),
+                    json!(parts.get(i).map(|s| s.trim()).unwrap_or("")),
+                );
+            }
+            Value::Object(obj)
+        })
+        .collect()
+}
+
+/// GET /api/oracle/schema/views
+pub async fn schema_views(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    Query(params): Query<SchemaObjectParams>,
+) -> Json<Value> {
+    let owner = params.owner.clone().unwrap_or_else(|| "%".into()).to_uppercase();
+    let sql = format!(
+        "SELECT owner || '|' || view_name || '|' || NVL(TO_CHAR(text_length), '0') || '|' || NVL(editioning_view, 'N') \
+         FROM all_views WHERE owner LIKE '{}' AND owner NOT IN ('SYS','SYSTEM','MDSYS','ORDSYS','CTXSYS','XDB','WMSYS','DBSNMP','OUTLN','APPQOSSYS','GSMADMIN_INTERNAL') \
+         ORDER BY owner, view_name FETCH FIRST 500 ROWS ONLY",
+        owner
+    );
+    let rows = schema_object_query(&state, org_id, &params, &sql, &["owner", "view_name", "text_length", "editioning_view"]).await;
+    let total = rows.len();
+    Json(json!({ "views": rows, "total": total }))
+}
+
+/// GET /api/oracle/schema/mviews
+pub async fn schema_mviews(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    Query(params): Query<SchemaObjectParams>,
+) -> Json<Value> {
+    let owner = params.owner.clone().unwrap_or_else(|| "%".into()).to_uppercase();
+    let sql = format!(
+        "SELECT owner || '|' || mview_name || '|' || NVL(refresh_mode, 'N/A') || '|' || NVL(refresh_method, 'N/A') || '|' || NVL(TO_CHAR(last_refresh_date, 'YYYY-MM-DD HH24:MI:SS'), 'Never') || '|' || NVL(staleness, 'UNKNOWN') || '|' || NVL(compile_state, 'UNKNOWN') \
+         FROM all_mviews WHERE owner LIKE '{}' AND owner NOT IN ('SYS','SYSTEM','MDSYS','ORDSYS','CTXSYS','XDB','WMSYS','DBSNMP','OUTLN','APPQOSSYS','GSMADMIN_INTERNAL') \
+         ORDER BY owner, mview_name FETCH FIRST 500 ROWS ONLY",
+        owner
+    );
+    let rows = schema_object_query(&state, org_id, &params, &sql, &["owner", "mview_name", "refresh_mode", "refresh_method", "last_refresh_date", "staleness", "compile_state"]).await;
+    let total = rows.len();
+    Json(json!({ "mviews": rows, "total": total }))
+}
+
+/// GET /api/oracle/schema/functions
+pub async fn schema_functions(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    Query(params): Query<SchemaObjectParams>,
+) -> Json<Value> {
+    let owner = params.owner.clone().unwrap_or_else(|| "%".into()).to_uppercase();
+    let sql = format!(
+        "SELECT owner || '|' || object_name || '|' || status || '|' || NVL(TO_CHAR(created, 'YYYY-MM-DD HH24:MI:SS'), '') || '|' || NVL(TO_CHAR(last_ddl_time, 'YYYY-MM-DD HH24:MI:SS'), '') \
+         FROM all_objects WHERE object_type = 'FUNCTION' AND owner LIKE '{}' AND owner NOT IN ('SYS','SYSTEM','MDSYS','ORDSYS','CTXSYS','XDB','WMSYS','DBSNMP','OUTLN','APPQOSSYS','GSMADMIN_INTERNAL') \
+         ORDER BY owner, object_name FETCH FIRST 500 ROWS ONLY",
+        owner
+    );
+    let rows = schema_object_query(&state, org_id, &params, &sql, &["owner", "object_name", "status", "created", "last_ddl_time"]).await;
+    let total = rows.len();
+    Json(json!({ "functions": rows, "total": total }))
+}
+
+/// GET /api/oracle/schema/procedures
+pub async fn schema_procedures(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    Query(params): Query<SchemaObjectParams>,
+) -> Json<Value> {
+    let owner = params.owner.clone().unwrap_or_else(|| "%".into()).to_uppercase();
+    let sql = format!(
+        "SELECT owner || '|' || object_name || '|' || status || '|' || NVL(TO_CHAR(created, 'YYYY-MM-DD HH24:MI:SS'), '') || '|' || NVL(TO_CHAR(last_ddl_time, 'YYYY-MM-DD HH24:MI:SS'), '') \
+         FROM all_objects WHERE object_type = 'PROCEDURE' AND owner LIKE '{}' AND owner NOT IN ('SYS','SYSTEM','MDSYS','ORDSYS','CTXSYS','XDB','WMSYS','DBSNMP','OUTLN','APPQOSSYS','GSMADMIN_INTERNAL') \
+         ORDER BY owner, object_name FETCH FIRST 500 ROWS ONLY",
+        owner
+    );
+    let rows = schema_object_query(&state, org_id, &params, &sql, &["owner", "object_name", "status", "created", "last_ddl_time"]).await;
+    let total = rows.len();
+    Json(json!({ "procedures": rows, "total": total }))
+}
+
+/// GET /api/oracle/schema/packages
+pub async fn schema_packages(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    Query(params): Query<SchemaObjectParams>,
+) -> Json<Value> {
+    let owner = params.owner.clone().unwrap_or_else(|| "%".into()).to_uppercase();
+    let sql = format!(
+        "SELECT owner || '|' || object_name || '|' || object_type || '|' || status || '|' || NVL(TO_CHAR(created, 'YYYY-MM-DD HH24:MI:SS'), '') || '|' || NVL(TO_CHAR(last_ddl_time, 'YYYY-MM-DD HH24:MI:SS'), '') \
+         FROM all_objects WHERE object_type IN ('PACKAGE', 'PACKAGE BODY') AND owner LIKE '{}' AND owner NOT IN ('SYS','SYSTEM','MDSYS','ORDSYS','CTXSYS','XDB','WMSYS','DBSNMP','OUTLN','APPQOSSYS','GSMADMIN_INTERNAL') \
+         ORDER BY owner, object_name, object_type FETCH FIRST 500 ROWS ONLY",
+        owner
+    );
+    let rows = schema_object_query(&state, org_id, &params, &sql, &["owner", "object_name", "object_type", "status", "created", "last_ddl_time"]).await;
+    let total = rows.len();
+    Json(json!({ "packages": rows, "total": total }))
+}
+
+/// GET /api/oracle/schema/triggers
+pub async fn schema_triggers(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    Query(params): Query<SchemaObjectParams>,
+) -> Json<Value> {
+    let owner = params.owner.clone().unwrap_or_else(|| "%".into()).to_uppercase();
+    let sql = format!(
+        "SELECT owner || '|' || trigger_name || '|' || trigger_type || '|' || triggering_event || '|' || table_owner || '|' || NVL(table_name, '') || '|' || status \
+         FROM all_triggers WHERE owner LIKE '{}' AND owner NOT IN ('SYS','SYSTEM','MDSYS','ORDSYS','CTXSYS','XDB','WMSYS','DBSNMP','OUTLN','APPQOSSYS','GSMADMIN_INTERNAL') \
+         ORDER BY owner, trigger_name FETCH FIRST 500 ROWS ONLY",
+        owner
+    );
+    let rows = schema_object_query(&state, org_id, &params, &sql, &["owner", "trigger_name", "trigger_type", "triggering_event", "table_owner", "table_name", "status"]).await;
+    let total = rows.len();
+    Json(json!({ "triggers": rows, "total": total }))
+}
+
+/// GET /api/oracle/schema/indexes
+pub async fn schema_indexes(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    Query(params): Query<SchemaObjectParams>,
+) -> Json<Value> {
+    let owner = params.owner.clone().unwrap_or_else(|| "%".into()).to_uppercase();
+    let sql = format!(
+        "SELECT owner || '|' || index_name || '|' || index_type || '|' || table_owner || '|' || table_name || '|' || uniqueness || '|' || status || '|' || NVL(TO_CHAR(num_rows), '0') || '|' || NVL(TO_CHAR(last_analyzed, 'YYYY-MM-DD HH24:MI:SS'), 'Never') \
+         FROM all_indexes WHERE owner LIKE '{}' AND owner NOT IN ('SYS','SYSTEM','MDSYS','ORDSYS','CTXSYS','XDB','WMSYS','DBSNMP','OUTLN','APPQOSSYS','GSMADMIN_INTERNAL') \
+         ORDER BY owner, index_name FETCH FIRST 500 ROWS ONLY",
+        owner
+    );
+    let rows = schema_object_query(&state, org_id, &params, &sql, &["owner", "index_name", "index_type", "table_owner", "table_name", "uniqueness", "status", "num_rows", "last_analyzed"]).await;
+    let total = rows.len();
+    Json(json!({ "indexes": rows, "total": total }))
+}
+
+/// GET /api/oracle/schema/sequences
+pub async fn schema_sequences(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    Query(params): Query<SchemaObjectParams>,
+) -> Json<Value> {
+    let owner = params.owner.clone().unwrap_or_else(|| "%".into()).to_uppercase();
+    let sql = format!(
+        "SELECT sequence_owner || '|' || sequence_name || '|' || TO_CHAR(min_value) || '|' || TO_CHAR(max_value) || '|' || TO_CHAR(increment_by) || '|' || TO_CHAR(last_number) || '|' || cycle_flag || '|' || order_flag || '|' || TO_CHAR(cache_size) \
+         FROM all_sequences WHERE sequence_owner LIKE '{}' AND sequence_owner NOT IN ('SYS','SYSTEM','MDSYS','ORDSYS','CTXSYS','XDB','WMSYS','DBSNMP','OUTLN','APPQOSSYS','GSMADMIN_INTERNAL') \
+         ORDER BY sequence_owner, sequence_name FETCH FIRST 500 ROWS ONLY",
+        owner
+    );
+    let rows = schema_object_query(&state, org_id, &params, &sql, &["owner", "sequence_name", "min_value", "max_value", "increment_by", "last_number", "cycle_flag", "order_flag", "cache_size"]).await;
+    let total = rows.len();
+    Json(json!({ "sequences": rows, "total": total }))
+}
+
+/// GET /api/oracle/schema/summary — counts of all schema object types
+pub async fn schema_summary(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    Query(params): Query<SchemaObjectParams>,
+) -> Json<Value> {
+    let owner = params.owner.clone().unwrap_or_else(|| "%".into()).to_uppercase();
+    let sql = format!(
+        "SELECT object_type || '|' || TO_CHAR(COUNT(*)) FROM all_objects \
+         WHERE owner LIKE '{}' AND owner NOT IN ('SYS','SYSTEM','MDSYS','ORDSYS','CTXSYS','XDB','WMSYS','DBSNMP','OUTLN','APPQOSSYS','GSMADMIN_INTERNAL') \
+         GROUP BY object_type ORDER BY object_type",
+        owner
+    );
+    let rows = schema_object_query(&state, org_id, &params, &sql, &["object_type", "count"]).await;
+    // Build a summary map
+    let mut summary = serde_json::Map::new();
+    for row in &rows {
+        if let (Some(ot), Some(cnt)) = (row.get("object_type").and_then(|v| v.as_str()), row.get("count").and_then(|v| v.as_str())) {
+            summary.insert(ot.to_lowercase().replace(' ', "_"), json!(cnt.parse::<i64>().unwrap_or(0)));
+        }
+    }
+    Json(json!({ "summary": summary, "raw": rows }))
+}
+
+/// GET /api/oracle/schema/owners — list available non-system schema owners
+pub async fn schema_owners(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    Query(params): Query<SchemaObjectParams>,
+) -> Json<Value> {
+    let sql = "SELECT DISTINCT owner FROM all_objects \
+               WHERE owner NOT IN ('SYS','SYSTEM','MDSYS','ORDSYS','CTXSYS','XDB','WMSYS','DBSNMP','OUTLN','APPQOSSYS','GSMADMIN_INTERNAL','ANONYMOUS','AUDSYS','DBSFWUSER','DIP','GGSYS','GSMCATUSER','GSMUSER','LBACSYS','MDDATA','OJVMSYS','OLAPSYS','ORDDATA','ORDPLUGINS','REMOTE_SCHEDULER_AGENT','SI_INFORMTN_SCHEMA','SPATIAL_CSW_ADMIN_USR','SPATIAL_WFS_ADMIN_USR','SYSBACKUP','SYSDG','SYSKM','SYSRAC','XS$NULL') \
+               ORDER BY owner";
+    let rows = schema_object_query(&state, org_id, &params, sql, &["owner"]).await;
+    let owners: Vec<&str> = rows.iter()
+        .filter_map(|r| r.get("owner").and_then(|v| v.as_str()))
+        .collect();
+    Json(json!({ "owners": owners }))
 }

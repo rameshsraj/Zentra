@@ -5,6 +5,7 @@ pub mod crypto;
 pub mod error;
 pub mod plugin;
 pub mod ssh_utils;
+pub mod ssh_pool;
 
 pub use error::{Error, Result};
 pub use models::metric::Metric;

@@ -6,14 +6,21 @@
 
 $ErrorActionPreference = "Stop"
 
-# ---- Configuration (from .env) ----
-$SERVER_HOST  = "10.88.11.162"
-$SERVER_PORT  = 22
-$SERVER_USER  = "root"
-$SERVER_PASS  = "skyline"
-$DEPLOY_PATH  = "/store/Zentra"
-$BACKEND_PORT = 5006
-$FRONTEND_PORT= 5010
+# ---- Configuration (from .env or environment) ----
+$SERVER_HOST  = if ($env:SERVER_HOST)  { $env:SERVER_HOST }  else { "10.88.11.162" }
+$SERVER_PORT  = if ($env:SERVER_PORT)  { [int]$env:SERVER_PORT } else { 22 }
+$SERVER_USER  = if ($env:SERVER_USER)  { $env:SERVER_USER }  else { "root" }
+$DEPLOY_PATH  = if ($env:DEPLOY_PATH)  { $env:DEPLOY_PATH }  else { "/store/Zentra" }
+$BACKEND_PORT = if ($env:ZENTRA_API_PORT) { [int]$env:ZENTRA_API_PORT } else { 5006 }
+$FRONTEND_PORT= if ($env:FRONTEND_PORT) { [int]$env:FRONTEND_PORT } else { 5010 }
+
+# Server password — NEVER hardcode. Read from env or prompt.
+$SERVER_PASS = $env:SERVER_PASS
+if (-not $SERVER_PASS) {
+    $secPass = Read-Host "Enter password for $SERVER_USER@$SERVER_HOST" -AsSecureString
+    $SERVER_PASS = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+        [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secPass))
+}
 $AGENT_PORT   = 5001
 
 $PROJECT_ROOT = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -151,10 +158,14 @@ Write-Host "  Skipping .env (using server's existing .env)" -ForegroundColor Yel
 New-Item -ItemType Directory -Path "$STAGING\frontend\dist" -Force | Out-Null
 Copy-Item "$PROJECT_ROOT\frontend\dist\*" "$STAGING\frontend\dist" -Recurse
 
-# Copy SQL migrations
+# Copy SQL migrations (deploy/sql + migrations/)
 if (Test-Path "$PROJECT_ROOT\deploy\sql") {
     New-Item -ItemType Directory -Path "$STAGING\deploy\sql" -Force | Out-Null
     Copy-Item "$PROJECT_ROOT\deploy\sql\*" "$STAGING\deploy\sql" -Recurse
+}
+if (Test-Path "$PROJECT_ROOT\migrations") {
+    New-Item -ItemType Directory -Path "$STAGING\migrations" -Force | Out-Null
+    Copy-Item "$PROJECT_ROOT\migrations\*" "$STAGING\migrations" -Recurse
 }
 
 # Exclude build artifacts from Rust
@@ -331,7 +342,46 @@ Invoke-SSH "chmod +x $DEPLOY_PATH/start.sh"
 Write-Host ""
 Write-Host "STEP 8: Running SQL migrations..." -ForegroundColor Green
 
-Invoke-SSH "cd $DEPLOY_PATH/deploy/sql && export PGPASSWORD='zantaz' && for f in 001_schema.sql 002_indexes.sql 003_license_management.sql 004_predictions.sql 005_scrape_targets.sql 006_annotations.sql 007_dashboards.sql 008_timescaledb_enhance.sql 009_dashboard_enhance.sql 010_rbac_audit.sql 011_favorites_blacklist.sql 012_auth_system.sql 013_network_security.sql 014_oracle_monitoring.sql 022_user_module_access.sql 023_user_menu_items.sql; do echo Applying: `$f; psql -h 10.88.11.162 -p 5434 -U postgres -d zentra -f `$f 2>&1 | tail -2; done && echo ALL_MIGRATIONS_APPLIED"
+# Create migration runner script on server
+$migrateScript = @'
+#!/bin/bash
+set -e
+cd __DEPLOY_PATH__
+set -a; source .env 2>/dev/null; set +a
+export PGPASSWORD=$POSTGRES_PASSWORD
+
+# Ensure zentra database exists
+echo "Ensuring zentra database exists..."
+psql -h $POSTGRES_HOST -p $POSTGRES_PORT -U $POSTGRES_USER -tc "SELECT 1 FROM pg_database WHERE datname='zentra'" | grep -q 1 || \
+  psql -h $POSTGRES_HOST -p $POSTGRES_PORT -U $POSTGRES_USER -c "CREATE DATABASE zentra"
+echo "zentra DB ensured"
+
+# Run deploy/sql scripts (base schema)
+echo "Running deploy/sql scripts..."
+cd __DEPLOY_PATH__/deploy/sql
+for f in $(ls [0-9]*.sql 2>/dev/null | sort); do
+  echo "Applying: $f"
+  psql -h $POSTGRES_HOST -p $POSTGRES_PORT -U $POSTGRES_USER -d zentra -f "$f" 2>&1 | tail -2
+done
+echo "DEPLOY_SQL_DONE"
+
+# Run migrations/ scripts (OTel, SkyWalking, etc.)
+echo "Running migrations/ scripts..."
+cd __DEPLOY_PATH__/migrations
+for f in $(ls *.sql 2>/dev/null | sort); do
+  echo "Applying: $f"
+  psql -h $POSTGRES_HOST -p $POSTGRES_PORT -U $POSTGRES_USER -d zentra -f "$f" 2>&1 | tail -2
+done
+echo "ALL_MIGRATIONS_APPLIED"
+'@
+$migrateScript = $migrateScript -replace '__DEPLOY_PATH__', $DEPLOY_PATH
+$migratePath = "$env:TEMP\Zentra-migrate.sh"
+$migrateScript | Out-File -FilePath $migratePath -Encoding utf8 -Force
+$content = [System.IO.File]::ReadAllText($migratePath)
+$content = $content -replace "`r`n", "`n"
+[System.IO.File]::WriteAllText($migratePath, $content)
+Invoke-SCP -LocalPath $migratePath -RemotePath "$DEPLOY_PATH/migrate.sh"
+Invoke-SSH "chmod +x $DEPLOY_PATH/migrate.sh && bash $DEPLOY_PATH/migrate.sh"
 
 # =============================================================
 # STEP 9: Start services
@@ -347,8 +397,8 @@ Invoke-SSH 'systemctl restart nginx 2>/dev/null && echo nginx restarted || echo 
 
 # Verify
 Start-Sleep -Seconds 3
-Invoke-SSH "curl -sf http://127.0.0.1:${BACKEND_PORT}/api/health 2>/dev/null; if [ \$? -eq 0 ]; then echo API health OK; else echo API not responding yet - may be starting; fi"
-Invoke-SSH "curl -sf http://127.0.0.1:${FRONTEND_PORT}/ >/dev/null 2>&1; if [ \$? -eq 0 ]; then echo Frontend OK; else echo Frontend not responding; fi"
+Invoke-SSH "curl -sf http://127.0.0.1:${BACKEND_PORT}/api/health 2>/dev/null && echo API_HEALTH_OK || echo API_NOT_RESPONDING"
+Invoke-SSH "curl -sf http://127.0.0.1:${FRONTEND_PORT}/ >/dev/null 2>&1 && echo FRONTEND_OK || echo FRONTEND_NOT_RESPONDING"
 
 # =============================================================
 # Done

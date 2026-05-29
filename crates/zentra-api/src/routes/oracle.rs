@@ -56,4 +56,16 @@ pub fn router() -> Router<AppState> {
         .route("/api/oracle/txeventq", get(handlers::oracle::txeventq_list))
         .route("/api/oracle/txeventq/stats", get(handlers::oracle::txeventq_stats))
         .route("/api/oracle/txeventq/:queue_name", get(handlers::oracle::txeventq_detail))
+
+        // Schema Object Browser
+        .route("/api/oracle/schema/summary", get(handlers::oracle::schema_summary))
+        .route("/api/oracle/schema/owners", get(handlers::oracle::schema_owners))
+        .route("/api/oracle/schema/views", get(handlers::oracle::schema_views))
+        .route("/api/oracle/schema/mviews", get(handlers::oracle::schema_mviews))
+        .route("/api/oracle/schema/functions", get(handlers::oracle::schema_functions))
+        .route("/api/oracle/schema/procedures", get(handlers::oracle::schema_procedures))
+        .route("/api/oracle/schema/packages", get(handlers::oracle::schema_packages))
+        .route("/api/oracle/schema/triggers", get(handlers::oracle::schema_triggers))
+        .route("/api/oracle/schema/indexes", get(handlers::oracle::schema_indexes))
+        .route("/api/oracle/schema/sequences", get(handlers::oracle::schema_sequences))
 }

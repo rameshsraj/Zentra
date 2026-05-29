@@ -90,3 +90,4 @@ pub mod profiling;
 pub mod otlp;
 pub mod otel_connectors;
 pub mod license_status;
+pub mod pool_status;

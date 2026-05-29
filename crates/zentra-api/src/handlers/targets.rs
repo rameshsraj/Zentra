@@ -39,9 +39,10 @@ pub async fn list_targets(
 
 pub async fn get_target(
     State(state): State<AppState>,
+    OrgId(org_id): OrgId,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Target>, ApiError> {
-    let target = zentra_db::repositories::targets::get_target(&state.pool, id)
+    let target = zentra_db::repositories::targets::get_target_scoped(&state.pool, id, org_id)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .ok_or_else(|| ApiError::NotFound("Target not found".into()))?;
@@ -349,7 +350,7 @@ pub async fn verify_ssh(
     let user = req.username.unwrap_or_else(|| {
         std::env::var("ZENTRA_SSH_USER").unwrap_or_else(|_| "root".into())
     });
-    let result = ssh_utils::ssh_exec(&req.host, &user, "echo ZENTRA_VERIFY_OK && hostname").await;
+    let result = zentra_core::ssh_pool::pooled_ssh_exec(&req.host, &user, "echo ZENTRA_VERIFY_OK && hostname").await;
 
     if result.success && result.stdout.contains("ZENTRA_VERIFY_OK") {
         let hostname = result.stdout.lines().nth(1).unwrap_or("").trim().to_string();
@@ -462,6 +463,7 @@ pub struct ServerStats {
 }
 
 /// SSH into a target server and collect real system stats
+#[tracing::instrument(skip(state), fields(otel.kind = "client", db.system = "ssh"))]
 pub async fn get_target_stats(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,

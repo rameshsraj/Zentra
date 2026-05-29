@@ -86,10 +86,12 @@ pub async fn validate_otlp_key(
     hasher.update(key.as_bytes());
     let hash = format!("{:x}", hasher.finalize());
 
-    // Check cache
+    // Check cache (OT12: cache verification with metrics)
     if let Some(cached) = state.otlp_key_cache.get(&hash) {
+        metrics::counter!("zentra_otlp_key_cache_hit").increment(1);
         return Ok(cached.clone());
     }
+    metrics::counter!("zentra_otlp_key_cache_miss").increment(1);
 
     // Check DB
     let row = sqlx::query(
@@ -117,6 +119,7 @@ pub async fn validate_otlp_key(
 // ============================================================================
 
 /// POST /v1/traces — ingest OTLP traces (JSON or protobuf)
+#[tracing::instrument(skip_all, fields(otel.kind = "server", signal = "traces"))]
 pub async fn ingest_traces(
     State(state): State<AppState>,
     OrgId(org_id): OrgId,
@@ -140,103 +143,40 @@ pub async fn ingest_traces(
         }
     };
 
-    let mut span_count = 0i64;
-    let mut llm_span_count = 0i64;
-
-    // Parse resourceSpans → scopeSpans → traces
-    if let Some(resource_spans) = payload.get("resourceSpans").and_then(|v| v.as_array()) {
-        for rs in resource_spans {
-            let resource_attrs = rs.pointer("/resource/attributes").cloned().unwrap_or(json!({}));
-            let service_name = extract_service_name(&resource_attrs);
-
-            if let Some(scope_spans) = rs.get("scopeSpans").and_then(|v| v.as_array()) {
-                for ss in scope_spans {
-                    if let Some(traces) = ss.get("traces").and_then(|v| v.as_array()) {
-                        for span in traces {
-                            let trace_id = span.get("traceId").and_then(|v| v.as_str()).unwrap_or("");
-                            let span_id = span.get("spanId").and_then(|v| v.as_str()).unwrap_or("");
-                            let parent_span_id = span.get("parentSpanId").and_then(|v| v.as_str());
-                            let name = span.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
-                            let start_ns = span.get("startTimeUnixNano").and_then(|v| v.as_str().and_then(|s| s.parse::<i64>().ok()).or_else(|| v.as_i64())).unwrap_or(0);
-                            let end_ns = span.get("endTimeUnixNano").and_then(|v| v.as_str().and_then(|s| s.parse::<i64>().ok()).or_else(|| v.as_i64())).unwrap_or(0);
-                            let duration_us = (end_ns - start_ns) / 1000;
-                            let status_code = span.pointer("/status/code").and_then(|v| v.as_i64()).unwrap_or(0);
-                            let status = if status_code == 2 { "error" } else { "ok" };
-                            let attributes = span.get("attributes").cloned().unwrap_or(json!([]));
-                            let tags = otlp_attrs_to_map(&attributes);
-
-                            let started_at = DateTime::from_timestamp_nanos(start_ns);
-
-                            // Insert into traces table
-                            let _ = sqlx::query(
-                                r#"INSERT INTO traces (trace_id, span_id, parent_span_id, operation_name, service_name,
-                                    started_at, duration_us, status, tags)
-                                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                                   ON CONFLICT DO NOTHING"#
-                            )
-                            .bind(trace_id)
-                            .bind(span_id)
-                            .bind(parent_span_id)
-                            .bind(name)
-                            .bind(&service_name)
-                            .bind(started_at)
-                            .bind(duration_us)
-                            .bind(status)
-                            .bind(&tags)
-                            .execute(&state.tsdb_pool)
-                            .await;
-
-                            span_count += 1;
-
-                            // SW P08 / OTel P11: Check for GenAI traces
-                            if let Some(sys) = tags.get("gen_ai.system").and_then(|v| v.as_str()) {
-                                let model = tags.get("gen_ai.request.model").and_then(|v| v.as_str()).unwrap_or("unknown");
-                                let input_tokens = tags.get("gen_ai.usage.input_tokens").and_then(|v| v.as_str().and_then(|s| s.parse::<i32>().ok()).or_else(|| v.as_i64().map(|n| n as i32)));
-                                let output_tokens = tags.get("gen_ai.usage.output_tokens").and_then(|v| v.as_str().and_then(|s| s.parse::<i32>().ok()).or_else(|| v.as_i64().map(|n| n as i32)));
-                                let operation = tags.get("gen_ai.operation.name").and_then(|v| v.as_str());
-                                let finish_reason = tags.get("gen_ai.response.finish_reasons").and_then(|v| v.as_str());
-
-                                if input_tokens.is_some() || output_tokens.is_some() {
-                                    let _ = sqlx::query(
-                                        r#"INSERT INTO llm_spans (org_id, trace_id, span_id, started_at, duration_ms,
-                                            gen_ai_system, model, operation, input_tokens, output_tokens, finish_reason, service_name, is_error)
-                                           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)"#
-                                    )
-                                    .bind(org_id)
-                                    .bind(trace_id)
-                                    .bind(span_id)
-                                    .bind(started_at)
-                                    .bind(duration_us as f64 / 1000.0)
-                                    .bind(sys)
-                                    .bind(model)
-                                    .bind(operation)
-                                    .bind(input_tokens)
-                                    .bind(output_tokens)
-                                    .bind(finish_reason)
-                                    .bind(&service_name)
-                                    .bind(status_code == 2)
-                                    .execute(&state.tsdb_pool)
-                                    .await;
-
-                                    llm_span_count += 1;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+    // Enqueue for async batch insert (OT02)
+    if let Some(ref queue) = state.ingest_queue {
+        let batch = crate::ingest_queue::IngestBatch {
+            org_id,
+            signal: crate::ingest_queue::Signal::Traces,
+            payload: payload.clone(),
+            raw_bytes: body.to_vec(),
+        };
+        if queue.try_send(batch).is_err() {
+            return Err(ApiError::ServiceUnavailable("Ingest queue full, try again later".into()));
         }
     }
 
+    // Count spans for the response
+    let span_count = payload.get("resourceSpans")
+        .and_then(|v| v.as_array())
+        .map(|rs| rs.iter()
+            .flat_map(|r| r.get("scopeSpans").and_then(|v| v.as_array()).into_iter().flatten())
+            .flat_map(|ss| {
+                ss.get("spans").or_else(|| ss.get("traces"))
+                    .and_then(|v| v.as_array()).into_iter().flatten()
+            })
+            .count())
+        .unwrap_or(0);
+
     Ok(Json(json!({
-        "status": "success",
-        "spans_ingested": span_count,
-        "llm_spans_detected": llm_span_count,
+        "status": "accepted",
+        "spans_enqueued": span_count,
         "encoding": if encoding == OtlpEncoding::Protobuf { "protobuf" } else { "json" },
     })))
 }
 
 /// POST /v1/metrics — ingest OTLP metrics
+#[tracing::instrument(skip_all, fields(otel.kind = "server", signal = "metrics"))]
 pub async fn ingest_metrics(
     State(state): State<AppState>,
     OrgId(org_id): OrgId,
@@ -260,59 +200,23 @@ pub async fn ingest_metrics(
         }
     };
 
-    let mut metric_count = 0i64;
-
-    if let Some(resource_metrics) = payload.get("resourceMetrics").and_then(|v| v.as_array()) {
-        for rm in resource_metrics {
-            let resource_attrs = rm.pointer("/resource/attributes").cloned().unwrap_or(json!({}));
-            let resource_id = extract_service_name(&resource_attrs);
-
-            if let Some(scope_metrics) = rm.get("scopeMetrics").and_then(|v| v.as_array()) {
-                for sm in scope_metrics {
-                    if let Some(metrics) = sm.get("metrics").and_then(|v| v.as_array()) {
-                        for metric in metrics {
-                            let name = metric.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
-
-                            // Handle gauge, sum, histogram data points
-                            let data_points = metric.get("gauge").and_then(|g| g.get("dataPoints"))
-                                .or_else(|| metric.get("sum").and_then(|s| s.get("dataPoints")))
-                                .and_then(|v| v.as_array());
-
-                            if let Some(dps) = data_points {
-                                for dp in dps {
-                                    let value = dp.get("asDouble").and_then(|v| v.as_f64())
-                                        .or_else(|| dp.get("asInt").and_then(|v| v.as_str().and_then(|s| s.parse().ok()).or_else(|| v.as_i64().map(|n| n as f64))))
-                                        .unwrap_or(0.0);
-                                    let time_ns = dp.get("timeUnixNano").and_then(|v| v.as_str().and_then(|s| s.parse::<i64>().ok()).or_else(|| v.as_i64())).unwrap_or(0);
-                                    let time = DateTime::from_timestamp_nanos(time_ns);
-                                    let labels = otlp_attrs_to_map(&dp.get("attributes").cloned().unwrap_or(json!([])));
-
-                                    let _ = sqlx::query(
-                                        "INSERT INTO metrics (org_id, metric_name, value, time, resource_id, labels) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING"
-                                    )
-                                    .bind(org_id)
-                                    .bind(name)
-                                    .bind(value)
-                                    .bind(time)
-                                    .bind(&resource_id)
-                                    .bind(&labels)
-                                    .execute(&state.tsdb_pool)
-                                    .await;
-
-                                    metric_count += 1;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+    if let Some(ref queue) = state.ingest_queue {
+        let batch = crate::ingest_queue::IngestBatch {
+            org_id,
+            signal: crate::ingest_queue::Signal::Metrics,
+            payload: payload.clone(),
+            raw_bytes: body.to_vec(),
+        };
+        if queue.try_send(batch).is_err() {
+            return Err(ApiError::ServiceUnavailable("Ingest queue full, try again later".into()));
         }
     }
 
-    Ok(Json(json!({ "status": "success", "metrics_ingested": metric_count })))
+    Ok(Json(json!({ "status": "accepted" })))
 }
 
 /// POST /v1/logs — ingest OTLP logs
+#[tracing::instrument(skip_all, fields(otel.kind = "server", signal = "logs"))]
 pub async fn ingest_logs(
     State(state): State<AppState>,
     OrgId(org_id): OrgId,
@@ -336,47 +240,23 @@ pub async fn ingest_logs(
         }
     };
 
-    let mut log_count = 0i64;
-
-    if let Some(resource_logs) = payload.get("resourceLogs").and_then(|v| v.as_array()) {
-        for rl in resource_logs {
-            let resource_attrs = rl.pointer("/resource/attributes").cloned().unwrap_or(json!({}));
-            let source = extract_service_name(&resource_attrs);
-
-            if let Some(scope_logs) = rl.get("scopeLogs").and_then(|v| v.as_array()) {
-                for sl in scope_logs {
-                    if let Some(log_records) = sl.get("logRecords").and_then(|v| v.as_array()) {
-                        for lr in log_records {
-                            let time_ns = lr.get("timeUnixNano").and_then(|v| v.as_str().and_then(|s| s.parse::<i64>().ok()).or_else(|| v.as_i64())).unwrap_or(0);
-                            let timestamp = DateTime::from_timestamp_nanos(time_ns);
-                            let severity = lr.get("severityText").and_then(|v| v.as_str()).unwrap_or("INFO");
-                            let body_text = lr.get("body").and_then(|b| b.get("stringValue")).and_then(|v| v.as_str()).unwrap_or("");
-                            let attributes = otlp_attrs_to_map(&lr.get("attributes").cloned().unwrap_or(json!([])));
-
-                            let _ = sqlx::query(
-                                "INSERT INTO logs (org_id, timestamp, source, level, message, metadata) VALUES ($1, $2, $3, $4, $5, $6)"
-                            )
-                            .bind(org_id)
-                            .bind(timestamp)
-                            .bind(&source)
-                            .bind(severity)
-                            .bind(body_text)
-                            .bind(&attributes)
-                            .execute(&state.tsdb_pool)
-                            .await;
-
-                            log_count += 1;
-                        }
-                    }
-                }
-            }
+    if let Some(ref queue) = state.ingest_queue {
+        let batch = crate::ingest_queue::IngestBatch {
+            org_id,
+            signal: crate::ingest_queue::Signal::Logs,
+            payload: payload.clone(),
+            raw_bytes: body.to_vec(),
+        };
+        if queue.try_send(batch).is_err() {
+            return Err(ApiError::ServiceUnavailable("Ingest queue full, try again later".into()));
         }
     }
 
-    Ok(Json(json!({ "status": "success", "logs_ingested": log_count })))
+    Ok(Json(json!({ "status": "accepted" })))
 }
 
 /// POST /v1/profiles — ingest OTLP profiles (4th signal)
+#[tracing::instrument(skip_all, fields(otel.kind = "server", signal = "profiles"))]
 pub async fn ingest_profiles(
     State(state): State<AppState>,
     OrgId(org_id): OrgId,
@@ -400,44 +280,19 @@ pub async fn ingest_profiles(
         }
     };
 
-    let mut profile_count = 0i64;
-
-    if let Some(resource_profiles) = payload.get("resourceProfiles").and_then(|v| v.as_array()) {
-        for rp in resource_profiles {
-            let resource_attrs = rp.pointer("/resource/attributes").cloned().unwrap_or(json!({}));
-            let service_name = extract_service_name(&resource_attrs);
-
-            if let Some(scope_profiles) = rp.get("scopeProfiles").and_then(|v| v.as_array()) {
-                for sp in scope_profiles {
-                    if let Some(profiles) = sp.get("profiles").and_then(|v| v.as_array()) {
-                        for profile in profiles {
-                            let profile_id = profile.get("profileId").and_then(|v| v.as_str()).unwrap_or("");
-                            let sample_count = profile.get("samples").and_then(|v| v.as_array()).map(|a| a.len() as i32).unwrap_or(0);
-
-                            let _ = sqlx::query(
-                                r#"INSERT INTO otel_profiles (org_id, profile_id, service_name, resource_attributes,
-                                    sample_count, flamegraph_data, attributes)
-                                   VALUES ($1, $2, $3, $4, $5, $6, $7)"#
-                            )
-                            .bind(org_id)
-                            .bind(profile_id)
-                            .bind(&service_name)
-                            .bind(&resource_attrs)
-                            .bind(sample_count)
-                            .bind(json!([]))
-                            .bind(json!({}))
-                            .execute(&state.pool)
-                            .await;
-
-                            profile_count += 1;
-                        }
-                    }
-                }
-            }
+    if let Some(ref queue) = state.ingest_queue {
+        let batch = crate::ingest_queue::IngestBatch {
+            org_id,
+            signal: crate::ingest_queue::Signal::Profiles,
+            payload: payload.clone(),
+            raw_bytes: body.to_vec(),
+        };
+        if queue.try_send(batch).is_err() {
+            return Err(ApiError::ServiceUnavailable("Ingest queue full, try again later".into()));
         }
     }
 
-    Ok(Json(json!({ "status": "success", "profiles_ingested": profile_count })))
+    Ok(Json(json!({ "status": "accepted" })))
 }
 
 // ============================================================================
@@ -733,8 +588,8 @@ pub async fn otel_resource_signals(
     Path(service_name): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     let trace_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM traces WHERE service_name = $1 AND started_at > NOW() - INTERVAL '24 hours'"
-    ).bind(&service_name).fetch_optional(&state.tsdb_pool).await.map_err(|e| ApiError::Internal(e.to_string()))?.unwrap_or(0);
+        "SELECT COUNT(*) FROM traces WHERE org_id = $1 AND service_name = $2 AND started_at > NOW() - INTERVAL '24 hours'"
+    ).bind(org_id).bind(&service_name).fetch_optional(&state.tsdb_pool).await.map_err(|e| ApiError::Internal(e.to_string()))?.unwrap_or(0);
 
     let metric_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM metrics WHERE org_id = $1 AND resource_id = $2 AND timestamp > NOW() - INTERVAL '24 hours'"
@@ -813,8 +668,8 @@ pub async fn otel_stats(
     OrgId(org_id): OrgId,
 ) -> Result<Json<Value>, ApiError> {
     let spans_1m: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM traces WHERE started_at > NOW() - INTERVAL '1 minute'"
-    ).fetch_optional(&state.tsdb_pool).await.map_err(|e| ApiError::Internal(e.to_string()))?.unwrap_or(0);
+        "SELECT COUNT(*) FROM traces WHERE org_id = $1 AND started_at > NOW() - INTERVAL '1 minute'"
+    ).bind(org_id).fetch_optional(&state.tsdb_pool).await.map_err(|e| ApiError::Internal(e.to_string()))?.unwrap_or(0);
 
     let metrics_1m: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM metrics WHERE org_id = $1 AND timestamp > NOW() - INTERVAL '1 minute'"
@@ -825,16 +680,16 @@ pub async fn otel_stats(
     ).bind(org_id).fetch_optional(&state.tsdb_pool).await.map_err(|e| ApiError::Internal(e.to_string()))?.unwrap_or(0);
 
     let unique_services: i64 = sqlx::query_scalar(
-        "SELECT COUNT(DISTINCT service_name) FROM traces WHERE started_at > NOW() - INTERVAL '24 hours'"
-    ).fetch_optional(&state.tsdb_pool).await.map_err(|e| ApiError::Internal(e.to_string()))?.unwrap_or(0);
+        "SELECT COUNT(DISTINCT service_name) FROM traces WHERE org_id = $1 AND started_at > NOW() - INTERVAL '24 hours'"
+    ).bind(org_id).fetch_optional(&state.tsdb_pool).await.map_err(|e| ApiError::Internal(e.to_string()))?.unwrap_or(0);
 
     let avg_duration: f64 = sqlx::query_scalar(
-        "SELECT COALESCE(AVG(duration_us)::FLOAT / 1000.0, 0) FROM traces WHERE started_at > NOW() - INTERVAL '5 minutes'"
-    ).fetch_optional(&state.tsdb_pool).await.map_err(|e| ApiError::Internal(e.to_string()))?.unwrap_or(0.0);
+        "SELECT COALESCE(AVG(duration_us)::FLOAT / 1000.0, 0) FROM traces WHERE org_id = $1 AND started_at > NOW() - INTERVAL '5 minutes'"
+    ).bind(org_id).fetch_optional(&state.tsdb_pool).await.map_err(|e| ApiError::Internal(e.to_string()))?.unwrap_or(0.0);
 
     let error_rate: f64 = sqlx::query_scalar(
-        "SELECT CASE WHEN COUNT(*) > 0 THEN COUNT(*) FILTER (WHERE status = 'error')::FLOAT / COUNT(*)::FLOAT * 100 ELSE 0 END FROM traces WHERE started_at > NOW() - INTERVAL '5 minutes'"
-    ).fetch_optional(&state.tsdb_pool).await.map_err(|e| ApiError::Internal(e.to_string()))?.unwrap_or(0.0);
+        "SELECT CASE WHEN COUNT(*) > 0 THEN COUNT(*) FILTER (WHERE status = 'error')::FLOAT / COUNT(*)::FLOAT * 100 ELSE 0 END FROM traces WHERE org_id = $1 AND started_at > NOW() - INTERVAL '5 minutes'"
+    ).bind(org_id).fetch_optional(&state.tsdb_pool).await.map_err(|e| ApiError::Internal(e.to_string()))?.unwrap_or(0.0);
 
     Ok(Json(json!({
         "spans_per_minute": spans_1m,

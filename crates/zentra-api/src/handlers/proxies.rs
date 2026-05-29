@@ -56,29 +56,7 @@ pub struct ForwardDataRequest {
 
 fn proxies() -> &'static RwLock<Vec<Proxy>> {
     static INSTANCE: std::sync::OnceLock<RwLock<Vec<Proxy>>> = std::sync::OnceLock::new();
-    INSTANCE.get_or_init(|| RwLock::new(vec![
-        Proxy {
-            id: "proxy-dc1".into(), name: "DC1 Proxy".into(), address: "10.0.1.100:4443".into(),
-            api_key: "px-dc1-a1b2c3d4e5f6".into(), status: "online".into(), version: Some("1.2.0".into()),
-            last_heartbeat: Some(Utc::now().to_rfc3339()), monitored_hosts: 45,
-            created_at: (Utc::now() - chrono::Duration::days(30)).to_rfc3339(),
-            updated_at: Utc::now().to_rfc3339(),
-        },
-        Proxy {
-            id: "proxy-dc2".into(), name: "DC2 Proxy".into(), address: "10.0.2.100:4443".into(),
-            api_key: "px-dc2-f6e5d4c3b2a1".into(), status: "online".into(), version: Some("1.2.0".into()),
-            last_heartbeat: Some((Utc::now() - chrono::Duration::minutes(2)).to_rfc3339()), monitored_hosts: 32,
-            created_at: (Utc::now() - chrono::Duration::days(15)).to_rfc3339(),
-            updated_at: Utc::now().to_rfc3339(),
-        },
-        Proxy {
-            id: "proxy-remote".into(), name: "Remote Office".into(), address: "192.168.50.10:4443".into(),
-            api_key: "px-rem-112233445566".into(), status: "offline".into(), version: Some("1.1.0".into()),
-            last_heartbeat: Some((Utc::now() - chrono::Duration::hours(4)).to_rfc3339()), monitored_hosts: 8,
-            created_at: (Utc::now() - chrono::Duration::days(7)).to_rfc3339(),
-            updated_at: (Utc::now() - chrono::Duration::hours(4)).to_rfc3339(),
-        },
-    ]))
+    INSTANCE.get_or_init(|| RwLock::new(Vec::new()))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

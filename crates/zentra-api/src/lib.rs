@@ -13,8 +13,12 @@ pub mod tenant;
 pub mod target_pool;
 pub mod openapi;
 pub mod observability;
+pub mod otel_self;
+pub mod otel_middleware;
 pub mod semconv;
 pub mod background_jobs;
+pub mod ingest_queue;
+pub mod otlp_quota;
 pub mod license_middleware;
 
 #[cfg(feature = "otlp-proto")]

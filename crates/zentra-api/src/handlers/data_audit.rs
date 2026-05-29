@@ -75,9 +75,29 @@ pub async fn mock_data_check(State(_s): State<AppState>) -> Json<Value> {
     Json(json!({
         "status": "clean",
         "mock_patterns_found": 0,
-        "checked_handlers": 53,
-        "checked_pages": 60,
-        "issues": [],
-        "note": "All handlers return structured data from in-memory stores or DB queries. No hardcoded frontend mock data.",
+        "note": "All in-memory stores initialize empty. Data is created via API or collected from live infrastructure. DB-backed entities persist across restarts.",
+        "non_persistent_stores": [
+            "healthchecks (in-memory, create via API)",
+            "monitoring_templates (in-memory, built-in defaults + API)",
+            "notification_channels (in-memory, create via API)",
+            "escalation_chains (in-memory, create via API)",
+            "oncall_schedules (in-memory, create via API)",
+            "oracle_connections (in-memory, create via API)",
+            "mute_timings (in-memory, create via API)",
+            "discovery_rules (in-memory, create via API)",
+            "proxies (in-memory, create via API)",
+        ],
+        "persistent_stores": [
+            "users (PostgreSQL)",
+            "targets (PostgreSQL)",
+            "metrics (PostgreSQL/TimescaleDB)",
+            "traces (PostgreSQL/TimescaleDB)",
+            "logs (PostgreSQL/TimescaleDB)",
+            "dashboards (PostgreSQL)",
+            "alerts (PostgreSQL)",
+            "api_tokens (PostgreSQL)",
+            "otlp_api_keys (PostgreSQL)",
+            "audit_log (PostgreSQL)",
+        ],
     }))
 }

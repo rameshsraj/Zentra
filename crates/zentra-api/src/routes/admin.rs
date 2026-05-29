@@ -68,4 +68,7 @@ pub fn router() -> Router<AppState> {
 
         // Dynamic System License Status & UI Menu Access controls
         .route("/api/system/license-status", get(handlers::license_status::get_license_status))
+
+        // Connection Pool Health & Status
+        .route("/api/system/pool-status", get(handlers::pool_status::pool_status))
 }

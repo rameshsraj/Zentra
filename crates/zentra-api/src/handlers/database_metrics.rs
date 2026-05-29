@@ -220,18 +220,14 @@ pub async fn test_definition(
     let sql = body.get("request").and_then(|v| v.as_str()).unwrap_or("");
     let context = body.get("context").and_then(|v| v.as_str()).unwrap_or("test");
 
-    // Simulate test execution — in production, would run against a real connection
+    // Validation only — actual execution requires a live connection via /api/database-query
+    let valid = !sql.is_empty() && !db_type.is_empty();
     Json(json!({
         "db_type": db_type,
         "context": context,
         "sql": sql,
-        "success": true,
-        "duration_ms": 45,
-        "rows_returned": 5,
-        "columns": ["col1", "col2", "value"],
-        "sample_data": [
-            {"col1": "sample", "col2": "data", "value": 42},
-        ],
+        "valid": valid,
+        "message": if valid { "Definition syntax accepted. Use the database query endpoint to execute against a live connection." } else { "Invalid: SQL and db_type are required." },
         "tested_at": Utc::now().to_rfc3339(),
     }))
 }

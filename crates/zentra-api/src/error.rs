@@ -31,6 +31,9 @@ pub enum ApiError {
 
     #[error("internal: {0}")]
     Internal(String),
+
+    #[error("service unavailable: {0}")]
+    ServiceUnavailable(String),
 }
 
 impl IntoResponse for ApiError {
@@ -48,6 +51,7 @@ impl IntoResponse for ApiError {
                 tracing::error!(error = %m, "internal error");
                 (StatusCode::INTERNAL_SERVER_ERROR, m.clone())
             }
+            Self::ServiceUnavailable(m) => (StatusCode::SERVICE_UNAVAILABLE, m.clone()),
         };
         (status, Json(json!({ "error": message }))).into_response()
     }

@@ -61,19 +61,7 @@ impl MuteTiming {
 
 fn mute_store() -> &'static RwLock<Vec<MuteTiming>> {
     static INSTANCE: std::sync::OnceLock<RwLock<Vec<MuteTiming>>> = std::sync::OnceLock::new();
-    INSTANCE.get_or_init(|| RwLock::new(vec![
-        MuteTiming {
-            id: Uuid::nil(),
-            name: "Weekend Maintenance".into(),
-            time_intervals: vec![TimeInterval {
-                weekdays: Some(vec![5, 6]),
-                months: None, days_of_month: None,
-                start_time: Some("22:00".into()), end_time: Some("06:00".into()),
-                location: Some("UTC".into()),
-            }],
-            created_at: Utc::now(), updated_at: Utc::now(),
-        },
-    ]))
+    INSTANCE.get_or_init(|| RwLock::new(Vec::new()))
 }
 
 /// GET /api/notifications/mute-timings

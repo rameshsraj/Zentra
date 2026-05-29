@@ -1,0 +1,18 @@
+[package]
+name = "zentra-license-gen"
+version = "0.1.0"
+edition = "2021"
+description = "Offline Ed25519 license key generator and signer for Zentra"
+
+[[bin]]
+name = "zentra-license-gen"
+path = "src/main.rs"
+
+[dependencies]
+ring = "0.17"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+hex = "0.4"
+uuid = { version = "1", features = ["v4"] }

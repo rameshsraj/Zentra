@@ -64,15 +64,15 @@ pub async fn list_instances(State(_s): State<AppState>) -> Result<Json<Vec<Nginx
     Ok(Json(instances().read().clone()))
 }
 
-pub async fn get_status(State(_s): State<AppState>, Path(id): Path<String>) -> Result<Json<NginxStatus>, ApiError> {
+#[tracing::instrument(skip(s), fields(otel.kind = "client", http.target = "nginx"))]
+pub async fn get_status(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<NginxStatus>, ApiError> {
     let inst = {
         let insts = instances().read();
         insts.iter().find(|i| i.id == id).cloned()
             .ok_or(ApiError::from((StatusCode::NOT_FOUND, "Instance not found".into())))?
     };
     let url = format!("http://{}:{}{}", inst.host, inst.port, inst.stub_status_path);
-    match reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build()
-        .unwrap_or_default().get(&url).send().await
+    match s.http_client.get(&url).send().await
     {
         Ok(resp) if resp.status().is_success() => {
             let body = resp.text().await.unwrap_or_default();
@@ -114,7 +114,7 @@ pub async fn get_status(State(_s): State<AppState>, Path(id): Path<String>) -> R
     }
 }
 
-pub async fn performance_history(State(_s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<NginxHistoryPoint>>, ApiError> {
+pub async fn performance_history(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<NginxHistoryPoint>>, ApiError> {
     let inst = {
         let insts = instances().read();
         insts.iter().find(|i| i.id == id).cloned()
@@ -122,8 +122,7 @@ pub async fn performance_history(State(_s): State<AppState>, Path(id): Path<Stri
     };
     // Fetch current snapshot to base history on
     let url = format!("http://{}:{}{}", inst.host, inst.port, inst.stub_status_path);
-    let (active, requests, reading, writing, waiting) = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5)).build().unwrap_or_default()
+    let (active, requests, reading, writing, waiting) = match s.http_client
         .get(&url).send().await
     {
         Ok(resp) if resp.status().is_success() => {

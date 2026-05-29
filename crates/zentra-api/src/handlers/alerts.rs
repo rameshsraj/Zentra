@@ -40,8 +40,20 @@ pub async fn list_alerts(
 
 pub async fn acknowledge_alert(
     State(state): State<AppState>,
+    OrgId(org_id): OrgId,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // Verify alert belongs to caller's org before updating
+    let exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM active_alerts WHERE alert_id = $1 AND org_id = $2)"
+    )
+    .bind(id).bind(org_id)
+    .fetch_one(&state.pool).await
+    .unwrap_or(false);
+    if !exists {
+        return Err(ApiError::NotFound("Alert not found".into()));
+    }
+
     zentra_db::repositories::alerts::update_alert_status(
         &state.pool, id, "acknowledged", Some("api_user"),
     )
@@ -53,8 +65,20 @@ pub async fn acknowledge_alert(
 
 pub async fn resolve_alert(
     State(state): State<AppState>,
+    OrgId(org_id): OrgId,
     Path(id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // Verify alert belongs to caller's org before updating
+    let exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM active_alerts WHERE alert_id = $1 AND org_id = $2)"
+    )
+    .bind(id).bind(org_id)
+    .fetch_one(&state.pool).await
+    .unwrap_or(false);
+    if !exists {
+        return Err(ApiError::NotFound("Alert not found".into()));
+    }
+
     zentra_db::repositories::alerts::update_alert_status(
         &state.pool, id, "resolved", None,
     )

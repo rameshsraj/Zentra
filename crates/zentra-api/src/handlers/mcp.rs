@@ -484,7 +484,7 @@ async fn execute_live_tool(
                 },
                 "server_get_network_io" => {
                     // Collect network IO via separate SSH script
-                    let net_result = ssh_utils::ssh_exec(&ssh_host, &ssh_user, ssh_utils::NETWORK_IO_SCRIPT).await;
+                    let net_result = zentra_core::ssh_pool::pooled_ssh_exec(&ssh_host, &ssh_user, ssh_utils::NETWORK_IO_SCRIPT).await;
                     if net_result.success {
                         let net_sections = ssh_utils::parse_sections(&net_result.stdout);
                         let mut interfaces = Vec::new();
@@ -719,7 +719,7 @@ async fn execute_live_tool(
                     for t in &net_targets {
                         let snmp_target = if t.port != 161 { format!("{}:{}", t.host, t.port) } else { t.host.clone() };
                         let cmd = format!("snmpget -v2c -c public -t2 -r0 {} .1.3.6.1.2.1.1.1.0 2>&1", snmp_target);
-                        let res = ssh_utils::ssh_exec(&ssh_host, &ssh_user, &cmd).await;
+                        let res = zentra_core::ssh_pool::pooled_ssh_exec(&ssh_host, &ssh_user, &cmd).await;
                         let ok = res.stdout.contains("STRING:");
                         if ok { online += 1; } else { offline += 1; }
                         devices.push(serde_json::json!({
@@ -773,7 +773,7 @@ async fn execute_live_tool(
                     for t in &storage_targets {
                         let snmp_target = if t.port != 161 { format!("{}:{}", t.host, t.port) } else { t.host.clone() };
                         let cmd = format!("snmpget -v2c -c public -t2 -r0 {} .1.3.6.1.2.1.1.1.0 2>&1", snmp_target);
-                        let res = ssh_utils::ssh_exec(&ssh_host, &ssh_user, &cmd).await;
+                        let res = zentra_core::ssh_pool::pooled_ssh_exec(&ssh_host, &ssh_user, &cmd).await;
                         let ok = res.stdout.contains("STRING:");
                         let sys_descr = if ok { res.stdout.split("STRING:").nth(1).map(|s| s.trim().to_string()) } else { None };
                         if ok { healthy += 1; } else { offline_count += 1; }
@@ -793,7 +793,7 @@ async fn execute_live_tool(
                     if let Some(t) = storage_targets.iter().find(|t| t.name == name || t.host == name) {
                         let snmp_target = if t.port != 161 { format!("{}:{}", t.host, t.port) } else { t.host.clone() };
                         let cmd = format!("snmpget -v2c -c public -t2 -r0 {} .1.3.6.1.2.1.1.1.0 2>&1", snmp_target);
-                        let res = ssh_utils::ssh_exec(&ssh_host, &ssh_user, &cmd).await;
+                        let res = zentra_core::ssh_pool::pooled_ssh_exec(&ssh_host, &ssh_user, &cmd).await;
                         let ok = res.stdout.contains("STRING:");
                         let sys_descr = if ok { res.stdout.split("STRING:").nth(1).map(|s| s.trim().to_string()) } else { None };
                         Some((serde_json::json!({"name": t.name, "host": t.host, "port": t.port, "status": if ok {"healthy"} else {"offline"}, "sys_descr": sys_descr}),

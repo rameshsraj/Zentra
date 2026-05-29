@@ -8,6 +8,7 @@ pub mod network_types;
 pub mod deep_analysis;
 pub mod service_db;
 pub mod program_lookup;
+pub mod hubble_client;
 
 use std::sync::Arc;
 use std::time::Duration;

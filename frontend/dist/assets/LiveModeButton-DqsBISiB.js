@@ -1,1 +1,0 @@
-import{j as e}from"./vendor-query-BrH7-v9p.js";import{e as n}from"./index-C4G8PqUB.js";function a({children:t,showDisabled:o=!1}){const{isLive:s,isDemo:i}=n();return s?e.jsx(e.Fragment,{children:t}):i&&o?e.jsx("div",{className:"opacity-40 pointer-events-none select-none",title:"Switch to Live Mode to use this feature",children:t}):null}export{a as L};

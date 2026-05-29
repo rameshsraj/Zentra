@@ -5,6 +5,7 @@ import {
   Database, Activity, HardDrive, Clock, AlertTriangle, Server,
   BarChart3, Cpu, Zap, Shield, RefreshCw,
   Search, Timer, Layers, Radio, TrendingUp, Plus, Trash2, CheckCircle, XCircle, FileText, Inbox, Terminal,
+  Box, Eye, Repeat, Code, Package, Bolt, ListOrdered, Hash, Filter,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 // LiveModeButton removed — not currently used
@@ -31,6 +32,7 @@ const TABS = [
   { id: 'rac', label: 'RAC', icon: Server },
   { id: 'alertlog', label: 'Alert Log', icon: FileText },
   { id: 'txeventq', label: 'TxEventQ', icon: Inbox },
+  { id: 'schema-objects', label: 'Schema Objects', icon: Box },
   { id: 'scrape-status', label: 'Scrape Status', icon: BarChart3 },
   { id: 'sql-workspace', label: 'SQL Workspace', icon: Terminal },
 ] as const
@@ -861,6 +863,9 @@ export default function OracleMonitoringPage() {
         </div>
       )}
 
+      {/* ======== SCHEMA OBJECTS TAB ======== */}
+      {tab === 'schema-objects' && <SchemaObjectsTab connectionId={selectedConnId} />}
+
       {/* ======== SQL WORKSPACE TAB ======== */}
       {tab === 'sql-workspace' && (
         <SqlWorkspaceTab dbType="oracle" />
@@ -868,6 +873,340 @@ export default function OracleMonitoringPage() {
 
         </div>{/* end Right Content Area */}
       </div>{/* end flex sidebar+content */}
+    </div>
+  )
+}
+
+// ============================================================================
+// Schema Objects Tab — browse Views, MVs, Functions, Procedures, etc.
+// ============================================================================
+
+const SCHEMA_SUBTABS = [
+  { id: 'summary', label: 'Summary', icon: BarChart3 },
+  { id: 'views', label: 'Views', icon: Eye },
+  { id: 'mviews', label: 'Materialized Views', icon: Repeat },
+  { id: 'functions', label: 'Functions', icon: Code },
+  { id: 'procedures', label: 'Procedures', icon: Bolt },
+  { id: 'packages', label: 'Packages', icon: Package },
+  { id: 'triggers', label: 'Triggers', icon: Zap },
+  { id: 'indexes', label: 'Indexes', icon: ListOrdered },
+  { id: 'sequences', label: 'Sequences', icon: Hash },
+] as const
+
+type SchemaSubTab = typeof SCHEMA_SUBTABS[number]['id']
+
+function SchemaObjectsTab({ connectionId }: { connectionId: string }) {
+  const [subTab, setSubTab] = useState<SchemaSubTab>('summary')
+  const [owner, setOwner] = useState('')
+  const [owners, setOwners] = useState<string[]>([])
+  const [data, setData] = useState<any>(null)
+  const [loading, setLoading] = useState(false)
+  const [search, setSearch] = useState('')
+
+  // Load owners on mount
+  useEffect(() => {
+    const qs = connectionId ? `?connection_id=${connectionId}` : ''
+    fetchJSON<any>(`/oracle/schema/owners${qs}`).then(r => {
+      setOwners(r?.owners || [])
+    }).catch(() => {})
+  }, [connectionId])
+
+  // Load data when subtab or owner changes
+  const loadData = useCallback(async () => {
+    setLoading(true)
+    const params = new URLSearchParams()
+    if (connectionId) params.set('connection_id', connectionId)
+    if (owner) params.set('owner', owner)
+    const qs = params.toString() ? `?${params}` : ''
+    try {
+      const endpoint = subTab === 'summary' ? 'summary' : subTab
+      const result = await fetchJSON<any>(`/oracle/schema/${endpoint}${qs}`)
+      setData(result)
+    } catch {
+      setData(null)
+    } finally {
+      setLoading(false)
+    }
+  }, [subTab, owner, connectionId])
+
+  useEffect(() => { loadData() }, [loadData])
+
+  const filteredRows = (rows: any[], nameKey: string) => {
+    if (!search) return rows
+    const q = search.toLowerCase()
+    return rows.filter((r: any) =>
+      (r[nameKey] || '').toLowerCase().includes(q) ||
+      (r.owner || '').toLowerCase().includes(q)
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <SectionTitle icon={Box} title="Schema Object Browser" />
+
+      {/* Sub-tab navigation + filters */}
+      <div className="flex flex-wrap items-center gap-2">
+        {SCHEMA_SUBTABS.map(st => {
+          const Icon = st.icon
+          return (
+            <button key={st.id} onClick={() => { setSubTab(st.id); setSearch('') }}
+              className={cn('flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
+                subTab === st.id
+                  ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
+                  : 'text-slate-400 hover:bg-white/5 hover:text-white border border-transparent'
+              )}>
+              <Icon className="w-3 h-3" /> {st.label}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Owner filter + search */}
+      <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          <Filter className="w-3.5 h-3.5 text-slate-500" />
+          <select value={owner} onChange={e => setOwner(e.target.value)}
+            className="bg-slate-800/80 border border-slate-600/50 rounded px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-orange-500/40">
+            <option value="">All Schemas</option>
+            {owners.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </div>
+        {subTab !== 'summary' && (
+          <div className="flex items-center gap-2 flex-1 max-w-xs">
+            <Search className="w-3.5 h-3.5 text-slate-500" />
+            <input value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="Filter by name..."
+              className="bg-slate-800/80 border border-slate-600/50 rounded px-3 py-1.5 text-xs text-white w-full focus:outline-none focus:ring-1 focus:ring-orange-500/40" />
+          </div>
+        )}
+        <button onClick={loadData} className="flex items-center gap-1 px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded text-xs text-slate-300">
+          <RefreshCw className={cn('w-3 h-3', loading && 'animate-spin')} /> Refresh
+        </button>
+      </div>
+
+      {loading && <LoadingSkeleton variant="table" count={5} />}
+
+      {/* ---- SUMMARY ---- */}
+      {!loading && subTab === 'summary' && data?.summary && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
+            {Object.entries(data.summary as Record<string, number>).sort(([,a], [,b]) => (b as number) - (a as number)).map(([key, count]) => (
+              <div key={key} className="bg-slate-800/60 rounded-lg border border-slate-700 p-3 cursor-pointer hover:border-orange-500/40 transition-colors"
+                onClick={() => {
+                  const mapping: Record<string, SchemaSubTab> = {
+                    view: 'views', materialized_view: 'mviews', function: 'functions',
+                    procedure: 'procedures', package: 'packages', package_body: 'packages',
+                    trigger: 'triggers', index: 'indexes', sequence: 'sequences',
+                  }
+                  const target = mapping[key]
+                  if (target) setSubTab(target)
+                }}>
+                <p className="text-[10px] text-slate-400 uppercase tracking-wider truncate">{key.replace(/_/g, ' ')}</p>
+                <p className="text-2xl font-bold text-white mt-0.5">{(count as number).toLocaleString()}</p>
+              </div>
+            ))}
+          </div>
+          {Object.keys(data.summary).length === 0 && (
+            <div className="text-center py-12 text-slate-500">
+              <Box className="w-10 h-10 mx-auto mb-3 opacity-30" />
+              <p>No schema objects found. Connect an Oracle instance to browse.</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ---- VIEWS ---- */}
+      {!loading && subTab === 'views' && (
+        <SchemaTable
+          rows={filteredRows(data?.views || [], 'view_name')}
+          columns={[
+            { key: 'owner', label: 'Owner' },
+            { key: 'view_name', label: 'View Name', mono: true },
+            { key: 'text_length', label: 'Text Length', align: 'right' },
+            { key: 'editioning_view', label: 'Editioning' },
+          ]}
+          emptyMsg="No views found"
+        />
+      )}
+
+      {/* ---- MATERIALIZED VIEWS ---- */}
+      {!loading && subTab === 'mviews' && (
+        <SchemaTable
+          rows={filteredRows(data?.mviews || [], 'mview_name')}
+          columns={[
+            { key: 'owner', label: 'Owner' },
+            { key: 'mview_name', label: 'MView Name', mono: true },
+            { key: 'refresh_mode', label: 'Refresh Mode' },
+            { key: 'refresh_method', label: 'Method' },
+            { key: 'last_refresh_date', label: 'Last Refresh' },
+            { key: 'staleness', label: 'Staleness', badge: true },
+            { key: 'compile_state', label: 'State', badge: true },
+          ]}
+          emptyMsg="No materialized views found"
+        />
+      )}
+
+      {/* ---- FUNCTIONS ---- */}
+      {!loading && subTab === 'functions' && (
+        <SchemaTable
+          rows={filteredRows(data?.functions || [], 'object_name')}
+          columns={[
+            { key: 'owner', label: 'Owner' },
+            { key: 'object_name', label: 'Function Name', mono: true },
+            { key: 'status', label: 'Status', badge: true },
+            { key: 'created', label: 'Created' },
+            { key: 'last_ddl_time', label: 'Last DDL' },
+          ]}
+          emptyMsg="No functions found"
+        />
+      )}
+
+      {/* ---- PROCEDURES ---- */}
+      {!loading && subTab === 'procedures' && (
+        <SchemaTable
+          rows={filteredRows(data?.procedures || [], 'object_name')}
+          columns={[
+            { key: 'owner', label: 'Owner' },
+            { key: 'object_name', label: 'Procedure Name', mono: true },
+            { key: 'status', label: 'Status', badge: true },
+            { key: 'created', label: 'Created' },
+            { key: 'last_ddl_time', label: 'Last DDL' },
+          ]}
+          emptyMsg="No procedures found"
+        />
+      )}
+
+      {/* ---- PACKAGES ---- */}
+      {!loading && subTab === 'packages' && (
+        <SchemaTable
+          rows={filteredRows(data?.packages || [], 'object_name')}
+          columns={[
+            { key: 'owner', label: 'Owner' },
+            { key: 'object_name', label: 'Package Name', mono: true },
+            { key: 'object_type', label: 'Type' },
+            { key: 'status', label: 'Status', badge: true },
+            { key: 'created', label: 'Created' },
+            { key: 'last_ddl_time', label: 'Last DDL' },
+          ]}
+          emptyMsg="No packages found"
+        />
+      )}
+
+      {/* ---- TRIGGERS ---- */}
+      {!loading && subTab === 'triggers' && (
+        <SchemaTable
+          rows={filteredRows(data?.triggers || [], 'trigger_name')}
+          columns={[
+            { key: 'owner', label: 'Owner' },
+            { key: 'trigger_name', label: 'Trigger Name', mono: true },
+            { key: 'trigger_type', label: 'Type' },
+            { key: 'triggering_event', label: 'Event' },
+            { key: 'table_name', label: 'Table' },
+            { key: 'status', label: 'Status', badge: true },
+          ]}
+          emptyMsg="No triggers found"
+        />
+      )}
+
+      {/* ---- INDEXES ---- */}
+      {!loading && subTab === 'indexes' && (
+        <SchemaTable
+          rows={filteredRows(data?.indexes || [], 'index_name')}
+          columns={[
+            { key: 'owner', label: 'Owner' },
+            { key: 'index_name', label: 'Index Name', mono: true },
+            { key: 'index_type', label: 'Type' },
+            { key: 'table_name', label: 'Table' },
+            { key: 'uniqueness', label: 'Unique' },
+            { key: 'status', label: 'Status', badge: true },
+            { key: 'num_rows', label: 'Rows', align: 'right' },
+            { key: 'last_analyzed', label: 'Last Analyzed' },
+          ]}
+          emptyMsg="No indexes found"
+        />
+      )}
+
+      {/* ---- SEQUENCES ---- */}
+      {!loading && subTab === 'sequences' && (
+        <SchemaTable
+          rows={filteredRows(data?.sequences || [], 'sequence_name')}
+          columns={[
+            { key: 'owner', label: 'Owner' },
+            { key: 'sequence_name', label: 'Sequence Name', mono: true },
+            { key: 'min_value', label: 'Min', align: 'right' },
+            { key: 'max_value', label: 'Max', align: 'right' },
+            { key: 'increment_by', label: 'Increment', align: 'right' },
+            { key: 'last_number', label: 'Last Number', align: 'right' },
+            { key: 'cache_size', label: 'Cache', align: 'right' },
+            { key: 'cycle_flag', label: 'Cycle' },
+            { key: 'order_flag', label: 'Order' },
+          ]}
+          emptyMsg="No sequences found"
+        />
+      )}
+    </div>
+  )
+}
+
+interface SchemaColDef {
+  key: string
+  label: string
+  mono?: boolean
+  align?: 'left' | 'right' | 'center'
+  badge?: boolean
+}
+
+function SchemaTable({ rows, columns, emptyMsg }: { rows: any[]; columns: SchemaColDef[]; emptyMsg: string }) {
+  if (rows.length === 0) {
+    return (
+      <div className="text-center py-12 text-slate-500">
+        <Box className="w-10 h-10 mx-auto mb-3 opacity-30" />
+        <p className="text-sm">{emptyMsg}</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="bg-slate-800/80 border-b border-white/10">
+            {columns.map(col => (
+              <th key={col.key} className={cn('px-3 py-2 text-slate-400 uppercase font-medium',
+                col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left'
+              )}>{col.label}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-white/5">
+          {rows.map((row: any, i: number) => (
+            <tr key={i} className="hover:bg-white/5">
+              {columns.map(col => {
+                const val = row[col.key] ?? ''
+                const isValid = val === 'VALID' || val === 'ENABLED' || val === 'FRESH'
+                const isInvalid = val === 'INVALID' || val === 'DISABLED' || val === 'STALE' || val === 'NEEDS_COMPILE'
+                return (
+                  <td key={col.key} className={cn('px-3 py-2',
+                    col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left',
+                    col.mono ? 'font-mono text-white font-medium' : 'text-slate-300'
+                  )}>
+                    {col.badge ? (
+                      <span className={cn('px-1.5 py-0.5 rounded text-[10px] font-bold',
+                        isValid ? 'bg-green-500/20 text-green-400' :
+                        isInvalid ? 'bg-red-500/20 text-red-400' :
+                        'bg-slate-500/20 text-slate-400'
+                      )}>{val}</span>
+                    ) : val}
+                  </td>
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="px-3 py-2 text-[10px] text-slate-500 border-t border-white/5">
+        {rows.length} object{rows.length !== 1 ? 's' : ''} found
+      </div>
     </div>
   )
 }

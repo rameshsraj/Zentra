@@ -365,3 +365,16 @@ pub async fn collect_server_stats(host: &str, user: &str) -> HashMap<String, Str
         m
     }
 }
+
+/// Collect server stats using the SSH connection pool (ControlMaster multiplexing).
+/// Reuses persistent SSH connections for dramatically lower latency on repeated calls.
+pub async fn collect_server_stats_pooled(host: &str, user: &str) -> HashMap<String, String> {
+    let result = crate::ssh_pool::pooled_ssh_exec(host, user, SERVER_STATS_SCRIPT).await;
+    if result.success {
+        parse_sections(&result.stdout)
+    } else {
+        let mut m = HashMap::new();
+        m.insert("ERROR".into(), friendly_error(host, &result.stderr));
+        m
+    }
+}

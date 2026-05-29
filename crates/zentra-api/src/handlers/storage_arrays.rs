@@ -110,7 +110,7 @@ async fn fetch_storage_arrays(state: &AppState, org_id: Uuid) -> Vec<StorageArra
     script_parts.push("rm -rf $TMPDIR".to_string());
     let full_script = script_parts.join("\n");
 
-    let bulk_res = ssh_utils::ssh_exec(&ssh_host, &ssh_user, &full_script).await;
+    let bulk_res = zentra_core::ssh_pool::pooled_ssh_exec(&ssh_host, &ssh_user, &full_script).await;
     let bulk_out = bulk_res.stdout;
 
     let mut result = Vec::new();

@@ -21,6 +21,8 @@ base64 = { workspace = true }
 hex = { workspace = true }
 hmac = { workspace = true }
 sha2 = { workspace = true }
+reqwest = { workspace = true }
+parking_lot = { workspace = true }
 rand = "0.8"
 validator = { version = "0.18", features = ["derive"] }
 ring = { workspace = true }

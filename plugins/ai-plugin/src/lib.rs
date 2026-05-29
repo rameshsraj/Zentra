@@ -53,6 +53,8 @@ impl Plugin for AiPlugin {
     async fn collect_metrics(&self, target: &Target) -> Result<Vec<Metric>> {
         let mut metrics = Vec::new();
 
+        // --- Legacy metric names (backward compatibility) ---
+
         metrics.push(
             Metric::new("ai_anomaly_score", 0.0, target.name.clone())
                 .with_context(target.org_id, target.target_id, "ai-plugin")
@@ -79,6 +81,51 @@ impl Plugin for AiPlugin {
                 .with_context(target.org_id, target.target_id, "ai-plugin")
                 .with_unit("count")
                 .with_resource_type("ai")
+        );
+
+        // --- OTel Semantic Convention metrics (gen_ai.* namespace) ---
+        // Aligned with OpenTelemetry Semantic Conventions for GenAI
+        // See: https://opentelemetry.io/docs/specs/semconv/gen-ai/
+
+        metrics.push(
+            Metric::new("gen_ai.client.operation.duration", 0.0, target.name.clone())
+                .with_context(target.org_id, target.target_id, "ai-plugin")
+                .with_unit("ms")
+                .with_resource_type("ai")
+                .with_tag("gen_ai.system", "zentra")
+                .with_tag("gen_ai.operation.name", "anomaly_detection")
+                .with_tag("gen_ai.request.model", "zentra-anomaly-v1")
+        );
+
+        metrics.push(
+            Metric::new("gen_ai.server.request.duration", 0.0, target.name.clone())
+                .with_context(target.org_id, target.target_id, "ai-plugin")
+                .with_unit("ms")
+                .with_resource_type("ai")
+                .with_tag("gen_ai.system", "zentra")
+                .with_tag("gen_ai.operation.name", "inference")
+                .with_tag("gen_ai.request.model", "zentra-anomaly-v1")
+        );
+
+        metrics.push(
+            Metric::new("gen_ai.client.token.usage", 0.0, target.name.clone())
+                .with_context(target.org_id, target.target_id, "ai-plugin")
+                .with_unit("tokens")
+                .with_resource_type("ai")
+                .with_tag("gen_ai.system", "zentra")
+                .with_tag("gen_ai.operation.name", "inference")
+                .with_tag("gen_ai.request.model", "zentra-anomaly-v1")
+                .with_tag("gen_ai.token.type", "total")
+        );
+
+        metrics.push(
+            Metric::new("gen_ai.server.request.count", 0.0, target.name.clone())
+                .with_context(target.org_id, target.target_id, "ai-plugin")
+                .with_unit("count")
+                .with_resource_type("ai")
+                .with_tag("gen_ai.system", "zentra")
+                .with_tag("gen_ai.operation.name", "prediction")
+                .with_tag("gen_ai.request.model", "zentra-anomaly-v1")
         );
 
         Ok(metrics)

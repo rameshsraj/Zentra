@@ -6,74 +6,14 @@ use crate::state::AppState;
 use crate::error::ApiError;
 use crate::tenant::OrgId;
 
+fn channel_store() -> &'static parking_lot::RwLock<Vec<Value>> {
+    static INSTANCE: std::sync::OnceLock<parking_lot::RwLock<Vec<Value>>> = std::sync::OnceLock::new();
+    INSTANCE.get_or_init(|| parking_lot::RwLock::new(Vec::new()))
+}
+
 /// GET /api/notifications/channels — list configured notification channels
 pub async fn list_channels() -> Json<Value> {
-    Json(json!([
-        {
-            "id": "ch-001",
-            "type": "email",
-            "name": "Ops Team Email",
-            "enabled": true,
-            "min_severity": "warning",
-            "settings": { "to": "ops@Zentra.local", "smtp_host": "smtp.Zentra.local" }
-        },
-        {
-            "id": "ch-002",
-            "type": "slack",
-            "name": "Slack #alerts",
-            "enabled": true,
-            "min_severity": "warning",
-            "settings": { "webhook_url": "https://hooks.slack.com/services/T00/B00/xxx" }
-        },
-        {
-            "id": "ch-003",
-            "type": "ms_teams",
-            "name": "Teams Infra Channel",
-            "enabled": true,
-            "min_severity": "high",
-            "settings": { "webhook_url": "https://outlook.office.com/webhook/xxx" }
-        },
-        {
-            "id": "ch-004",
-            "type": "pagerduty",
-            "name": "PagerDuty On-Call",
-            "enabled": true,
-            "min_severity": "critical",
-            "settings": { "routing_key": "R0xxxxxxxxxxxxx" }
-        },
-        {
-            "id": "ch-005",
-            "type": "webhook",
-            "name": "Custom Webhook",
-            "enabled": false,
-            "min_severity": "info",
-            "settings": { "url": "https://internal.api/alert-hook", "method": "POST" }
-        },
-        {
-            "id": "ch-006",
-            "type": "telegram",
-            "name": "Telegram Bot",
-            "enabled": true,
-            "min_severity": "warning",
-            "settings": { "bot_token": "123456:ABC-DEF", "chat_id": "-100123456" }
-        },
-        {
-            "id": "ch-007",
-            "type": "discord",
-            "name": "Discord Server",
-            "enabled": true,
-            "min_severity": "warning",
-            "settings": { "webhook_url": "https://discord.com/api/webhooks/xxx/yyy" }
-        },
-        {
-            "id": "ch-008",
-            "type": "syslog",
-            "name": "Syslog Forwarder",
-            "enabled": true,
-            "min_severity": "info",
-            "settings": { "host": "10.88.11.50", "port": "514" }
-        }
-    ]))
+    Json(Value::Array(channel_store().read().clone()))
 }
 
 /// POST /api/notifications/test — test a notification channel
@@ -290,47 +230,12 @@ pub struct OnCallUser {
 
 fn escalation_chains() -> &'static parking_lot::RwLock<Vec<EscalationChain>> {
     static INSTANCE: std::sync::OnceLock<parking_lot::RwLock<Vec<EscalationChain>>> = std::sync::OnceLock::new();
-    INSTANCE.get_or_init(|| parking_lot::RwLock::new(vec![
-        EscalationChain {
-            id: "esc-1".into(), name: "Default Escalation".into(), description: Some("Standard 3-tier escalation".into()),
-            steps: vec![
-                EscalationStep { step: 1, action: "notify".into(), channel_id: Some("ch-002".into()), wait_minutes: None, user_ids: None },
-                EscalationStep { step: 2, action: "wait".into(), channel_id: None, wait_minutes: Some(15), user_ids: None },
-                EscalationStep { step: 3, action: "notify".into(), channel_id: Some("ch-004".into()), wait_minutes: None, user_ids: None },
-                EscalationStep { step: 4, action: "wait".into(), channel_id: None, wait_minutes: Some(30), user_ids: None },
-                EscalationStep { step: 5, action: "escalate".into(), channel_id: Some("ch-001".into()), wait_minutes: None, user_ids: Some(vec!["user-admin".into()]) },
-            ],
-            repeat: false,
-            created_at: "2025-01-01T00:00:00Z".into(),
-        },
-        EscalationChain {
-            id: "esc-2".into(), name: "Critical P1".into(), description: Some("Immediate page + escalation".into()),
-            steps: vec![
-                EscalationStep { step: 1, action: "notify".into(), channel_id: Some("ch-004".into()), wait_minutes: None, user_ids: None },
-                EscalationStep { step: 2, action: "wait".into(), channel_id: None, wait_minutes: Some(5), user_ids: None },
-                EscalationStep { step: 3, action: "escalate".into(), channel_id: Some("ch-001".into()), wait_minutes: None, user_ids: Some(vec!["user-admin".into(), "user-oncall".into()]) },
-            ],
-            repeat: true,
-            created_at: "2025-01-01T00:00:00Z".into(),
-        },
-    ]))
+    INSTANCE.get_or_init(|| parking_lot::RwLock::new(Vec::new()))
 }
 
 fn oncall_schedules() -> &'static parking_lot::RwLock<Vec<OnCallSchedule>> {
     static INSTANCE: std::sync::OnceLock<parking_lot::RwLock<Vec<OnCallSchedule>>> = std::sync::OnceLock::new();
-    INSTANCE.get_or_init(|| parking_lot::RwLock::new(vec![
-        OnCallSchedule {
-            id: "oc-1".into(), name: "Primary On-Call".into(),
-            users: vec![
-                OnCallUser { user_id: "user-1".into(), username: "alice".into(), order: 1 },
-                OnCallUser { user_id: "user-2".into(), username: "bob".into(), order: 2 },
-                OnCallUser { user_id: "user-3".into(), username: "charlie".into(), order: 3 },
-            ],
-            rotation_type: "weekly".into(), time_zone: "America/New_York".into(),
-            start_time: "08:00".into(), end_time: "20:00".into(),
-            created_at: "2025-01-01T00:00:00Z".into(),
-        },
-    ]))
+    INSTANCE.get_or_init(|| parking_lot::RwLock::new(Vec::new()))
 }
 
 #[derive(Debug, Deserialize)]

@@ -255,3 +255,169 @@ struct JobStatusRow {
     completed_at: Option<DateTime<Utc>>,
     error_message: Option<String>,
 }
+
+// ============================================================================
+// P04 (PROF-UI): Flamegraph Aggregation Endpoint
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct FlamegraphQuery {
+    pub service_name: Option<String>,
+    pub window: Option<String>,
+    pub source: Option<String>,
+}
+
+/// GET /api/v1/profiles/flamegraph — aggregate stack frames into d3-flame-graph JSON
+///
+/// Query params:
+///   - service_name: filter by service (optional)
+///   - window: time window — 1h, 6h, 24h (default 24h)
+///   - source: "otel" | "ebpf" | "all" (default "all")
+///
+/// Returns a nested hierarchical JSON tree compatible with d3-flame-graph
+/// and speedscope viewers.
+pub async fn flamegraph(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    Query(params): Query<FlamegraphQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let interval = match params.window.as_deref() {
+        Some("1h") => "1 hour",
+        Some("6h") => "6 hours",
+        Some("7d") => "7 days",
+        _ => "24 hours",
+    };
+    let source = params.source.as_deref().unwrap_or("all");
+
+    // Collect flamegraph_data JSON arrays from both profile tables
+    let mut all_frames: Vec<serde_json::Value> = Vec::new();
+
+    // 1. OTel profiles (otel_profiles table)
+    if source == "all" || source == "otel" {
+        let otel_sql = if let Some(ref svc) = params.service_name {
+            format!(
+                "SELECT flamegraph_data FROM otel_profiles WHERE org_id = $1 AND service_name = '{}' AND started_at > NOW() - INTERVAL '{}'",
+                svc.replace('\'', "''"), interval
+            )
+        } else {
+            format!(
+                "SELECT flamegraph_data FROM otel_profiles WHERE org_id = $1 AND started_at > NOW() - INTERVAL '{}'",
+                interval
+            )
+        };
+        let rows = sqlx::query_scalar::<_, serde_json::Value>(&otel_sql)
+            .bind(org_id)
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default();
+        for row in rows {
+            if let Some(arr) = row.as_array() {
+                all_frames.extend(arr.iter().cloned());
+            } else if row.is_object() {
+                all_frames.push(row);
+            }
+        }
+    }
+
+    // 2. eBPF profiles (profiles table via profiling_jobs)
+    if source == "all" || source == "ebpf" {
+        let ebpf_sql = format!(
+            "SELECT flamegraph_data FROM profiles WHERE org_id = $1 AND collected_at > NOW() - INTERVAL '{}'",
+            interval
+        );
+        let rows = sqlx::query_scalar::<_, serde_json::Value>(&ebpf_sql)
+            .bind(org_id)
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default();
+        for row in rows {
+            if let Some(arr) = row.as_array() {
+                all_frames.extend(arr.iter().cloned());
+            } else if row.is_object() {
+                all_frames.push(row);
+            }
+        }
+    }
+
+    // 3. Build hierarchical flame tree from collected frames
+    let tree = build_flame_tree(&all_frames);
+    let total_samples: i64 = all_frames.len() as i64;
+
+    Ok(Json(json!({
+        "flamegraph": tree,
+        "total_samples": total_samples,
+        "source": source,
+        "window": params.window.unwrap_or_else(|| "24h".into()),
+        "service_name": params.service_name,
+    })))
+}
+
+/// Build a nested flame tree from a flat list of stack frame entries.
+///
+/// Each entry is expected to have:
+///   - "stack": "frame1;frame2;frame3" (semicolon-separated collapsed stack)
+///   - "value": numeric sample count
+///
+/// If entries don't match this format, returns a placeholder root node.
+fn build_flame_tree(frames: &[serde_json::Value]) -> serde_json::Value {
+    use std::collections::HashMap;
+
+    #[derive(Default)]
+    struct TreeNode {
+        value: i64,
+        children: HashMap<String, TreeNode>,
+    }
+
+    fn node_to_json(name: &str, node: &TreeNode) -> serde_json::Value {
+        let mut children: Vec<serde_json::Value> = node
+            .children
+            .iter()
+            .map(|(k, v)| node_to_json(k, v))
+            .collect();
+        children.sort_by(|a, b| {
+            let av = a["value"].as_i64().unwrap_or(0);
+            let bv = b["value"].as_i64().unwrap_or(0);
+            bv.cmp(&av)
+        });
+        json!({
+            "name": name,
+            "value": node.value,
+            "children": children,
+        })
+    }
+
+    let mut root = TreeNode::default();
+
+    for frame in frames {
+        let stack = frame
+            .get("stack")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let value = frame
+            .get("value")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(1);
+
+        let parts: Vec<&str> = stack.split(';').collect();
+        let mut current = &mut root;
+        current.value += value;
+
+        for part in parts {
+            current = current
+                .children
+                .entry(part.to_string())
+                .or_insert_with(TreeNode::default);
+            current.value += value;
+        }
+    }
+
+    if root.children.is_empty() && frames.is_empty() {
+        return json!({
+            "name": "root",
+            "value": 0,
+            "children": [],
+        });
+    }
+
+    node_to_json("root", &root)
+}

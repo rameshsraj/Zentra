@@ -77,6 +77,9 @@ pub fn router() -> Router<AppState> {
         .route("/api/profiles/:id", get(handlers::profiling::get_profile))
         .route("/api/profiles/jobs/:job_id/status", get(handlers::profiling::get_job_status))
 
+        // P04 (PROF-UI): Flamegraph Aggregation
+        .route("/api/profiles/flamegraph", get(handlers::profiling::flamegraph))
+
         // SW P07: Trace ↔ DB Cross-Correlation
         .route("/api/drilldown/trace/:trace_id/db-context", get(handlers::trace_db_correlator::trace_db_context))
         .route("/api/drilldown/db-slowness", get(handlers::trace_db_correlator::db_slowness))

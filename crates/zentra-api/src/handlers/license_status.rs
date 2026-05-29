@@ -8,34 +8,6 @@ use zentra_core::crypto::license_verifier::{check_license_active, load_and_verif
 
 /// API handler returning the current cryptographic license status and menu item permissions
 pub async fn get_license_status() -> impl IntoResponse {
-    if !check_license_active() {
-        // In local development/sandbox, return a generic mock unlimited trial license
-        return Json(json!({
-            "is_licensed": true,
-            "customer_name": "Development Sandbox (Local)",
-            "onboarded_at": chrono::Utc::now(),
-            "trial_duration_days": 9999,
-            "days_remaining": 9999,
-            "max_targets": 9999,
-            "features": {
-                "enable_oracle": true,
-                "enable_ebpf_network": true,
-                "enable_ai_observability": true,
-                "enable_otel": true,
-                "allowed_menu_items": [
-                    "dashboard",
-                    "targets",
-                    "oracle-rac",
-                    "ebpf-network",
-                    "otel-explorer",
-                    "ai-observability",
-                    "alerts",
-                    "security"
-                ]
-            }
-        }));
-    }
-
     // Try loading and parsing production license
     match load_and_verify_license() {
         Ok(payload) => {

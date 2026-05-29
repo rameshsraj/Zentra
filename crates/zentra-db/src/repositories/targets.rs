@@ -78,6 +78,18 @@ pub async fn get_target(pool: &PgPool, target_id: Uuid) -> Result<Option<Target>
     Ok(row.and_then(|r| r.try_into().ok()))
 }
 
+pub async fn get_target_scoped(pool: &PgPool, target_id: Uuid, org_id: Uuid) -> Result<Option<Target>, sqlx::Error> {
+    let row = sqlx::query_as::<_, TargetRow>(
+        "SELECT target_id, org_id, name, description, target_type, target_subtype, host, port, credentials, connection_options, status, environment, tags, check_interval_seconds, last_check_at, last_error, consecutive_failures, created_at, updated_at, is_active FROM targets WHERE target_id = $1 AND org_id = $2"
+    )
+    .bind(target_id)
+    .bind(org_id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row.and_then(|r| r.try_into().ok()))
+}
+
 pub async fn update_target_status(
     pool: &PgPool,
     target_id: Uuid,

@@ -17,7 +17,7 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use uuid::Uuid;
 
 const REQUEST_ID_HEADER: &str = "x-request-id";
@@ -27,12 +27,21 @@ const DEFAULT_INSECURE_JWT: &str = "Zentra-default-jwt-secret-change-me";
 async fn main() {
     dotenvy::dotenv().ok();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("info"))
-        )
-        .with_target(true)
+    // Build layered tracing subscriber:
+    //   Layer 1: fmt (stdout/stderr logs)
+    //   Layer 2: OpenTelemetry (sends spans to OTLP endpoint for self-monitoring)
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_target(true);
+
+    let otel_layer = zentra_api::otel_self::init_tracer();
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(fmt_layer)
+        .with(otel_layer)
         .init();
 
     info!("Zentra Server starting...");
@@ -229,6 +238,8 @@ async fn main() {
         // outer → inner
         .layer(middleware::from_fn(request_id_middleware))
         .layer(middleware::from_fn(zentra_api::observability::track_request))
+        .layer(middleware::from_fn(zentra_api::otel_middleware::otel_trace_middleware))
+        .layer(middleware::from_fn_with_state(state.clone(), zentra_api::otlp_quota::otlp_quota_middleware))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
         .layer(middleware::from_fn_with_state(state, require_auth))
@@ -281,4 +292,5 @@ async fn request_id_middleware(
 async fn shutdown_signal() {
     tokio::signal::ctrl_c().await.ok();
     info!("Shutdown signal received — draining in-flight requests");
+    zentra_api::otel_self::shutdown_tracer();
 }

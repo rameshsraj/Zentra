@@ -24,12 +24,10 @@ pub struct MiddlewareServiceStatus {
 }
 
 pub async fn dashboard(
-    State(_s): State<AppState>,
+    State(s): State<AppState>,
 ) -> Result<Json<Vec<MiddlewareServiceStatus>>, ApiError> {
     let mut services = Vec::new();
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(3))
-        .build().unwrap_or_default();
+    let client = &s.http_client;
     let now = Utc::now().to_rfc3339();
 
     // Nginx instances

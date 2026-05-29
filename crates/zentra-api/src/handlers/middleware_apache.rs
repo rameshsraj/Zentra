@@ -58,7 +58,8 @@ pub async fn list_instances(State(_s): State<AppState>) -> Result<Json<Vec<Apach
     Ok(Json(instances().read().clone()))
 }
 
-pub async fn get_status(State(_s): State<AppState>, Path(id): Path<String>) -> Result<Json<ApacheStatus>, ApiError> {
+#[tracing::instrument(skip(state), fields(otel.kind = "client", http.target = "apache"))]
+pub async fn get_status(State(state): State<AppState>, Path(id): Path<String>) -> Result<Json<ApacheStatus>, ApiError> {
     let inst = {
         let insts = instances().read();
         insts.iter().find(|i| i.id == id).cloned()
@@ -66,8 +67,7 @@ pub async fn get_status(State(_s): State<AppState>, Path(id): Path<String>) -> R
     };
     let url = format!("http://{}:{}/server-status?auto", inst.host, inst.port);
     let empty = || ApacheStatus { total_accesses: 0, total_kbytes: 0, uptime: 0, req_per_sec: 0.0, bytes_per_sec: 0.0, bytes_per_req: 0.0, busy_workers: 0, idle_workers: 0, cpu_load: 0.0, scoreboard: String::new() };
-    match reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build()
-        .unwrap_or_default().get(&url).send().await
+    match state.http_client.get(&url).send().await
     {
         Ok(resp) if resp.status().is_success() => {
             let body = resp.text().await.unwrap_or_default();
@@ -104,15 +104,14 @@ pub async fn get_status(State(_s): State<AppState>, Path(id): Path<String>) -> R
     }
 }
 
-pub async fn performance_history(State(_s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<ApacheHistoryPoint>>, ApiError> {
+pub async fn performance_history(State(state): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<ApacheHistoryPoint>>, ApiError> {
     let inst = {
         let insts = instances().read();
         insts.iter().find(|i| i.id == id).cloned()
             .ok_or(ApiError::from((StatusCode::NOT_FOUND, "Instance not found".into())))?
     };
     let url = format!("http://{}:{}/server-status?auto", inst.host, inst.port);
-    let (busy, idle, rps, bps) = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5)).build().unwrap_or_default()
+    let (busy, idle, rps, bps) = match state.http_client
         .get(&url).send().await
     {
         Ok(resp) if resp.status().is_success() => {
@@ -168,7 +167,7 @@ pub async fn delete_instance(State(_s): State<AppState>, Path(id): Path<String>)
     else { Err(ApiError::from((StatusCode::NOT_FOUND, "Instance not found".into()))) }
 }
 
-pub async fn get_scoreboard(State(_s): State<AppState>, Path(id): Path<String>) -> Result<Json<serde_json::Value>, ApiError> {
+pub async fn get_scoreboard(State(state): State<AppState>, Path(id): Path<String>) -> Result<Json<serde_json::Value>, ApiError> {
     let inst = {
         let insts = instances().read();
         insts.iter().find(|i| i.id == id).cloned()
@@ -176,8 +175,7 @@ pub async fn get_scoreboard(State(_s): State<AppState>, Path(id): Path<String>) 
     };
     let url = format!("http://{}:{}/server-status?auto", inst.host, inst.port);
     let mut sb = String::new();
-    if let Ok(resp) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build()
-        .unwrap_or_default().get(&url).send().await {
+    if let Ok(resp) = state.http_client.get(&url).send().await {
         if let Ok(body) = resp.text().await {
             for line in body.lines() {
                 if let Some(val) = line.strip_prefix("Scoreboard:") {

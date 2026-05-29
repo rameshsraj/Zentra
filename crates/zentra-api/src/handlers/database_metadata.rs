@@ -118,15 +118,177 @@ pub async fn list_indexes(
 ) -> Json<Value> {
     let conn_id = params.connection_id.unwrap_or_else(|| format!("{}-default", db_type));
     let schema = params.schema.unwrap_or_else(|| default_schema(&db_type));
-    let table = params.table.unwrap_or_else(|| "UNKNOWN".into());
+    let table = params.table.clone().unwrap_or_default();
+
+    if db_type == "oracle" {
+        let sql = if table.is_empty() {
+            format!("SELECT index_name, table_name, uniqueness, index_type, status FROM all_indexes WHERE owner = '{}' ORDER BY index_name", schema.to_uppercase())
+        } else {
+            format!("SELECT index_name, table_name, uniqueness, index_type, status FROM all_indexes WHERE owner = '{}' AND table_name = '{}' ORDER BY index_name", schema.to_uppercase(), table.to_uppercase())
+        };
+        if let Some(result) = query_oracle_metadata(&conn_id, &sql) {
+            return Json(json!({ "indexes": result, "schema": schema, "db_type": db_type }));
+        }
+    }
 
     Json(json!({
         "db_type": db_type,
         "connection_id": conn_id,
         "schema": schema,
-        "table": table,
         "indexes": [],
     }))
+}
+
+/// GET /api/db/:db_type/views — list views
+pub async fn list_views(
+    State(_s): State<AppState>,
+    Path(db_type): Path<String>,
+    Query(params): Query<TableQuery>,
+) -> Json<Value> {
+    let conn_id = params.connection_id.unwrap_or_else(|| format!("{}-default", db_type));
+    let schema = params.schema.unwrap_or_else(|| default_schema(&db_type));
+
+    if db_type == "oracle" {
+        let sql = format!("SELECT view_name, text_length FROM all_views WHERE owner = '{}' ORDER BY view_name", schema.to_uppercase());
+        if let Some(result) = query_oracle_metadata(&conn_id, &sql) {
+            return Json(json!({ "views": result, "schema": schema, "db_type": db_type }));
+        }
+    }
+
+    Json(json!({ "db_type": db_type, "schema": schema, "views": [] }))
+}
+
+/// GET /api/db/:db_type/sequences — list sequences
+pub async fn list_sequences(
+    State(_s): State<AppState>,
+    Path(db_type): Path<String>,
+    Query(params): Query<TableQuery>,
+) -> Json<Value> {
+    let conn_id = params.connection_id.unwrap_or_else(|| format!("{}-default", db_type));
+    let schema = params.schema.unwrap_or_else(|| default_schema(&db_type));
+
+    if db_type == "oracle" {
+        let sql = format!("SELECT sequence_name, min_value, max_value, increment_by, last_number, cache_size FROM all_sequences WHERE sequence_owner = '{}' ORDER BY sequence_name", schema.to_uppercase());
+        if let Some(result) = query_oracle_metadata(&conn_id, &sql) {
+            return Json(json!({ "sequences": result, "schema": schema, "db_type": db_type }));
+        }
+    }
+
+    Json(json!({ "db_type": db_type, "schema": schema, "sequences": [] }))
+}
+
+/// GET /api/db/:db_type/triggers — list triggers
+pub async fn list_triggers(
+    State(_s): State<AppState>,
+    Path(db_type): Path<String>,
+    Query(params): Query<TableQuery>,
+) -> Json<Value> {
+    let conn_id = params.connection_id.unwrap_or_else(|| format!("{}-default", db_type));
+    let schema = params.schema.unwrap_or_else(|| default_schema(&db_type));
+
+    if db_type == "oracle" {
+        let sql = format!("SELECT trigger_name, trigger_type, triggering_event, table_name, status FROM all_triggers WHERE owner = '{}' ORDER BY trigger_name", schema.to_uppercase());
+        if let Some(result) = query_oracle_metadata(&conn_id, &sql) {
+            return Json(json!({ "triggers": result, "schema": schema, "db_type": db_type }));
+        }
+    }
+
+    Json(json!({ "db_type": db_type, "schema": schema, "triggers": [] }))
+}
+
+/// GET /api/db/:db_type/types — list types
+pub async fn list_types(
+    State(_s): State<AppState>,
+    Path(db_type): Path<String>,
+    Query(params): Query<TableQuery>,
+) -> Json<Value> {
+    let conn_id = params.connection_id.unwrap_or_else(|| format!("{}-default", db_type));
+    let schema = params.schema.unwrap_or_else(|| default_schema(&db_type));
+
+    if db_type == "oracle" {
+        let sql = format!("SELECT type_name, typecode, attributes, methods FROM all_types WHERE owner = '{}' ORDER BY type_name", schema.to_uppercase());
+        if let Some(result) = query_oracle_metadata(&conn_id, &sql) {
+            return Json(json!({ "types": result, "schema": schema, "db_type": db_type }));
+        }
+    }
+
+    Json(json!({ "db_type": db_type, "schema": schema, "types": [] }))
+}
+
+/// GET /api/db/:db_type/procedures — list procedures and functions
+pub async fn list_procedures(
+    State(_s): State<AppState>,
+    Path(db_type): Path<String>,
+    Query(params): Query<TableQuery>,
+) -> Json<Value> {
+    let conn_id = params.connection_id.unwrap_or_else(|| format!("{}-default", db_type));
+    let schema = params.schema.unwrap_or_else(|| default_schema(&db_type));
+
+    if db_type == "oracle" {
+        let sql = format!("SELECT object_name, object_type, status, created, last_ddl_time FROM all_objects WHERE owner = '{}' AND object_type IN ('PROCEDURE','FUNCTION','PACKAGE') ORDER BY object_type, object_name", schema.to_uppercase());
+        if let Some(result) = query_oracle_metadata(&conn_id, &sql) {
+            return Json(json!({ "procedures": result, "schema": schema, "db_type": db_type }));
+        }
+    }
+
+    Json(json!({ "db_type": db_type, "schema": schema, "procedures": [] }))
+}
+
+/// GET /api/db/:db_type/mviews — list materialized views
+pub async fn list_mviews(
+    State(_s): State<AppState>,
+    Path(db_type): Path<String>,
+    Query(params): Query<TableQuery>,
+) -> Json<Value> {
+    let conn_id = params.connection_id.unwrap_or_else(|| format!("{}-default", db_type));
+    let schema = params.schema.unwrap_or_else(|| default_schema(&db_type));
+
+    if db_type == "oracle" {
+        let sql = format!("SELECT mview_name, refresh_mode, refresh_method, last_refresh_date, staleness FROM all_mviews WHERE owner = '{}' ORDER BY mview_name", schema.to_uppercase());
+        if let Some(result) = query_oracle_metadata(&conn_id, &sql) {
+            return Json(json!({ "mviews": result, "schema": schema, "db_type": db_type }));
+        }
+    }
+
+    Json(json!({ "db_type": db_type, "schema": schema, "mviews": [] }))
+}
+
+/// GET /api/db/:db_type/synonyms — list synonyms
+pub async fn list_synonyms(
+    State(_s): State<AppState>,
+    Path(db_type): Path<String>,
+    Query(params): Query<TableQuery>,
+) -> Json<Value> {
+    let conn_id = params.connection_id.unwrap_or_else(|| format!("{}-default", db_type));
+    let schema = params.schema.unwrap_or_else(|| default_schema(&db_type));
+
+    if db_type == "oracle" {
+        let sql = format!("SELECT synonym_name, table_owner, table_name, db_link FROM all_synonyms WHERE owner = '{}' ORDER BY synonym_name", schema.to_uppercase());
+        if let Some(result) = query_oracle_metadata(&conn_id, &sql) {
+            return Json(json!({ "synonyms": result, "schema": schema, "db_type": db_type }));
+        }
+    }
+
+    Json(json!({ "db_type": db_type, "schema": schema, "synonyms": [] }))
+}
+
+/// GET /api/db/:db_type/schema-objects — summary counts of all object types in a schema
+pub async fn schema_objects(
+    State(_s): State<AppState>,
+    Path(db_type): Path<String>,
+    Query(params): Query<TableQuery>,
+) -> Json<Value> {
+    let conn_id = params.connection_id.unwrap_or_else(|| format!("{}-default", db_type));
+    let schema = params.schema.unwrap_or_else(|| default_schema(&db_type));
+
+    if db_type == "oracle" {
+        let sql = format!("SELECT object_type, COUNT(*) AS cnt FROM all_objects WHERE owner = '{}' AND object_type IN ('TABLE','VIEW','INDEX','SEQUENCE','TRIGGER','TYPE','PROCEDURE','FUNCTION','PACKAGE','MATERIALIZED VIEW','SYNONYM') GROUP BY object_type ORDER BY object_type", schema.to_uppercase());
+        if let Some(result) = query_oracle_metadata(&conn_id, &sql) {
+            return Json(json!({ "object_counts": result, "schema": schema, "db_type": db_type }));
+        }
+    }
+
+    Json(json!({ "db_type": db_type, "schema": schema, "object_counts": [] }))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -39,7 +39,7 @@ pub fn start_metric_collector(state: AppState) {
                 collect_network_metrics(pool, org_id),
                 collect_database_metrics(pool, org_id),
                 collect_oracle_metrics(pool, org_id, &state),
-                collect_middleware_metrics(pool, org_id),
+                collect_middleware_metrics(pool, org_id, &state.http_client),
                 collect_healthcheck_metrics(pool, org_id),
             );
 
@@ -108,7 +108,7 @@ async fn collect_server_metrics(pool: &PgPool, org_id: Uuid) -> usize {
     let mut count = 0usize;
     for (target_id, name, host, _port, username) in &rows {
         let user = username.as_deref().unwrap_or("root");
-        let stats = ssh_utils::collect_server_stats(&host, user).await;
+        let stats = ssh_utils::collect_server_stats_pooled(&host, user).await;
 
         if stats.contains_key("ERROR") {
             debug!(target = %name, "Server unreachable, skipping metrics");
@@ -213,7 +213,7 @@ async fn collect_network_metrics(pool: &PgPool, org_id: Uuid) -> usize {
     }
     script_parts.push("rm -rf $TMPDIR".to_string());
 
-    let bulk_res = ssh_utils::ssh_exec(&ssh_host, &ssh_user, &script_parts.join("\n")).await;
+    let bulk_res = zentra_core::ssh_pool::pooled_ssh_exec(&ssh_host, &ssh_user, &script_parts.join("\n")).await;
     let bulk_out = bulk_res.stdout;
 
     let mut count = 0usize;
@@ -532,7 +532,7 @@ EXIT;
                     "sqlplus -S {} <<'EOSQL'\n{}\nEOSQL",
                     conn_str, sql_script
                 );
-                let result = ssh_utils::ssh_exec(&t.host, &ssh_user, &cmd).await;
+                let result = zentra_core::ssh_pool::pooled_ssh_exec(&t.host, &ssh_user, &cmd).await;
                 if !result.success || result.stdout.trim().is_empty() {
                     debug!(target = %t.name, stderr = %result.stderr, "Oracle unreachable, skipping metrics");
                     let _ = sqlx::query("UPDATE targets SET status = 'unreachable', last_check_at = NOW() WHERE target_id = $1")
@@ -655,13 +655,13 @@ pub fn middleware_uuid(ns: &str, id: &str) -> Uuid {
     Uuid::new_v5(&Uuid::NAMESPACE_OID, format!("{}:{}", ns, id).as_bytes())
 }
 
-async fn collect_middleware_metrics(pool: &PgPool, org_id: Uuid) -> usize {
+async fn collect_middleware_metrics(pool: &PgPool, org_id: Uuid, http_client: &reqwest::Client) -> usize {
     let mut count = 0usize;
 
     // ---- Nginx ----
     {
         let insts = middleware_nginx::live_instances().read().clone();
-        let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().unwrap_or_default();
+        let client = http_client;
         for inst in &insts {
             let target_id = middleware_uuid("nginx", &inst.id);
             let url = format!("http://{}:{}{}", inst.host, inst.port, inst.stub_status_path);
@@ -703,7 +703,7 @@ async fn collect_middleware_metrics(pool: &PgPool, org_id: Uuid) -> usize {
     // ---- Apache ----
     {
         let insts = middleware_apache::live_instances().read().clone();
-        let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().unwrap_or_default();
+        let client = http_client;
         for inst in &insts {
             let target_id = middleware_uuid("apache", &inst.id);
             let url = format!("http://{}:{}/server-status?auto", inst.host, inst.port);
@@ -806,7 +806,7 @@ async fn collect_middleware_metrics(pool: &PgPool, org_id: Uuid) -> usize {
     // ---- Elasticsearch ----
     {
         let insts = middleware_elasticsearch::live_instances().read().clone();
-        let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().unwrap_or_default();
+        let client = http_client;
         for inst in &insts {
             let target_id = middleware_uuid("elasticsearch", &inst.id);
             let url = format!("http://{}:{}/_cluster/health", inst.host, inst.port);
