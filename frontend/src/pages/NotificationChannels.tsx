@@ -246,7 +246,7 @@ function MuteTimingsTab() {
   const [newDays, setNewDays] = useState('mon,tue,wed,thu,fri')
 
   useEffect(() => {
-    fetchJSON<any[]>('/notifications/mute-timings').then(setMutings).catch(() => {})
+    fetchJSON<any>('/notifications/mute-timings').then(d => setMutings(d.mute_timings || d || [])).catch(() => {})
   }, [])
 
   const handleCreate = () => {
@@ -254,7 +254,7 @@ function MuteTimingsTab() {
       method: 'POST',
       body: JSON.stringify({ name: newName, start_time: newStart, end_time: newEnd, weekdays: newDays }),
     }).then(() => {
-      fetchJSON<any[]>('/notifications/mute-timings').then(setMutings).catch(() => {})
+      fetchJSON<any>('/notifications/mute-timings').then(d => setMutings(d.mute_timings || d || [])).catch(() => {})
       setShowAdd(false)
       setNewName('')
     }).catch(() => {})

@@ -82,6 +82,48 @@ export default function AIInsightsPage() {
     }
   }
 
+  const buildKpiDrilldown = (label: string): DrilldownNode[] => {
+    switch (label) {
+      case 'ML Models':
+        return liveModels.map((m, i) => ({
+          id: `ml-${i}`,
+          label: m.name,
+          value: `${m.value}${m.metric === 'Clusters' ? '' : '%'}`,
+          details: { Algorithm: m.algorithm, Metric: m.metric, Status: m.status, 'Training Samples': m.samples },
+        }))
+      case 'Anomalies (7d)':
+        return liveAnomalyData.map((d, i) => ({
+          id: `anom-${i}`,
+          label: d.day,
+          value: d.detected,
+          details: { Detected: d.detected, Resolved: d.resolved, 'False Positives': d.falsePositives, 'Resolution Rate': `${d.detected > 0 ? Math.round(d.resolved / d.detected * 100) : 0}%` },
+        }))
+      case 'Avg Confidence':
+        return liveInsights.map((ins, i) => ({
+          id: `conf-${i}`,
+          label: ins.title,
+          value: `${Math.round(ins.confidence * 100)}%`,
+          details: { Severity: ins.severity, Recommendation: ins.recommendation },
+        }))
+      case 'Cost Savings':
+        return liveCostData.map((d, i) => ({
+          id: `cost-${i}`,
+          label: d.category,
+          value: `-$${d.savings.toLocaleString()}`,
+          details: { 'Current Cost': `$${d.current.toLocaleString()}`, 'Optimized Cost': `$${d.optimized.toLocaleString()}`, 'Savings %': `${Math.round(d.savings / d.current * 100)}%` },
+        }))
+      case 'Active Insights':
+        return liveInsights.map((ins, i) => ({
+          id: `ins-${i}`,
+          label: ins.title,
+          value: ins.severity,
+          details: { Confidence: `${Math.round(ins.confidence * 100)}%`, Description: ins.description, Recommendation: ins.recommendation },
+        }))
+      default:
+        return [{ id: '1', label: `${label} detail`, value: '—' }]
+    }
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -102,7 +144,7 @@ export default function AIInsightsPage() {
           { label: 'Active Insights', value: String(liveInsights.length), icon: Lightbulb, color: 'text-blue-400', sparkData: spark(4, 2) },
         ].map((kpi, i) => (
           <div key={i} className="bg-white/5 backdrop-blur-sm border border-white/10 p-3 rounded-xl cursor-pointer hover:bg-white/[0.08] transition-colors"
-            onClick={() => setDrilldown({ open: true, title: kpi.label, nodes: [{ id: '1', label: `${kpi.label} detail`, value: kpi.value }] })}>
+            onClick={() => setDrilldown({ open: true, title: kpi.label, nodes: buildKpiDrilldown(kpi.label) })}>
             <div className="flex items-center gap-1.5 text-[10px] text-slate-400 uppercase tracking-wider mb-1">
               <kpi.icon className="w-3 h-3" />{kpi.label}
             </div>

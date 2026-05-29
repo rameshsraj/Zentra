@@ -52,10 +52,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refreshProfile()
   }, [refreshProfile])
 
-  // Listen for auth:logout events from fetchJSON
+  // Listen for auth:logout events from fetchJSON (session expired)
   useEffect(() => {
     const handler = () => {
-      setState({ user: null, isAuthenticated: false, isLoading: false, error: null })
+      setState({ user: null, isAuthenticated: false, isLoading: false, error: 'Session expired' })
     }
     window.addEventListener('auth:logout', handler)
     return () => window.removeEventListener('auth:logout', handler)

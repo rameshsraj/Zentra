@@ -20,7 +20,7 @@ use validator::Validate;
 // Constants
 // ═══════════════════════════════════════════════════════════════════════════
 
-const JWT_EXPIRY_HOURS: i64 = 8;
+const JWT_EXPIRY_HOURS: i64 = 24;
 const REFRESH_EXPIRY_DAYS: i64 = 30;
 const MAX_LOGIN_ATTEMPTS: i64 = 20;
 const LOCKOUT_WINDOW_MINUTES: i64 = 5;
@@ -459,16 +459,24 @@ pub async fn refresh(
         }
     };
 
-    // Update session token hash
-    let _ = sqlx::query("UPDATE user_sessions SET token_hash = $1 WHERE session_id = $2")
-        .bind(hash_token(&token))
-        .bind(session_id)
-        .execute(&state.pool)
-        .await;
+    // Rotate refresh token and extend session expiry
+    let new_refresh_token = format!("rt_{}", Uuid::new_v4());
+    let new_refresh_exp = now + Duration::days(REFRESH_EXPIRY_DAYS);
 
-    (StatusCode::OK, Json(json!(TokenResponse {
-        token,
-        expires_at: exp,
+    let _ = sqlx::query(
+        "UPDATE user_sessions SET token_hash = $1, refresh_token_hash = $2, expires_at = $3 WHERE session_id = $4"
+    )
+    .bind(hash_token(&token))
+    .bind(hash_token(&new_refresh_token))
+    .bind(new_refresh_exp)
+    .bind(session_id)
+    .execute(&state.pool)
+    .await;
+
+    (StatusCode::OK, Json(json!({
+        "token": token,
+        "refresh_token": new_refresh_token,
+        "expires_at": exp.to_rfc3339(),
     }))).into_response()
 }
 
