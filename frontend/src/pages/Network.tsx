@@ -26,9 +26,9 @@ import {
 import DemoModeBadge from '@/components/DemoModeBadge'
 import AddNetworkDeviceModal from '@/components/AddNetworkDeviceModal'
 
-// Stable sparkline from a base value using deterministic sine wave (no random)
+// M10: Flat sparkline from live value — no synthetic Math.sin generation
 const spark = (base: number, len = 20) =>
-  Array.from({ length: len }, (_, i) => Math.max(0, base + Math.sin(base * 0.1 + i * 0.4) * (base * 0.08)))
+  Array.from({ length: len }, () => Math.max(0, base))
 
 const fmt = (bytes: number) => {
   if (bytes > 1e9) return `${(bytes / 1e9).toFixed(1)} GB`

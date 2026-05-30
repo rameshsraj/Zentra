@@ -1,8 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import PageHeader from '@/components/PageHeader'
-import Sparkline from '@/components/charts/Sparkline'
 import LiveModeButton from '@/components/LiveModeButton'
-import { fetchJSON, getEscalationChains, getOnCallSchedules, createEscalationChain, deleteEscalationChain, createOnCallSchedule } from '@/lib/api'
+import { fetchJSON, getEscalationChains, getOnCallSchedules, createEscalationChain, deleteEscalationChain, createOnCallSchedule, getNotificationChannels, getNotificationHistory } from '@/lib/api'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Mail, MessageSquare, Bell, Webhook, Send, Hash,
@@ -10,9 +9,6 @@ import {
   ChevronDown, ChevronUp, Plus, VolumeX, Link2, Users,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-
-const spark = (base: number, _v?: number, len = 20) =>
-  Array.from({ length: len }, (_, i) => Math.max(0, base + Math.sin(base * 0.1 + i * 0.5) * (base * 0.05)))
 
 interface NotifChannel {
   id: string
@@ -31,7 +27,6 @@ const channelIcon: Record<string, typeof Mail> = {
   webhook: Webhook, telegram: Send, discord: MessageSquare, syslog: Clock,
 }
 
-const channels: NotifChannel[] = []
 
 interface NotifPolicy {
   id: string
@@ -44,20 +39,21 @@ interface NotifPolicy {
   repeat_interval: string
 }
 
-const policies: NotifPolicy[] = []
-
 type Tab = 'channels' | 'policies' | 'history' | 'mute-timings' | 'escalation' | 'oncall'
 
-const mockHistory: { time: string; channel: string; type: string; alert: string; severity: string; status: string }[] = []
-
 export default function NotificationChannelsPage() {
+  const qc = useQueryClient()
   const [tab, setTab] = useState<Tab>('channels')
   const [expanded, setExpanded] = useState<string | null>(null)
-  const handleRefresh = useCallback(() => {}, [])
 
-  const liveChannels = channels
-  const livePolicies = policies
-  const liveHistory = mockHistory
+  const { data: liveChannels = [] } = useQuery<NotifChannel[]>({ queryKey: ['notification-channels'], queryFn: () => getNotificationChannels() as any })
+  const { data: liveHistory = [] } = useQuery<any[]>({ queryKey: ['notification-history'], queryFn: () => getNotificationHistory() as any })
+  const livePolicies: NotifPolicy[] = []
+
+  const handleRefresh = useCallback(() => {
+    qc.invalidateQueries({ queryKey: ['notification-channels'] })
+    qc.invalidateQueries({ queryKey: ['notification-history'] })
+  }, [qc])
   const totalSent = liveChannels.reduce((a, c) => a + c.notifications_sent_24h, 0)
   const totalFailed = liveChannels.reduce((a, c) => a + c.failures_24h, 0)
   const enabledCount = liveChannels.filter(c => c.enabled).length
@@ -78,20 +74,17 @@ export default function NotificationChannelsPage() {
       {/* KPI Strip */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         {[
-          { label: 'Channels', value: String(liveChannels.length), color: 'text-blue-400', sub: `${enabledCount} active`, sparkData: spark(8, 1) },
-          { label: 'Sent (24h)', value: String(totalSent), color: 'text-emerald-400', sub: 'Notifications', sparkData: spark(totalSent, 20) },
-          { label: 'Failed (24h)', value: String(totalFailed), color: totalFailed > 0 ? 'text-red-400' : 'text-emerald-400', sub: totalFailed > 0 ? 'Check webhook' : 'All OK', sparkData: spark(totalFailed, 2) },
-          { label: 'Policies', value: String(livePolicies.length), color: 'text-purple-400', sub: 'Routing rules', sparkData: spark(5, 1) },
-          { label: 'Delivery Rate', value: totalSent > 0 ? `${(((totalSent - totalFailed) / totalSent) * 100).toFixed(1)}%` : '100%', color: 'text-cyan-400', sub: 'Success rate', sparkData: spark(98, 2) },
-          { label: 'Channel Types', value: String(new Set(liveChannels.map(c => c.type)).size), color: 'text-amber-400', sub: 'Integrations', sparkData: spark(8, 0) },
+          { label: 'Channels', value: String(liveChannels.length), color: 'text-blue-400', sub: `${enabledCount} active` },
+          { label: 'Sent (24h)', value: String(totalSent), color: 'text-emerald-400', sub: 'Notifications' },
+          { label: 'Failed (24h)', value: String(totalFailed), color: totalFailed > 0 ? 'text-red-400' : 'text-emerald-400', sub: totalFailed > 0 ? 'Check webhook' : 'All OK' },
+          { label: 'Policies', value: String(livePolicies.length), color: 'text-purple-400', sub: 'Routing rules' },
+          { label: 'Delivery Rate', value: totalSent > 0 ? `${(((totalSent - totalFailed) / totalSent) * 100).toFixed(1)}%` : '100%', color: 'text-cyan-400', sub: 'Success rate' },
+          { label: 'Channel Types', value: String(new Set(liveChannels.map(c => c.type)).size), color: 'text-amber-400', sub: 'Integrations' },
         ].map((kpi, i) => (
           <div key={i} className="bg-white/5 backdrop-blur-sm border border-white/10 p-3 rounded-xl">
             <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">{kpi.label}</div>
             <div className={`text-xl font-bold font-mono ${kpi.color}`}>{kpi.value}</div>
-            <div className="flex items-center justify-between mt-0.5">
-              <span className="text-[10px] text-slate-500">{kpi.sub}</span>
-              <Sparkline data={kpi.sparkData} width={48} height={16} color={kpi.color.replace('text-', '')} />
-            </div>
+            <span className="text-[10px] text-slate-500">{kpi.sub}</span>
           </div>
         ))}
       </div>

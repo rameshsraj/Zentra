@@ -149,6 +149,18 @@ async fn grpc_export_traces(
                     .flat_map(|ss| ss.get("spans").and_then(|v| v.as_array()).into_iter().flatten())
                     .count())
                 .unwrap_or(0);
+            // O01: Enqueue for async batch insert
+            if let Some(ref queue) = state.ingest_queue {
+                let batch = crate::ingest_queue::IngestBatch {
+                    org_id,
+                    signal: crate::ingest_queue::Signal::Traces,
+                    payload: payload.clone(),
+                    raw_bytes: body.to_vec(),
+                };
+                if queue.try_send(batch).is_err() {
+                    return grpc_error(8, "Ingest queue full");
+                }
+            }
             info!(org_id = %org_id, spans = span_count, "gRPC trace ingest");
             let resp = ExportTraceServiceResponse { partial_success: None };
             grpc_ok_response(grpc_frame(&resp))
@@ -170,7 +182,19 @@ async fn grpc_export_metrics(
 
     let proto_bytes = strip_grpc_frame(&body);
     match otlp_proto::proto_to_json_metrics(proto_bytes) {
-        Ok(_payload) => {
+        Ok(payload) => {
+            // O01: Enqueue for async batch insert
+            if let Some(ref queue) = state.ingest_queue {
+                let batch = crate::ingest_queue::IngestBatch {
+                    org_id,
+                    signal: crate::ingest_queue::Signal::Metrics,
+                    payload: payload.clone(),
+                    raw_bytes: body.to_vec(),
+                };
+                if queue.try_send(batch).is_err() {
+                    return grpc_error(8, "Ingest queue full");
+                }
+            }
             info!(org_id = %org_id, "gRPC metrics ingest");
             let resp = ExportMetricsServiceResponse { partial_success: None };
             grpc_ok_response(grpc_frame(&resp))
@@ -192,7 +216,19 @@ async fn grpc_export_logs(
 
     let proto_bytes = strip_grpc_frame(&body);
     match otlp_proto::proto_to_json_logs(proto_bytes) {
-        Ok(_payload) => {
+        Ok(payload) => {
+            // O01: Enqueue for async batch insert
+            if let Some(ref queue) = state.ingest_queue {
+                let batch = crate::ingest_queue::IngestBatch {
+                    org_id,
+                    signal: crate::ingest_queue::Signal::Logs,
+                    payload: payload.clone(),
+                    raw_bytes: body.to_vec(),
+                };
+                if queue.try_send(batch).is_err() {
+                    return grpc_error(8, "Ingest queue full");
+                }
+            }
             info!(org_id = %org_id, "gRPC logs ingest");
             let resp = ExportLogsServiceResponse { partial_success: None };
             grpc_ok_response(grpc_frame(&resp))
@@ -214,7 +250,19 @@ async fn grpc_export_profiles(
 
     let proto_bytes = strip_grpc_frame(&body);
     match otlp_proto::proto_to_json_profiles(proto_bytes) {
-        Ok(_payload) => {
+        Ok(payload) => {
+            // O01: Enqueue for async batch insert
+            if let Some(ref queue) = state.ingest_queue {
+                let batch = crate::ingest_queue::IngestBatch {
+                    org_id,
+                    signal: crate::ingest_queue::Signal::Profiles,
+                    payload: payload.clone(),
+                    raw_bytes: body.to_vec(),
+                };
+                if queue.try_send(batch).is_err() {
+                    return grpc_error(8, "Ingest queue full");
+                }
+            }
             info!(org_id = %org_id, "gRPC profiles ingest");
             let resp = ExportProfilesServiceResponse {};
             grpc_ok_response(grpc_frame(&resp))

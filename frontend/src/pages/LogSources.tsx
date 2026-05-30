@@ -1,5 +1,7 @@
 import { useState, useCallback } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import PageHeader from '@/components/PageHeader'
+import { getLogSources, createLogSource, deleteLogSource } from '@/lib/api'
 import {
   FileInput, Server, Database, Cloud, Terminal, Trash2, CheckCircle2,
   XCircle, Clock, Settings, Pause,
@@ -19,14 +21,6 @@ interface LogSourceItem {
   created_at: string
 }
 
-const mockSources: LogSourceItem[] = [
-  { id: '1', name: 'Nginx Error Logs', source_type: 'file', host: '10.88.11.162', port: 22, path: '/var/log/nginx/error.log', status: 'active', last_ingested: new Date(Date.now() - 60000).toISOString(), log_count: 42850, created_at: '2024-01-10T00:00:00Z' },
-  { id: '2', name: 'Oracle Alert Log', source_type: 'file', host: '10.88.11.162', port: 22, path: '/u01/app/oracle/diag/rdbms/orcl/ORCL/trace/alert_ORCL.log', status: 'active', last_ingested: new Date(Date.now() - 120000).toISOString(), log_count: 128400, created_at: '2024-01-10T00:00:00Z' },
-  { id: '3', name: 'Application Syslog', source_type: 'syslog', host: '10.88.11.162', port: 514, path: '/var/log/syslog', status: 'active', last_ingested: new Date(Date.now() - 30000).toISOString(), log_count: 256000, created_at: '2024-01-10T00:00:00Z' },
-  { id: '4', name: 'Docker Container Logs', source_type: 'docker', host: '10.88.11.162', port: 2375, path: '/var/lib/docker/containers', status: 'paused', last_ingested: new Date(Date.now() - 3600000).toISOString(), log_count: 89200, created_at: '2024-01-15T00:00:00Z' },
-  { id: '5', name: 'Redis Logs', source_type: 'file', host: '10.88.11.163', port: 22, path: '/var/log/redis/redis-server.log', status: 'error', last_ingested: new Date(Date.now() - 7200000).toISOString(), log_count: 15600, created_at: '2024-01-20T00:00:00Z' },
-  { id: '6', name: 'AWS CloudWatch', source_type: 'cloudwatch', host: 'us-east-1', port: 443, path: '/aws/lambda/zentra-api', status: 'active', last_ingested: new Date(Date.now() - 90000).toISOString(), log_count: 67300, created_at: '2024-02-01T00:00:00Z' },
-]
 
 const sourceTypeIcon = (type: string) => {
   switch (type) {
@@ -48,12 +42,18 @@ const statusConfig = (status: string) => {
 }
 
 export default function LogSourcesPage() {
-  const [sources, setSources] = useState(mockSources)
+  const qc = useQueryClient()
+  const { data: sources = [] } = useQuery<LogSourceItem[]>({ queryKey: ['log-sources'], queryFn: getLogSources })
+  const createMut = useMutation({ mutationFn: createLogSource, onSuccess: () => qc.invalidateQueries({ queryKey: ['log-sources'] }) })
+  const deleteMut = useMutation({ mutationFn: deleteLogSource, onSuccess: () => qc.invalidateQueries({ queryKey: ['log-sources'] }) })
+
   const [search, setSearch] = useState('')
   const [showAddModal, setShowAddModal] = useState(false)
   const [newSource, setNewSource] = useState({ name: '', source_type: 'file', host: '', port: 22, path: '' })
 
-  const handleRefresh = useCallback(() => {}, [])
+  const handleRefresh = useCallback(() => {
+    qc.invalidateQueries({ queryKey: ['log-sources'] })
+  }, [qc])
 
   const filteredSources = sources.filter(s =>
     !search || `${s.name} ${s.host} ${s.path} ${s.source_type}`.toLowerCase().includes(search.toLowerCase())
@@ -61,14 +61,7 @@ export default function LogSourcesPage() {
 
   const handleAdd = () => {
     if (!newSource.name || !newSource.host || !newSource.path) return
-    setSources(prev => [...prev, {
-      ...newSource,
-      id: `src-${Date.now()}`,
-      status: 'active' as const,
-      last_ingested: null,
-      log_count: 0,
-      created_at: new Date().toISOString(),
-    }])
+    createMut.mutate(newSource as any)
     setShowAddModal(false)
     setNewSource({ name: '', source_type: 'file', host: '', port: 22, path: '' })
   }
@@ -133,7 +126,7 @@ export default function LogSourcesPage() {
                 <button className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 bg-white/5 border border-white/10 rounded-lg text-[10px] text-slate-400 hover:text-white transition-colors">
                   <Settings className="w-3 h-3" />Configure
                 </button>
-                <button className="flex items-center justify-center gap-1 px-2 py-1.5 bg-white/5 border border-white/10 rounded-lg text-[10px] text-slate-400 hover:text-red-400 transition-colors">
+                <button onClick={() => deleteMut.mutate(src.id)} className="flex items-center justify-center gap-1 px-2 py-1.5 bg-white/5 border border-white/10 rounded-lg text-[10px] text-slate-400 hover:text-red-400 transition-colors">
                   <Trash2 className="w-3 h-3" />
                 </button>
               </div>

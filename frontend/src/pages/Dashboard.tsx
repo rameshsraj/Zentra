@@ -24,9 +24,9 @@ import TimelineList from '@/components/charts/TimelineList'
 import PageHeader from '@/components/PageHeader'
 import { useAuth } from '@/contexts/AuthContext'
 
-// Deterministic sparkline: monotonically stable values derived from a seed number
+// M10: Flat sparkline from live value — no synthetic Math.sin generation
 const spark = (seed: number, len = 20) =>
-  Array.from({ length: len }, (_, i) => seed + (Math.sin(seed * 0.3 + i * 0.5) * seed * 0.05))
+  Array.from({ length: len }, () => seed)
 
 export default function DashboardPage() {
   const qc = useQueryClient()

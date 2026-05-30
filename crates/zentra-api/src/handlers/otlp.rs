@@ -50,6 +50,8 @@ pub struct CollectorConfigQuery {
 pub struct SdkSnippetQuery {
     pub language: Option<String>,
     pub framework: Option<String>,
+    pub host: Option<String>,
+    pub port: Option<u16>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -71,6 +73,25 @@ pub struct OtelStatsTimeseriesQuery {
 }
 
 use sha2::{Sha256, Digest};
+
+/// O17: Decompress gzip-encoded body if Content-Encoding header is set
+fn maybe_decompress(headers: &HeaderMap, body: &Bytes) -> Result<Vec<u8>, String> {
+    let is_gzip = headers.get("content-encoding")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.contains("gzip"))
+        .unwrap_or(false);
+
+    if is_gzip {
+        use std::io::Read;
+        let mut decoder = flate2::read::GzDecoder::new(&body[..]);
+        let mut decompressed = Vec::new();
+        decoder.read_to_end(&mut decompressed)
+            .map_err(|e| format!("gzip decompression failed: {}", e))?;
+        Ok(decompressed)
+    } else {
+        Ok(body.to_vec())
+    }
+}
 
 /// Validates an OTLP API key (isok_...) against the cache and database.
 /// Returns (org_id, permissions) if valid.
@@ -107,7 +128,18 @@ pub async fn validate_otlp_key(
         use sqlx::Row;
         let org_id: Uuid = r.get("org_id");
         let perms: Vec<String> = r.get("permissions");
-        state.otlp_key_cache.insert(hash, (org_id, perms.clone()));
+        state.otlp_key_cache.insert(hash.clone(), (org_id, perms.clone()));
+
+        // O12: Update last_used_at asynchronously (fire-and-forget)
+        let pool = state.tsdb_pool.clone();
+        let h = hash.clone();
+        tokio::spawn(async move {
+            let _ = sqlx::query("UPDATE otlp_api_keys SET last_used_at = NOW() WHERE key_hash = $1")
+                .bind(&h)
+                .execute(&pool)
+                .await;
+        });
+
         Ok((org_id, perms))
     } else {
         Err("Invalid or expired API key".into())
@@ -126,14 +158,17 @@ pub async fn ingest_traces(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<Value>, ApiError> {
+    // O17: Decompress gzip if Content-Encoding header is set
+    let raw = maybe_decompress(&headers, &body)
+        .map_err(|e| ApiError::BadRequest(e))?;
     let encoding = detect_encoding(&headers);
     let payload: Value = match encoding {
-        OtlpEncoding::Json => serde_json::from_slice(&body)
+        OtlpEncoding::Json => serde_json::from_slice(&raw)
             .map_err(|e| ApiError::BadRequest(format!("Invalid JSON: {}", e)))?,
         OtlpEncoding::Protobuf => {
             #[cfg(feature = "otlp-proto")]
             {
-                crate::otlp_proto::proto_to_json_traces(&body)
+                crate::otlp_proto::proto_to_json_traces(&raw)
                     .map_err(|e| ApiError::BadRequest(format!("Protobuf decode error: {}", e)))?
             }
             #[cfg(not(feature = "otlp-proto"))]
@@ -168,10 +203,9 @@ pub async fn ingest_traces(
             .count())
         .unwrap_or(0);
 
+    // O20: Spec-compliant ExportTraceServiceResponse
     Ok(Json(json!({
-        "status": "accepted",
-        "spans_enqueued": span_count,
-        "encoding": if encoding == OtlpEncoding::Protobuf { "protobuf" } else { "json" },
+        "partialSuccess": null,
     })))
 }
 
@@ -183,14 +217,16 @@ pub async fn ingest_metrics(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<Value>, ApiError> {
+    let raw = maybe_decompress(&headers, &body)
+        .map_err(|e| ApiError::BadRequest(e))?;
     let encoding = detect_encoding(&headers);
     let payload: Value = match encoding {
-        OtlpEncoding::Json => serde_json::from_slice(&body)
+        OtlpEncoding::Json => serde_json::from_slice(&raw)
             .map_err(|e| ApiError::BadRequest(format!("Invalid JSON: {}", e)))?,
         OtlpEncoding::Protobuf => {
             #[cfg(feature = "otlp-proto")]
             {
-                crate::otlp_proto::proto_to_json_metrics(&body)
+                crate::otlp_proto::proto_to_json_metrics(&raw)
                     .map_err(|e| ApiError::BadRequest(format!("Protobuf decode error: {}", e)))?
             }
             #[cfg(not(feature = "otlp-proto"))]
@@ -212,7 +248,10 @@ pub async fn ingest_metrics(
         }
     }
 
-    Ok(Json(json!({ "status": "accepted" })))
+    // O20: Spec-compliant ExportMetricsServiceResponse
+    Ok(Json(json!({
+        "partialSuccess": null,
+    })))
 }
 
 /// POST /v1/logs — ingest OTLP logs
@@ -223,14 +262,16 @@ pub async fn ingest_logs(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<Value>, ApiError> {
+    let raw = maybe_decompress(&headers, &body)
+        .map_err(|e| ApiError::BadRequest(e))?;
     let encoding = detect_encoding(&headers);
     let payload: Value = match encoding {
-        OtlpEncoding::Json => serde_json::from_slice(&body)
+        OtlpEncoding::Json => serde_json::from_slice(&raw)
             .map_err(|e| ApiError::BadRequest(format!("Invalid JSON: {}", e)))?,
         OtlpEncoding::Protobuf => {
             #[cfg(feature = "otlp-proto")]
             {
-                crate::otlp_proto::proto_to_json_logs(&body)
+                crate::otlp_proto::proto_to_json_logs(&raw)
                     .map_err(|e| ApiError::BadRequest(format!("Protobuf decode error: {}", e)))?
             }
             #[cfg(not(feature = "otlp-proto"))]
@@ -252,7 +293,10 @@ pub async fn ingest_logs(
         }
     }
 
-    Ok(Json(json!({ "status": "accepted" })))
+    // O20: Spec-compliant ExportLogsServiceResponse
+    Ok(Json(json!({
+        "partialSuccess": null,
+    })))
 }
 
 /// POST /v1/profiles — ingest OTLP profiles (4th signal)
@@ -263,14 +307,16 @@ pub async fn ingest_profiles(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<Value>, ApiError> {
+    let raw = maybe_decompress(&headers, &body)
+        .map_err(|e| ApiError::BadRequest(e))?;
     let encoding = detect_encoding(&headers);
     let payload: Value = match encoding {
-        OtlpEncoding::Json => serde_json::from_slice(&body)
+        OtlpEncoding::Json => serde_json::from_slice(&raw)
             .map_err(|e| ApiError::BadRequest(format!("Invalid JSON: {}", e)))?,
         OtlpEncoding::Protobuf => {
             #[cfg(feature = "otlp-proto")]
             {
-                crate::otlp_proto::proto_to_json_profiles(&body)
+                crate::otlp_proto::proto_to_json_profiles(&raw)
                     .map_err(|e| ApiError::BadRequest(format!("Protobuf decode error: {}", e)))?
             }
             #[cfg(not(feature = "otlp-proto"))]
@@ -292,15 +338,21 @@ pub async fn ingest_profiles(
         }
     }
 
-    Ok(Json(json!({ "status": "accepted" })))
+    // O20: Spec-compliant ExportProfilesServiceResponse
+    Ok(Json(json!({
+        "partialSuccess": null,
+    })))
 }
 
 // ============================================================================
 // OTel Status & Config Endpoints
 // ============================================================================
 
-/// GET /api/otel/status — OTLP capabilities
+/// GET /api/otel/status — OTLP capabilities (O15: reflect real running config)
 pub async fn otel_status() -> Json<Value> {
+    let grpc_enabled = cfg!(feature = "grpc");
+    let proto_enabled = cfg!(feature = "otlp-proto");
+
     Json(json!({
         "signals": ["traces", "metrics", "logs", "profiles"],
         "endpoints": {
@@ -312,11 +364,28 @@ pub async fn otel_status() -> Json<Value> {
             },
             "grpc": {
                 "port": 4317,
-                "status": "planned",
+                "enabled": grpc_enabled,
+                "status": if grpc_enabled { "active" } else { "disabled" },
             }
         },
-        "encodings": ["application/json", "application/x-protobuf"],
+        "encodings": {
+            "json": true,
+            "protobuf": proto_enabled,
+            "gzip": true,
+        },
         "auth": ["jwt", "api-key", "org-id-header"],
+        "features": {
+            "otlp_proto": proto_enabled,
+            "grpc": grpc_enabled,
+            "histogram_metrics": true,
+            "exp_histogram_metrics": true,
+            "summary_metrics": true,
+            "span_events": true,
+            "span_links": true,
+            "receiver_sampling": true,
+            "dead_letter_queue": true,
+            "quota_enforcement": true,
+        },
         "security": {
             "auth_required": true,
             "tls_enabled": false,
@@ -383,39 +452,74 @@ pub async fn sdk_snippets(
     let language = params.language.unwrap_or_else(|| "java".into());
     let framework = params.framework.unwrap_or_else(|| "spring-boot".into());
 
+    // O21: Use correct reachable endpoint (port 5010 for Docker/nginx, 5006 for direct)
+    let host = params.host.unwrap_or_else(|| "localhost".into());
+    let port = params.port.unwrap_or(5006);
+    let base_url = format!("http://{}:{}", host, port);
+
     let snippet = match (language.as_str(), framework.as_str()) {
         ("java", "spring-boot") => json!({
             "language": "java",
             "framework": "spring-boot",
             "install": "Download opentelemetry-javaagent.jar from GitHub releases",
-            "command": "java -javaagent:opentelemetry-javaagent.jar \\\n  -Dotel.exporter.otlp.endpoint=http://localhost:3001 \\\n  -Dotel.exporter.otlp.protocol=http/json \\\n  -Dotel.service.name=my-service \\\n  -jar my-app.jar",
-            "env_vars": {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:3001", "OTEL_SERVICE_NAME": "my-service"},
+            "command": format!("java -javaagent:opentelemetry-javaagent.jar \\\n  -Dotel.exporter.otlp.endpoint={} \\\n  -Dotel.exporter.otlp.protocol=http/json \\\n  -Dotel.exporter.otlp.headers=Authorization=Bearer\\ isok_YOUR_API_KEY \\\n  -Dotel.service.name=my-service \\\n  -jar my-app.jar", base_url),
+            "env_vars": {
+                "OTEL_EXPORTER_OTLP_ENDPOINT": base_url,
+                "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
+                "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer isok_YOUR_API_KEY",
+                "OTEL_SERVICE_NAME": "my-service",
+            },
         }),
         ("python", _) => json!({
             "language": "python",
             "install": "pip install opentelemetry-distro opentelemetry-exporter-otlp",
             "command": "opentelemetry-instrument --service_name my-service python app.py",
-            "env_vars": {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:3001", "OTEL_SERVICE_NAME": "my-service"},
+            "env_vars": {
+                "OTEL_EXPORTER_OTLP_ENDPOINT": base_url,
+                "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
+                "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer isok_YOUR_API_KEY",
+                "OTEL_SERVICE_NAME": "my-service",
+            },
         }),
         ("go", _) => json!({
             "language": "go",
             "install": "go get go.opentelemetry.io/otel\ngo get go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp",
-            "env_vars": {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:3001", "OTEL_SERVICE_NAME": "my-service"},
+            "env_vars": {
+                "OTEL_EXPORTER_OTLP_ENDPOINT": base_url,
+                "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
+                "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer isok_YOUR_API_KEY",
+                "OTEL_SERVICE_NAME": "my-service",
+            },
         }),
         ("node" | "nodejs", _) => json!({
             "language": "nodejs",
             "install": "npm install @opentelemetry/sdk-node @opentelemetry/auto-instrumentations-node @opentelemetry/exporter-trace-otlp-http",
-            "env_vars": {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:3001", "OTEL_SERVICE_NAME": "my-service"},
+            "env_vars": {
+                "OTEL_EXPORTER_OTLP_ENDPOINT": base_url,
+                "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
+                "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer isok_YOUR_API_KEY",
+                "OTEL_SERVICE_NAME": "my-service",
+            },
         }),
         ("dotnet" | ".net", _) => json!({
             "language": "dotnet",
             "install": "dotnet add package OpenTelemetry.Extensions.Hosting\ndotnet add package OpenTelemetry.Exporter.OpenTelemetryProtocol",
-            "env_vars": {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:3001", "OTEL_SERVICE_NAME": "my-service"},
+            "env_vars": {
+                "OTEL_EXPORTER_OTLP_ENDPOINT": base_url,
+                "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
+                "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer isok_YOUR_API_KEY",
+                "OTEL_SERVICE_NAME": "my-service",
+            },
         }),
         ("rust", _) => json!({
             "language": "rust",
             "install": "cargo add opentelemetry opentelemetry-otlp tracing-opentelemetry",
-            "env_vars": {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:3001", "OTEL_SERVICE_NAME": "my-service"},
+            "env_vars": {
+                "OTEL_EXPORTER_OTLP_ENDPOINT": base_url,
+                "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",
+                "OTEL_EXPORTER_OTLP_HEADERS": "Authorization=Bearer isok_YOUR_API_KEY",
+                "OTEL_SERVICE_NAME": "my-service",
+            },
         }),
         _ => json!({"error": "Unsupported language/framework combination"}),
     };
@@ -435,13 +539,15 @@ pub async fn otel_attributes(
 ) -> Result<Json<Value>, ApiError> {
     let signal = params.signal.unwrap_or_else(|| "traces".into());
 
+    // O13: All attribute reads are org-scoped
     let keys = match signal.as_str() {
         "traces" => {
             sqlx::query_as::<_, AttrKeyRow>(
                 r#"SELECT key, COUNT(*) AS count
-                   FROM (SELECT jsonb_object_keys(tags) AS key FROM traces WHERE started_at > NOW() - INTERVAL '24 hours' LIMIT 10000) sub
+                   FROM (SELECT jsonb_object_keys(tags) AS key FROM traces WHERE org_id = $1 AND started_at > NOW() - INTERVAL '24 hours' LIMIT 10000) sub
                    GROUP BY key ORDER BY count DESC LIMIT 100"#
             )
+            .bind(org_id)
             .fetch_all(&state.tsdb_pool)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -460,17 +566,20 @@ pub async fn otel_attributes(
 /// GET /api/otel/attribute-values?key=&limit= — values for an attribute
 pub async fn otel_attribute_values(
     State(state): State<AppState>,
-    OrgId(_org_id): OrgId,
+    OrgId(org_id): OrgId,
     Query(params): Query<OtelAttributeValuesQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    let limit = params.limit.unwrap_or(50);
+    let limit = params.limit.unwrap_or(50).min(500) as i64;
 
+    // O07: Use bound parameters to prevent SQL injection — never interpolate user input
     let values = sqlx::query_scalar::<_, String>(
-        &format!(
-            "SELECT DISTINCT tags->>'{}' AS val FROM traces WHERE tags ? '{}' AND started_at > NOW() - INTERVAL '24 hours' ORDER BY val LIMIT {}",
-            params.key, params.key, limit
-        )
+        "SELECT DISTINCT tags->>$1 AS val FROM traces \
+         WHERE org_id = $2 AND tags ? $1 AND started_at > NOW() - INTERVAL '24 hours' \
+         AND tags->>$1 IS NOT NULL ORDER BY val LIMIT $3"
     )
+    .bind(&params.key)
+    .bind(org_id)
+    .bind(limit)
     .fetch_all(&state.tsdb_pool)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -748,10 +857,10 @@ pub async fn otel_stats_timeseries(
 // OTel P13: Collector Pipeline Topology
 // ============================================================================
 
-/// GET /api/otel/pipeline — Collector topology
+/// GET /api/otel/pipeline — Collector topology (O11: real edges, O13: org-scoped)
 pub async fn otel_pipeline(
     State(state): State<AppState>,
-    OrgId(_org_id): OrgId,
+    OrgId(org_id): OrgId,
 ) -> Result<Json<Value>, ApiError> {
     // Identify collectors by resource service.name containing "otelcol"
     let collectors = sqlx::query_as::<_, CollectorRow>(
@@ -759,10 +868,12 @@ pub async fn otel_pipeline(
                   MAX(started_at) AS last_seen,
                   COUNT(*) AS signals_forwarded
            FROM traces
-           WHERE service_name LIKE '%otelcol%' OR service_name LIKE '%collector%'
+           WHERE org_id = $1
+             AND (service_name LIKE '%otelcol%' OR service_name LIKE '%collector%')
              AND started_at > NOW() - INTERVAL '24 hours'
            GROUP BY service_name"#
     )
+    .bind(org_id)
     .fetch_all(&state.tsdb_pool)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -773,9 +884,40 @@ pub async fn otel_pipeline(
         "signals_forwarded": c.signals_forwarded,
     })).collect();
 
+    // O11: Produce real pipeline edges from parent→child span relationships
+    let edges = sqlx::query(
+        r#"SELECT DISTINCT
+              p.service_name AS source,
+              c.service_name AS target,
+              COUNT(*) AS call_count
+           FROM traces c
+           JOIN traces p ON c.parent_span_id = p.span_id
+              AND c.trace_id = p.trace_id
+              AND p.started_at > NOW() - INTERVAL '24 hours'
+           WHERE c.org_id = $1
+             AND c.started_at > NOW() - INTERVAL '24 hours'
+             AND c.service_name IS DISTINCT FROM p.service_name
+           GROUP BY p.service_name, c.service_name
+           ORDER BY call_count DESC
+           LIMIT 100"#
+    )
+    .bind(org_id)
+    .fetch_all(&state.tsdb_pool)
+    .await
+    .unwrap_or_default();
+
+    let flow: Vec<Value> = edges.iter().map(|r| {
+        use sqlx::Row;
+        json!({
+            "source": r.get::<String, _>("source"),
+            "target": r.get::<String, _>("target"),
+            "call_count": r.get::<i64, _>("call_count"),
+        })
+    }).collect();
+
     Ok(Json(json!({
         "collectors": collector_list,
-        "flow": [],
+        "flow": flow,
     })))
 }
 
@@ -948,6 +1090,7 @@ pub async fn otel_alert_rules_create(
 }
 
 /// Internal logic for alert rule evaluation, shared between API and background worker.
+/// O06: Evaluates user-defined rules from the otel_alert_rules table.
 pub async fn evaluate_alert_rules_internal(
     state: &crate::state::AppState,
     org_id: uuid::Uuid,
@@ -966,22 +1109,90 @@ pub async fn evaluate_alert_rules_internal(
     .await
     .map_err(|e| e.to_string())?;
 
-    let (total, errors, _avg_ms, p99_ms) = match stats {
+    let (total, errors, avg_ms, p99_ms) = match stats {
         Some(s) => (s.total, s.errors, s.avg_ms.unwrap_or(0.0), s.p99_ms.unwrap_or(0.0)),
         None => (0i64, 0i64, 0.0, 0.0),
     };
     let error_rate = if total > 0 { (errors as f64 / total as f64) * 100.0 } else { 0.0 };
 
-    let evals = vec![
-        json!({ "rule": "High Error Rate", "metric": "error_rate_percent", "current": (error_rate * 100.0).round() / 100.0, "threshold": 5.0, "status": if error_rate > 5.0 { "FIRING" } else { "OK" } }),
-        json!({ "rule": "Very High Error Rate", "metric": "error_rate_percent", "current": (error_rate * 100.0).round() / 100.0, "threshold": 15.0, "status": if error_rate > 15.0 { "FIRING" } else { "OK" } }),
-        json!({ "rule": "High P99 Latency", "metric": "p99_ms", "current": p99_ms, "threshold": 5000.0, "status": if p99_ms > 5000.0 { "FIRING" } else { "OK" } }),
-        json!({ "rule": "Low Throughput", "metric": "request_count", "current": total, "threshold": 1.0, "status": if (total as f64) < 1.0 { "FIRING" } else { "OK" } }),
-    ];
+    // O06: Fetch user-defined rules from otel_alert_rules table
+    let user_rules = sqlx::query(
+        "SELECT id, name, signal, metric, condition, threshold, window_seconds, severity, enabled \
+         FROM otel_alert_rules WHERE org_id = $1 AND enabled = true"
+    )
+    .bind(org_id)
+    .fetch_all(&state.tsdb_pool)
+    .await
+    .map_err(|e| e.to_string())?;
 
-    // In a real implementation, we would check against defined rules in `otel_alert_rules` table.
-    // For now, these are the built-in evaluations.
-    
+    let mut evals = Vec::new();
+
+    // Evaluate each user-defined rule
+    for rule in &user_rules {
+        use sqlx::Row;
+        let rule_name: String = rule.get("name");
+        let metric_name: String = rule.get("metric");
+        let condition: String = rule.get("condition");
+        let threshold: f64 = rule.get("threshold");
+        let severity: String = rule.get("severity");
+        let window_secs: i32 = rule.get("window_seconds");
+
+        // Resolve current value for known metrics
+        let current_value = match metric_name.as_str() {
+            "error_rate_percent" | "error_rate" => error_rate,
+            "p99_ms" | "p99_latency_ms" => p99_ms,
+            "avg_ms" | "avg_latency_ms" => avg_ms,
+            "request_count" | "throughput" => total as f64,
+            "error_count" => errors as f64,
+            _ => {
+                // For custom metric names, query the metrics table
+                let mval = sqlx::query_scalar::<_, Option<f64>>(
+                    &format!(
+                        "SELECT AVG(value) FROM metrics WHERE org_id = $1 AND metric_name = $2 \
+                         AND timestamp > NOW() - INTERVAL '{} seconds'",
+                        window_secs
+                    )
+                )
+                .bind(org_id)
+                .bind(&metric_name)
+                .fetch_one(&state.tsdb_pool)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or(0.0);
+                mval
+            }
+        };
+
+        let firing = match condition.as_str() {
+            ">" | "gt" => current_value > threshold,
+            "<" | "lt" => current_value < threshold,
+            ">=" | "gte" => current_value >= threshold,
+            "<=" | "lte" => current_value <= threshold,
+            "==" | "eq" => (current_value - threshold).abs() < f64::EPSILON,
+            "!=" | "ne" => (current_value - threshold).abs() >= f64::EPSILON,
+            _ => current_value > threshold,
+        };
+
+        evals.push(json!({
+            "rule": rule_name,
+            "metric": metric_name,
+            "condition": condition,
+            "current": (current_value * 100.0).round() / 100.0,
+            "threshold": threshold,
+            "severity": severity,
+            "status": if firing { "FIRING" } else { "OK" },
+        }));
+    }
+
+    // If no user-defined rules exist, provide built-in defaults
+    if evals.is_empty() {
+        evals = vec![
+            json!({ "rule": "High Error Rate (default)", "metric": "error_rate_percent", "current": (error_rate * 100.0).round() / 100.0, "threshold": 5.0, "status": if error_rate > 5.0 { "FIRING" } else { "OK" } }),
+            json!({ "rule": "High P99 Latency (default)", "metric": "p99_ms", "current": p99_ms, "threshold": 5000.0, "status": if p99_ms > 5000.0 { "FIRING" } else { "OK" } }),
+        ];
+    }
+
     Ok(evals)
 }
 
@@ -1273,6 +1484,116 @@ struct SpanMetricRow {
     p95_ms: Option<f64>,
     p99_ms: Option<f64>,
 }
+
+// ============================================================================
+// O14: Single-Trace Waterfall Endpoint
+// ============================================================================
+
+/// GET /api/otel/traces/:trace_id — full waterfall for a single trace
+pub async fn otel_trace_detail(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    Path(trace_id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let spans = sqlx::query(
+        r#"SELECT span_id, parent_span_id, operation_name, service_name,
+                  started_at, duration_us, status, tags
+           FROM traces
+           WHERE org_id = $1 AND trace_id = $2
+           ORDER BY started_at ASC"#
+    )
+    .bind(org_id)
+    .bind(&trace_id)
+    .fetch_all(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let span_list: Vec<Value> = spans.iter().map(|r| {
+        use sqlx::Row;
+        json!({
+            "span_id": r.get::<String, _>("span_id"),
+            "parent_span_id": r.get::<Option<String>, _>("parent_span_id"),
+            "operation_name": r.get::<String, _>("operation_name"),
+            "service_name": r.get::<String, _>("service_name"),
+            "started_at": r.get::<DateTime<Utc>, _>("started_at"),
+            "duration_us": r.get::<i64, _>("duration_us"),
+            "status": r.get::<String, _>("status"),
+            "tags": r.get::<Value, _>("tags"),
+        })
+    }).collect();
+
+    // O14: Also fetch span events for this trace
+    let events = sqlx::query(
+        "SELECT span_id, event_name, timestamp, attributes FROM span_events WHERE trace_id = $1 ORDER BY timestamp"
+    )
+    .bind(&trace_id)
+    .fetch_all(&state.tsdb_pool)
+    .await
+    .unwrap_or_default();
+
+    let event_list: Vec<Value> = events.iter().map(|r| {
+        use sqlx::Row;
+        json!({
+            "span_id": r.get::<String, _>("span_id"),
+            "event_name": r.get::<String, _>("event_name"),
+            "timestamp": r.get::<DateTime<Utc>, _>("timestamp"),
+            "attributes": r.get::<Value, _>("attributes"),
+        })
+    }).collect();
+
+    Ok(Json(json!({
+        "trace_id": trace_id,
+        "span_count": span_list.len(),
+        "spans": span_list,
+        "events": event_list,
+    })))
+}
+
+// ============================================================================
+// O18: Correlate Logs with Traces
+// ============================================================================
+
+/// GET /api/otel/logs-by-trace/:trace_id — logs correlated with a trace
+pub async fn otel_logs_by_trace(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    Path(trace_id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let logs = sqlx::query(
+        r#"SELECT timestamp, source, level, message, metadata
+           FROM logs
+           WHERE org_id = $1
+             AND (metadata->>'trace_id' = $2 OR metadata->>'traceId' = $2)
+           ORDER BY timestamp ASC
+           LIMIT 500"#
+    )
+    .bind(org_id)
+    .bind(&trace_id)
+    .fetch_all(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let log_list: Vec<Value> = logs.iter().map(|r| {
+        use sqlx::Row;
+        json!({
+            "timestamp": r.get::<DateTime<Utc>, _>("timestamp"),
+            "source": r.get::<String, _>("source"),
+            "level": r.get::<String, _>("level"),
+            "message": r.get::<String, _>("message"),
+            "metadata": r.get::<Value, _>("metadata"),
+        })
+    }).collect();
+
+    Ok(Json(json!({
+        "trace_id": trace_id,
+        "log_count": log_list.len(),
+        "logs": log_list,
+    })))
+}
+
+// ============================================================================
+// Row structs
+// ============================================================================
 
 #[derive(sqlx::FromRow)]
 #[allow(dead_code)]

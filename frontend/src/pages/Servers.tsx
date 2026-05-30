@@ -8,9 +8,9 @@ import DrilldownModal, { type DrilldownNode } from '@/components/DrilldownModal'
 import { Cpu, MemoryStick, HardDrive, Loader2, X, AlertTriangle, KeyRound, CheckCircle, XCircle, Trash2, ChevronRight, Database } from 'lucide-react'
 import { useState, useCallback, useMemo, useEffect } from 'react'
 
-// Stable sparkline from a base value using deterministic sine wave (no random)
+// M10: Flat sparkline from live value — no synthetic Math.sin generation
 const spark = (base: number, len = 20) =>
-  Array.from({ length: len }, (_, i) => Math.max(0, Math.min(100, base + Math.sin(base * 0.1 + i * 0.5) * (base * 0.05))))
+  Array.from({ length: len }, () => Math.max(0, Math.min(100, base)))
 
 interface ServerView {
   target_id: string

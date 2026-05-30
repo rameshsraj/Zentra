@@ -371,6 +371,8 @@ pub async fn tempo_trace(
 // OTLP Ingest
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// O19: Consolidated trace ingest — converts custom format to OTLP and enqueues
+/// via the shared ingest pipeline so all traces go through one path.
 pub async fn ingest_traces(
     State(state): State<AppState>,
     OrgId(org_id): OrgId,
@@ -378,44 +380,54 @@ pub async fn ingest_traces(
 ) -> Result<Json<Value>, ApiError> {
     let mut count = 0;
 
-    if let Some(spans) = req.spans {
-        for s in spans {
-            let start = s.start_time_unix_nano
-                .and_then(|ns| DateTime::from_timestamp_nanos(ns).into())
-                .unwrap_or_else(Utc::now);
-                
-            let duration_us = s.duration_us.unwrap_or(0);
-            let end = start + chrono::Duration::microseconds(duration_us);
+    if let Some(spans) = &req.spans {
+        // Convert custom format to OTLP-compatible resourceSpans
+        let otlp_spans: Vec<Value> = spans.iter().map(|s| {
+            let start_ns = s.start_time_unix_nano.unwrap_or(0);
+            let dur_us = s.duration_us.unwrap_or(0);
+            let end_ns = start_ns + dur_us * 1000;
+            json!({
+                "traceId": s.trace_id,
+                "spanId": s.span_id,
+                "parentSpanId": s.parent_span_id,
+                "name": s.operation_name,
+                "startTimeUnixNano": start_ns.to_string(),
+                "endTimeUnixNano": end_ns.to_string(),
+                "status": { "code": if s.status.as_deref() == Some("error") { 2 } else { 0 } },
+                "attributes": s.tags.as_ref().map(|t| t.iter().map(|(k, v)| json!({"key": k, "value": {"stringValue": v}})).collect::<Vec<_>>()).unwrap_or_default(),
+            })
+        }).collect();
 
-            sqlx::query(
-                r#"INSERT INTO traces (org_id, trace_id, span_id, parent_span_id, operation_name, service_name, 
-                                     started_at, ended_at, duration_us, status, tags, events)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                   ON CONFLICT DO NOTHING"#
-            )
-            .bind(org_id)
-            .bind(&s.trace_id)
-            .bind(&s.span_id)
-            .bind(&s.parent_span_id)
-            .bind(&s.operation_name)
-            .bind(&s.service_name)
-            .bind(start)
-            .bind(end)
-            .bind(duration_us)
-            .bind(s.status.unwrap_or_else(|| "OK".into()))
-            .bind(serde_json::to_value(&s.tags).unwrap_or(json!({})))
-            .bind(json!([]))
-            .execute(&state.tsdb_pool)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
-            
-            count += 1;
+        let svc_name = spans.first().map(|s| s.service_name.clone()).unwrap_or_else(|| "unknown".into());
+
+        let payload = json!({
+            "resourceSpans": [{
+                "resource": {
+                    "attributes": [{"key": "service.name", "value": {"stringValue": svc_name}}]
+                },
+                "scopeSpans": [{
+                    "spans": otlp_spans
+                }]
+            }]
+        });
+
+        count = spans.len();
+
+        // Enqueue via shared ingest pipeline
+        if let Some(ref queue) = state.ingest_queue {
+            let batch = crate::ingest_queue::IngestBatch {
+                org_id,
+                signal: crate::ingest_queue::Signal::Traces,
+                payload,
+                raw_bytes: vec![],
+            };
+            if queue.try_send(batch).is_err() {
+                return Err(ApiError::ServiceUnavailable("Ingest queue full, try again later".into()));
+            }
         }
     }
 
     Ok(Json(json!({
-        "status": "success",
-        "spans_ingested": count,
-        "timestamp": Utc::now().to_rfc3339()
+        "partialSuccess": null,
     })))
 }

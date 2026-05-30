@@ -7,8 +7,9 @@ import PageHeader from '@/components/PageHeader'
 import AddTargetModal from '@/components/AddTargetModal'
 import { HardDrive } from 'lucide-react'
 
+// M10: Flat sparkline from live value — no synthetic Math.sin generation
 const spark = (base: number, _v?: number, len = 20) =>
-  Array.from({ length: len }, (_, i) => Math.max(0, base + Math.sin(base * 0.1 + i * 0.5) * (base * 0.08)))
+  Array.from({ length: len }, () => Math.max(0, base))
 
 type SortField = 'name' | 'capacity' | 'used' | 'iops' | 'latency'
 

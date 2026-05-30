@@ -24,57 +24,6 @@ interface RCAResult {
   analyzed_at: string
 }
 
-const mockHistory: RCAResult[] = [
-  {
-    id: 'rca-1', source: '/var/log/nginx/error.log', total_errors: 42, unique_errors: 8,
-    analyzed_at: new Date(Date.now() - 3600000).toISOString(),
-    errors: [
-      {
-        message: 'upstream timed out (110: Connection timed out) while connecting to upstream',
-        count: 18, severity: 'critical', pattern: 'Upstream Timeout',
-        solutions: [
-          { title: 'Increase proxy_read_timeout', description: 'Set proxy_read_timeout to 120s in nginx.conf upstream block', source: 'Stack Overflow', url: 'https://stackoverflow.com/q/18740635', confidence: 0.92 },
-          { title: 'Check backend health', description: 'Verify the upstream backend server is responsive and not overloaded', source: 'Nginx Docs', url: 'https://nginx.org/en/docs/http/ngx_http_upstream_module.html', confidence: 0.88 },
-        ],
-      },
-      {
-        message: 'SSL_do_handshake() failed (SSL: error:14094438)',
-        count: 7, severity: 'error', pattern: 'SSL Handshake Failure',
-        solutions: [
-          { title: 'Update SSL certificate chain', description: 'Ensure the full certificate chain is included in ssl_certificate directive', source: 'Documentation', url: 'https://nginx.org/en/docs/http/configuring_https_servers.html', confidence: 0.95 },
-        ],
-      },
-      {
-        message: 'client intended to send too large body: 10485760 bytes',
-        count: 12, severity: 'warning', pattern: 'Request Body Too Large',
-        solutions: [
-          { title: 'Increase client_max_body_size', description: 'Set client_max_body_size 50m; in the server or location block', source: 'Stack Overflow', url: 'https://stackoverflow.com/q/2056124', confidence: 0.97 },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'rca-2', source: '/u01/app/oracle/diag/rdbms/orcl/ORCL/trace/alert_ORCL.log', total_errors: 15, unique_errors: 4,
-    analyzed_at: new Date(Date.now() - 7200000).toISOString(),
-    errors: [
-      {
-        message: 'ORA-04031: unable to allocate shared memory',
-        count: 8, severity: 'critical', pattern: 'Shared Pool Exhaustion',
-        solutions: [
-          { title: 'Increase SHARED_POOL_SIZE', description: 'Increase SHARED_POOL_SIZE in init.ora or use ALTER SYSTEM SET SHARED_POOL_SIZE. Consider using ASMM or AMM for automatic memory management.', source: 'Oracle Docs', url: 'https://docs.oracle.com/en/database/oracle/oracle-database/19/refrn/SHARED_POOL_SIZE.html', confidence: 0.90 },
-          { title: 'Enable Automatic Memory Management', description: 'Set MEMORY_TARGET and MEMORY_MAX_TARGET to let Oracle automatically manage SGA and PGA allocations', source: 'Oracle Docs', url: 'https://docs.oracle.com/en/database/oracle/oracle-database/19/admin/managing-memory.html', confidence: 0.85 },
-        ],
-      },
-      {
-        message: 'ORA-00060: deadlock detected while waiting for resource',
-        count: 3, severity: 'error', pattern: 'Deadlock',
-        solutions: [
-          { title: 'Review transaction ordering', description: 'Ensure all transactions acquire locks in consistent order to prevent deadlocks. Check V$LOCK and V$SESSION for blocking sessions.', source: 'Oracle Support', url: 'https://docs.oracle.com/en/database/oracle/oracle-database/19/tgsql/monitoring-locks.html', confidence: 0.78 },
-        ],
-      },
-    ],
-  },
-]
 
 const sevColor = (s: string) => {
   switch (s) {
@@ -91,7 +40,7 @@ export default function RCAPage() {
   const [remoteHost, setRemoteHost] = useState('')
   const [remotePath, setRemotePath] = useState('')
   const [isAnalyzing, setIsAnalyzing] = useState(false)
-  const [results, setResults] = useState<RCAResult[]>(mockHistory)
+  const [results, setResults] = useState<RCAResult[]>([])
   const [selectedResult, setSelectedResult] = useState<RCAResult | null>(null)
   const [selectedError, setSelectedError] = useState<RCAError | null>(null)
   const [search, setSearch] = useState('')

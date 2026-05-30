@@ -77,8 +77,8 @@ pub async fn scan_file(
     Json(req): Json<ScanRequest>,
 ) -> impl IntoResponse {
     let id = Uuid::new_v4();
-    // In production, this would trigger actual YARA scanning + VT lookup
-    let verdict = "clean"; // placeholder
+    // No scan engine configured yet — report honestly as unscanned
+    let verdict = "unscanned";
     let r = sqlx::query(
         "INSERT INTO file_scans (id, org_id, filename, file_size, mime_type, md5, sha1, sha256, verdict, source) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"

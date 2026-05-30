@@ -96,7 +96,9 @@ pub async fn llm_overview(
         "error_count": row.error_count,
         "error_rate": row.error_rate,
         "total_cost": estimated_cost,
-        "models": 0, // Placeholder or query count(distinct model)
+        "models": sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(DISTINCT model) FROM llm_requests WHERE org_id = $1"
+        ).bind(org_id).fetch_one(&state.pool).await.unwrap_or(0),
     })))
 }
 

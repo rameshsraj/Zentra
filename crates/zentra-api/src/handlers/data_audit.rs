@@ -25,7 +25,7 @@ pub async fn data_source_audit(State(_s): State<AppState>) -> Json<Value> {
         audit_entry("Security: Hunting", "/api/security/hunt/queries", "live", "In-memory hunt queries"),
         audit_entry("Security: IOC", "/api/security/ioc/indicators", "live", "In-memory IOC database"),
         audit_entry("Security: Firewall", "/api/security/firewall/rules", "live", "In-memory firewall rules"),
-        audit_entry("Security: Files", "/api/security/files/scans", "live", "In-memory file scan results"),
+        audit_entry("Security: Files", "/api/security/files/scans", "partial", "File scan verdict is 'unscanned' — no YARA/VT engine configured"),
         audit_entry("Oracle: Overview", "/api/oracle/overview", "live", "SSH + in-memory fallback"),
         audit_entry("Oracle: Connections", "/api/oracle/connections", "live", "In-memory connection pool"),
         audit_entry("Oracle: Metrics", "/api/oracle/metrics", "live", "In-memory + TOML defaults"),
@@ -39,13 +39,21 @@ pub async fn data_source_audit(State(_s): State<AppState>) -> Json<Value> {
         audit_entry("Storage", "/api/storage/overview", "live", "In-memory storage metrics"),
         audit_entry("Dashboards", "/api/dashboards", "live", "DB-backed dashboards"),
         audit_entry("Alerts", "/api/alerts", "live", "Alert engine + DB rules"),
+        audit_entry("Alert Rules", "/api/alert-rules", "live", "DB-backed alert rules via React Query"),
+        audit_entry("Notification Channels", "/api/notifications/channels", "live", "DB-backed channels via React Query"),
         audit_entry("Health Checks", "/api/health-checks", "live", "Scheduler + DB checks"),
         audit_entry("Middleware: All", "/api/middleware/*", "live", "In-memory metrics per service"),
         audit_entry("Logs", "/api/logs", "live", "Log ingestion engine"),
-        audit_entry("AI Insights", "/api/ai/insights", "live", "ML engine predictions"),
+        audit_entry("Log Sources", "/api/log-sources", "live", "DB-backed log sources via React Query"),
+        audit_entry("AI Insights", "/api/ai/insights", "live", "Fetched via React Query — empty state on fresh DB"),
+        audit_entry("RCA", "/api/rca/analyze", "live", "Session-only history, starts empty"),
         audit_entry("Discovery", "/api/discovery/rules", "live", "In-memory discovery rules"),
         audit_entry("Templates", "/api/templates", "live", "In-memory 50+ templates"),
         audit_entry("Deployment", "/api/deployment/history", "live", "In-memory deployment records"),
+        audit_entry("OTel: Dashboard", "/api/otel/stats", "live", "Live telemetry stats"),
+        audit_entry("OTel: Traces", "/api/otel/traces", "live", "DB-backed traces from OTLP ingest"),
+        audit_entry("OTel: Metrics", "/api/otel/stats", "live", "DB-backed metrics from OTLP ingest"),
+        audit_entry("OTel: Security", "/api/otel/api-keys", "live", "DB-backed API key management"),
     ];
 
     let total = modules.len();
@@ -72,10 +80,19 @@ fn audit_entry(module: &str, endpoint: &str, status: &str, note: &str) -> Value 
 
 /// GET /api/audit/mock-data — check for any remaining mock data patterns
 pub async fn mock_data_check(State(_s): State<AppState>) -> Json<Value> {
+    // Remaining partial items:
+    // - file_analysis verdict is "unscanned" (no real scan engine) — not mock, but partial
+    let partial_count = 1; // file scan verdict
+    let status = if partial_count == 0 { "clean" } else { "partial" };
+
     Json(json!({
-        "status": "clean",
+        "status": status,
         "mock_patterns_found": 0,
-        "note": "All in-memory stores initialize empty. Data is created via API or collected from live infrastructure. DB-backed entities persist across restarts.",
+        "partial_modules": partial_count,
+        "details": [
+            {"module": "file_analysis", "issue": "verdict is 'unscanned' — no YARA/VT engine configured", "severity": "low"},
+        ],
+        "note": "No frontend mock/hardcoded data remains. All pages use React Query with live API calls. Empty DB shows empty states. File scan verdict reports honestly as 'unscanned'.",
         "non_persistent_stores": [
             "healthchecks (in-memory, create via API)",
             "monitoring_templates (in-memory, built-in defaults + API)",
@@ -95,6 +112,9 @@ pub async fn mock_data_check(State(_s): State<AppState>) -> Json<Value> {
             "logs (PostgreSQL/TimescaleDB)",
             "dashboards (PostgreSQL)",
             "alerts (PostgreSQL)",
+            "alert_rules (PostgreSQL)",
+            "notification_channels (PostgreSQL)",
+            "log_sources (PostgreSQL)",
             "api_tokens (PostgreSQL)",
             "otlp_api_keys (PostgreSQL)",
             "audit_log (PostgreSQL)",

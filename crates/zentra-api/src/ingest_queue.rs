@@ -279,6 +279,7 @@ async fn insert_traces_batch(pool: &PgPool, batch: &[IngestBatch]) -> Result<usi
     let mut count = 0usize;
 
     // Collect all rows, then do a single multi-row INSERT
+    let mut org_ids: Vec<uuid::Uuid> = Vec::new();
     let mut trace_ids = Vec::new();
     let mut span_ids = Vec::new();
     let mut parent_span_ids: Vec<Option<String>> = Vec::new();
@@ -365,6 +366,7 @@ async fn insert_traces_batch(pool: &PgPool, batch: &[IngestBatch]) -> Result<usi
                                     }
                                 }
 
+                                org_ids.push(item.org_id);
                                 trace_ids.push(tid);
                                 span_ids.push(sid);
                                 parent_span_ids.push(psid);
@@ -387,14 +389,15 @@ async fn insert_traces_batch(pool: &PgPool, batch: &[IngestBatch]) -> Result<usi
         return Ok(0);
     }
 
-    // Multi-row INSERT using UNNEST for efficiency
+    // Multi-row INSERT using UNNEST for efficiency — O02: includes org_id
     sqlx::query(
-        r#"INSERT INTO traces (trace_id, span_id, parent_span_id, operation_name, service_name,
+        r#"INSERT INTO traces (org_id, trace_id, span_id, parent_span_id, operation_name, service_name,
             started_at, duration_us, status, tags)
-           SELECT * FROM UNNEST($1::text[], $2::text[], $3::text[], $4::text[], $5::text[],
-            $6::timestamptz[], $7::bigint[], $8::text[], $9::jsonb[])
+           SELECT * FROM UNNEST($1::uuid[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[],
+            $7::timestamptz[], $8::bigint[], $9::text[], $10::jsonb[])
            ON CONFLICT DO NOTHING"#
     )
+    .bind(&org_ids)
     .bind(&trace_ids)
     .bind(&span_ids)
     .bind(&parent_span_ids)
@@ -462,28 +465,108 @@ async fn insert_metrics_batch(pool: &PgPool, batch: &[IngestBatch]) -> Result<us
                         if let Some(metrics) = sm.get("metrics").and_then(|v| v.as_array()) {
                             for metric in metrics {
                                 let name = metric.get("name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-                                let data_points = metric.get("gauge").and_then(|g| g.get("dataPoints"))
+
+                                // Helper closure to push a single data point
+                                let mut push_dp = |mname: String, val: f64, time_ns: i64, dp_attrs: &serde_json::Value| {
+                                    let time = DateTime::from_timestamp_nanos(time_ns);
+                                    let labels = otlp_attrs_to_map(dp_attrs);
+                                    org_ids.push(item.org_id);
+                                    metric_names.push(mname);
+                                    values.push(val);
+                                    times.push(time);
+                                    resource_ids.push(rid.clone());
+                                    labels_vals.push(labels);
+                                    count += 1;
+                                };
+
+                                let extract_time = |dp: &serde_json::Value| -> i64 {
+                                    dp.get("timeUnixNano")
+                                        .and_then(|v| v.as_str().and_then(|s| s.parse::<i64>().ok()).or_else(|| v.as_i64()))
+                                        .unwrap_or(0)
+                                };
+                                let extract_value = |dp: &serde_json::Value| -> f64 {
+                                    dp.get("asDouble").and_then(|v| v.as_f64())
+                                        .or_else(|| dp.get("asInt").and_then(|v| v.as_str().and_then(|s| s.parse().ok()).or_else(|| v.as_i64().map(|n| n as f64))))
+                                        .unwrap_or(0.0)
+                                };
+                                let empty_attrs = serde_json::json!([]);
+
+                                // Gauge & Sum data points
+                                let gauge_sum_dps = metric.get("gauge").and_then(|g| g.get("dataPoints"))
                                     .or_else(|| metric.get("sum").and_then(|s| s.get("dataPoints")))
                                     .and_then(|v| v.as_array());
-
-                                if let Some(dps) = data_points {
+                                if let Some(dps) = gauge_sum_dps {
                                     for dp in dps {
-                                        let value = dp.get("asDouble").and_then(|v| v.as_f64())
-                                            .or_else(|| dp.get("asInt").and_then(|v| v.as_str().and_then(|s| s.parse().ok()).or_else(|| v.as_i64().map(|n| n as f64))))
-                                            .unwrap_or(0.0);
-                                        let time_ns = dp.get("timeUnixNano")
-                                            .and_then(|v| v.as_str().and_then(|s| s.parse::<i64>().ok()).or_else(|| v.as_i64()))
-                                            .unwrap_or(0);
-                                        let time = DateTime::from_timestamp_nanos(time_ns);
-                                        let labels = otlp_attrs_to_map(&dp.get("attributes").cloned().unwrap_or(serde_json::json!([])));
+                                        let attrs = dp.get("attributes").cloned().unwrap_or(empty_attrs.clone());
+                                        push_dp(name.clone(), extract_value(dp), extract_time(dp), &attrs);
+                                    }
+                                }
 
-                                        org_ids.push(item.org_id);
-                                        metric_names.push(name.clone());
-                                        values.push(value);
-                                        times.push(time);
-                                        resource_ids.push(rid.clone());
-                                        labels_vals.push(labels);
-                                        count += 1;
+                                // O05: Histogram data points
+                                if let Some(hist) = metric.get("histogram").and_then(|h| h.get("dataPoints")).and_then(|v| v.as_array()) {
+                                    for dp in hist {
+                                        let tns = extract_time(dp);
+                                        let attrs = dp.get("attributes").cloned().unwrap_or(empty_attrs.clone());
+                                        if let Some(c) = dp.get("count").and_then(|v| v.as_str().and_then(|s| s.parse::<f64>().ok()).or_else(|| v.as_u64().map(|n| n as f64))) {
+                                            push_dp(format!("{}_count", name), c, tns, &attrs);
+                                        }
+                                        if let Some(s) = dp.get("sum").and_then(|v| v.as_f64()) {
+                                            push_dp(format!("{}_sum", name), s, tns, &attrs);
+                                        }
+                                        if let Some(bounds) = dp.get("explicitBounds").and_then(|v| v.as_array()) {
+                                            if let Some(counts) = dp.get("bucketCounts").and_then(|v| v.as_array()) {
+                                                for (i, bc) in counts.iter().enumerate() {
+                                                    let le = if i < bounds.len() {
+                                                        bounds[i].as_f64().unwrap_or(f64::INFINITY)
+                                                    } else { f64::INFINITY };
+                                                    let bval = bc.as_str().and_then(|s| s.parse::<f64>().ok()).or_else(|| bc.as_u64().map(|n| n as f64)).unwrap_or(0.0);
+                                                    let mut bucket_attrs = attrs.clone();
+                                                    if let Some(arr) = bucket_attrs.as_array_mut() {
+                                                        arr.push(serde_json::json!({"key": "le", "value": {"stringValue": format!("{}", le)}}));
+                                                    }
+                                                    push_dp(format!("{}_bucket", name), bval, tns, &bucket_attrs);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // O05: Exponential histogram data points
+                                if let Some(ehist) = metric.get("exponentialHistogram").and_then(|h| h.get("dataPoints")).and_then(|v| v.as_array()) {
+                                    for dp in ehist {
+                                        let tns = extract_time(dp);
+                                        let attrs = dp.get("attributes").cloned().unwrap_or(empty_attrs.clone());
+                                        if let Some(c) = dp.get("count").and_then(|v| v.as_str().and_then(|s| s.parse::<f64>().ok()).or_else(|| v.as_u64().map(|n| n as f64))) {
+                                            push_dp(format!("{}_count", name), c, tns, &attrs);
+                                        }
+                                        if let Some(s) = dp.get("sum").and_then(|v| v.as_f64()) {
+                                            push_dp(format!("{}_sum", name), s, tns, &attrs);
+                                        }
+                                    }
+                                }
+
+                                // O05: Summary data points
+                                if let Some(summary) = metric.get("summary").and_then(|h| h.get("dataPoints")).and_then(|v| v.as_array()) {
+                                    for dp in summary {
+                                        let tns = extract_time(dp);
+                                        let attrs = dp.get("attributes").cloned().unwrap_or(empty_attrs.clone());
+                                        if let Some(c) = dp.get("count").and_then(|v| v.as_str().and_then(|s| s.parse::<f64>().ok()).or_else(|| v.as_u64().map(|n| n as f64))) {
+                                            push_dp(format!("{}_count", name), c, tns, &attrs);
+                                        }
+                                        if let Some(s) = dp.get("sum").and_then(|v| v.as_f64()) {
+                                            push_dp(format!("{}_sum", name), s, tns, &attrs);
+                                        }
+                                        if let Some(qvs) = dp.get("quantileValues").and_then(|v| v.as_array()) {
+                                            for qv in qvs {
+                                                let quantile = qv.get("quantile").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                                let qval = qv.get("value").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                                let mut q_attrs = attrs.clone();
+                                                if let Some(arr) = q_attrs.as_array_mut() {
+                                                    arr.push(serde_json::json!({"key": "quantile", "value": {"stringValue": format!("{}", quantile)}}));
+                                                }
+                                                push_dp(name.clone(), qval, tns, &q_attrs);
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -498,17 +581,30 @@ async fn insert_metrics_batch(pool: &PgPool, batch: &[IngestBatch]) -> Result<us
         return Ok(0);
     }
 
+    // O03: Fix column names to match real schema — timestamp (not time), tags (not labels)
+    // target_id/plugin_id/resource_type default to 'otlp' for OTLP-sourced metrics
+    let target_ids: Vec<Option<uuid::Uuid>> = vec![None; count];
+    let plugin_ids: Vec<String> = vec!["otlp".to_string(); count];
+    let resource_types: Vec<String> = vec!["otlp".to_string(); count];
+    let units: Vec<Option<String>> = vec![None; count];
+    let metadata_vals: Vec<serde_json::Value> = vec![serde_json::json!({}); count];
+
     sqlx::query(
-        "INSERT INTO metrics (org_id, metric_name, value, time, resource_id, labels) \
-         SELECT * FROM UNNEST($1::uuid[], $2::text[], $3::float8[], $4::timestamptz[], $5::text[], $6::jsonb[]) \
+        "INSERT INTO metrics (timestamp, org_id, target_id, plugin_id, resource_type, resource_id, metric_name, value, unit, tags, metadata) \
+         SELECT * FROM UNNEST($1::timestamptz[], $2::uuid[], $3::uuid[], $4::text[], $5::text[], $6::text[], $7::text[], $8::float8[], $9::text[], $10::jsonb[], $11::jsonb[]) \
          ON CONFLICT DO NOTHING"
     )
+    .bind(&times)
     .bind(&org_ids)
+    .bind(&target_ids)
+    .bind(&plugin_ids)
+    .bind(&resource_types)
+    .bind(&resource_ids)
     .bind(&metric_names)
     .bind(&values)
-    .bind(&times)
-    .bind(&resource_ids)
+    .bind(&units)
     .bind(&labels_vals)
+    .bind(&metadata_vals)
     .execute(pool)
     .await?;
 
@@ -545,7 +641,19 @@ async fn insert_logs_batch(pool: &PgPool, batch: &[IngestBatch]) -> Result<usize
                                     .and_then(|b| b.get("stringValue"))
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("").to_string();
-                                let attrs = otlp_attrs_to_map(&lr.get("attributes").cloned().unwrap_or(serde_json::json!([])));
+                                let mut attrs = otlp_attrs_to_map(&lr.get("attributes").cloned().unwrap_or(serde_json::json!([])));
+
+                                // O18: Extract trace context so logs can be correlated with traces
+                                if let Some(tid) = lr.get("traceId").and_then(|v| v.as_str()) {
+                                    if !tid.is_empty() {
+                                        attrs["trace_id"] = serde_json::Value::String(tid.to_string());
+                                    }
+                                }
+                                if let Some(sid) = lr.get("spanId").and_then(|v| v.as_str()) {
+                                    if !sid.is_empty() {
+                                        attrs["span_id"] = serde_json::Value::String(sid.to_string());
+                                    }
+                                }
 
                                 org_ids.push(item.org_id);
                                 timestamps.push(ts);
@@ -603,15 +711,85 @@ async fn insert_profiles_batch(pool: &PgPool, batch: &[IngestBatch]) -> Result<u
                         if let Some(profiles) = sp.get("profiles").and_then(|v| v.as_array()) {
                             for profile in profiles {
                                 let pid = profile.get("profileId").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                                let sc = profile.get("samples").and_then(|v| v.as_array()).map(|a| a.len() as i32).unwrap_or(0);
+                                let samples = profile.get("samples").and_then(|v| v.as_array());
+                                let sc = samples.map(|a| a.len() as i32).unwrap_or(0);
+
+                                // O09: Build flamegraph data from samples
+                                // Extract string_table, function_table, location_table, samples
+                                let string_table = profile.get("stringTable").and_then(|v| v.as_array());
+                                let function_table = profile.get("function").and_then(|v| v.as_array())
+                                    .or_else(|| profile.get("functionTable").and_then(|v| v.as_array()));
+                                let location_table = profile.get("location").and_then(|v| v.as_array())
+                                    .or_else(|| profile.get("locationTable").and_then(|v| v.as_array()));
+
+                                let get_string = |idx: i64| -> String {
+                                    string_table
+                                        .and_then(|st| st.get(idx as usize))
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("unknown")
+                                        .to_string()
+                                };
+
+                                let get_func_name = |func_idx: i64| -> String {
+                                    function_table
+                                        .and_then(|ft| ft.get(func_idx as usize))
+                                        .and_then(|f| f.get("name").and_then(|n| n.as_i64()))
+                                        .map(|name_idx| get_string(name_idx))
+                                        .unwrap_or_else(|| format!("func_{}", func_idx))
+                                };
+
+                                let mut flamegraph_frames: Vec<serde_json::Value> = Vec::new();
+                                if let Some(samps) = samples {
+                                    for sample in samps {
+                                        let location_indices = sample.get("locationIndex")
+                                            .or_else(|| sample.get("locationId"))
+                                            .and_then(|v| v.as_array());
+                                        let value = sample.get("value")
+                                            .and_then(|v| v.as_array())
+                                            .and_then(|a| a.first())
+                                            .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                                            .unwrap_or(1);
+
+                                        let mut stack: Vec<String> = Vec::new();
+                                        if let Some(locs) = location_indices {
+                                            for loc_ref in locs.iter().rev() {
+                                                let loc_idx = loc_ref.as_i64().unwrap_or(0);
+                                                let loc = location_table.and_then(|lt| lt.get(loc_idx as usize));
+                                                if let Some(l) = loc {
+                                                    let lines = l.get("line").and_then(|v| v.as_array());
+                                                    if let Some(ls) = lines {
+                                                        for line in ls {
+                                                            let func_idx = line.get("functionIndex")
+                                                                .or_else(|| line.get("functionId"))
+                                                                .and_then(|v| v.as_i64())
+                                                                .unwrap_or(0);
+                                                            stack.push(get_func_name(func_idx));
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        if !stack.is_empty() {
+                                            flamegraph_frames.push(serde_json::json!({
+                                                "stack": stack,
+                                                "value": value,
+                                            }));
+                                        }
+                                    }
+                                }
+
+                                let profile_attrs = otlp_attrs_to_map(
+                                    &profile.get("attributes").cloned().unwrap_or(serde_json::json!([]))
+                                );
 
                                 org_ids.push(item.org_id);
                                 profile_ids.push(pid);
                                 service_names.push(svc.clone());
                                 resource_attrs_vals.push(resource_attrs.clone());
                                 sample_counts.push(sc);
-                                flamegraph_vals.push(serde_json::json!([]));
-                                attrs_vals.push(serde_json::json!({}));
+                                flamegraph_vals.push(serde_json::json!(flamegraph_frames));
+                                attrs_vals.push(profile_attrs);
                                 count += 1;
                             }
                         }

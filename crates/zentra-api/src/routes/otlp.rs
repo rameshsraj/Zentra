@@ -51,4 +51,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/otel/api-keys", get(handlers::otlp::otel_api_keys_list).post(handlers::otlp::otel_api_keys_create))
         .route("/api/otel/api-keys/:id", delete(handlers::otlp::otel_api_keys_revoke))
         .route("/api/otel/ingest-audit", get(handlers::otlp::otel_ingest_audit))
+
+        // O14: Single-trace waterfall
+        .route("/api/otel/traces/:trace_id", get(handlers::otlp::otel_trace_detail))
+
+        // O18: Logs correlated with a trace
+        .route("/api/otel/logs-by-trace/:trace_id", get(handlers::otlp::otel_logs_by_trace))
 }

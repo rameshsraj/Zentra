@@ -57,6 +57,7 @@ opentelemetry-otlp = { workspace = true }
 opentelemetry-semantic-conventions = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 validator = { version = "0.18", features = ["derive"] }
+flate2 = "1"
 prost = { workspace = true, optional = true }
 prost-types = { workspace = true, optional = true }
 

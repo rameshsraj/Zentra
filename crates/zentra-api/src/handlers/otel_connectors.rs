@@ -47,32 +47,75 @@ fn parse_interval(w: &Option<String>) -> &str {
 // Handlers
 // ============================================================================
 
-/// GET /api/otel/connectors — list active connectors
-pub async fn list_connectors() -> Json<serde_json::Value> {
-    Json(json!({
-        "connectors": [
-            {
-                "type": "span-to-metrics",
-                "enabled": true,
-                "description": "Derives RED metrics (Rate, Error rate, Duration percentiles) from ingested trace traces",
-                "dimensions": ["http_method", "http_route", "db_system", "rpc_service"],
-                "interval_seconds": 60,
-                "metrics_generated": ["request_count", "error_count", "duration_p50", "duration_p95", "duration_p99"],
-            }
-        ],
-    }))
+/// GET /api/otel/connectors — list active connectors (O10: reads from DB)
+pub async fn list_connectors(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let rows = sqlx::query(
+        "SELECT connector_type, enabled, dimensions, interval_seconds, created_at \
+         FROM otel_connectors WHERE org_id = $1 ORDER BY created_at"
+    )
+    .bind(org_id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+
+    let mut connectors: Vec<serde_json::Value> = rows.iter().map(|r| {
+        use sqlx::Row;
+        json!({
+            "type": r.get::<String, _>("connector_type"),
+            "enabled": r.get::<bool, _>("enabled"),
+            "dimensions": r.get::<serde_json::Value, _>("dimensions"),
+            "interval_seconds": r.get::<i64, _>("interval_seconds"),
+        })
+    }).collect();
+
+    // If no connectors configured, show the built-in default (not persisted)
+    if connectors.is_empty() {
+        connectors.push(json!({
+            "type": "span-to-metrics",
+            "enabled": true,
+            "description": "Derives RED metrics from ingested traces (built-in default)",
+            "dimensions": ["http_method", "http_route", "db_system", "rpc_service"],
+            "interval_seconds": 60,
+            "metrics_generated": ["request_count", "error_count", "duration_p50", "duration_p95", "duration_p99"],
+            "persisted": false,
+        }));
+    }
+
+    Ok(Json(json!({ "connectors": connectors })))
 }
 
-/// POST /api/otel/connectors — enable/configure a connector
+/// POST /api/otel/connectors — enable/configure a connector (O10: persists to DB)
 pub async fn configure_connector(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
     Json(req): Json<ConnectorConfigRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    let dims = serde_json::to_value(req.dimensions.clone().unwrap_or_default()).unwrap_or(json!([]));
+    let interval = req.interval_seconds.unwrap_or(60);
+
+    sqlx::query(
+        "INSERT INTO otel_connectors (org_id, connector_type, enabled, dimensions, interval_seconds) \
+         VALUES ($1, $2, $3, $4, $5) \
+         ON CONFLICT (org_id, connector_type) DO UPDATE SET enabled = $3, dimensions = $4, interval_seconds = $5"
+    )
+    .bind(org_id)
+    .bind(&req.connector_type)
+    .bind(req.enabled)
+    .bind(&dims)
+    .bind(interval)
+    .execute(&state.pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
     Ok(Json(json!({
         "connector_type": req.connector_type,
         "enabled": req.enabled,
         "dimensions": req.dimensions.unwrap_or_default(),
-        "interval_seconds": req.interval_seconds.unwrap_or(60),
-        "status": "configured",
+        "interval_seconds": interval,
+        "status": "persisted",
     })))
 }
 

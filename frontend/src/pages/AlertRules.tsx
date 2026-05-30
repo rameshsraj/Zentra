@@ -1,18 +1,14 @@
 ﻿import { useState, useCallback, useEffect } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
-import Sparkline from '@/components/charts/Sparkline'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import PageHeader from '@/components/PageHeader'
-import { fetchJSON } from '@/lib/api'
+import { fetchJSON, getAlertRules } from '@/lib/api'
 import {
   Bell, Plus, Trash2, Play, Pause,
   Clock, Copy, ChevronDown, ChevronUp, Library, Shield,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-const spark = (base: number, _v?: number, len = 20) =>
-  Array.from({ length: len }, (_, i) => Math.max(0, base + Math.sin(base * 0.1 + i * 0.5) * (base * 0.05)))
-
-interface AlertRule {
+interface AlertRuleLocal {
   id: string
   name: string
   expr: string
@@ -42,8 +38,6 @@ const alertTemplates = [
   { name: 'High Swap Usage', expr: 'swap_usage_percent > 50', severity: 'info' as const, for_duration: '15m', group: 'Infrastructure' },
 ]
 
-const mockRules: AlertRule[] = []
-
 const sevColor = (s: string) =>
   s === 'critical' ? 'text-red-400 bg-red-500/10' : s === 'warning' ? 'text-amber-400 bg-amber-500/10' : 'text-blue-400 bg-blue-500/10'
 
@@ -59,7 +53,7 @@ export default function AlertRulesPage() {
   const [showCreate, setShowCreate] = useState(false)
   const handleRefresh = useCallback(() => qc.invalidateQueries({ queryKey: ['alerts'] }), [qc])
 
-  const liveRules = mockRules
+  const { data: liveRules = [] } = useQuery<AlertRuleLocal[]>({ queryKey: ['alert-rules'], queryFn: () => getAlertRules() as any })
   const liveTemplates = alertTemplates
   const groups = [...new Set(liveRules.map(r => r.group))]
   const firingCount = liveRules.filter(r => r.state === 'firing').length
@@ -82,20 +76,17 @@ export default function AlertRulesPage() {
       {/* KPI Strip */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         {[
-          { label: 'Total Rules', value: String(liveRules.length), color: 'text-blue-400', sub: `${enabledCount} enabled`, sparkData: spark(8, 2) },
-          { label: 'Firing', value: String(firingCount), color: 'text-red-400', sub: 'Active alerts', sparkData: spark(firingCount, 1) },
-          { label: 'Pending', value: String(pendingCount), color: 'text-amber-400', sub: 'Evaluating for duration', sparkData: spark(pendingCount, 1) },
-          { label: 'Groups', value: String(groups.length), color: 'text-purple-400', sub: 'Rule groups', sparkData: spark(groups.length, 1) },
-          { label: 'Templates', value: String(liveTemplates.length), color: 'text-cyan-400', sub: 'Available', sparkData: spark(10, 2) },
-          { label: 'Avg Eval Time', value: enabledCount ? `${Math.round(liveRules.filter(r => r.enabled).reduce((a, r) => a + r.eval_time_ms, 0) / enabledCount)}ms` : 'â€”', color: 'text-emerald-400', sub: 'Last evaluation', sparkData: spark(12, 5) },
+          { label: 'Total Rules', value: String(liveRules.length), color: 'text-blue-400', sub: `${enabledCount} enabled` },
+          { label: 'Firing', value: String(firingCount), color: 'text-red-400', sub: 'Active alerts' },
+          { label: 'Pending', value: String(pendingCount), color: 'text-amber-400', sub: 'Evaluating for duration' },
+          { label: 'Groups', value: String(groups.length), color: 'text-purple-400', sub: 'Rule groups' },
+          { label: 'Templates', value: String(liveTemplates.length), color: 'text-cyan-400', sub: 'Available' },
+          { label: 'Avg Eval Time', value: enabledCount ? `${Math.round(liveRules.filter(r => r.enabled).reduce((a, r) => a + r.eval_time_ms, 0) / enabledCount)}ms` : 'â€”', color: 'text-emerald-400', sub: 'Last evaluation' },
         ].map((kpi, i) => (
           <div key={i} className="bg-white/5 backdrop-blur-sm border border-white/10 p-3 rounded-xl">
             <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">{kpi.label}</div>
             <div className={`text-xl font-bold font-mono ${kpi.color}`}>{kpi.value}</div>
-            <div className="flex items-center justify-between mt-0.5">
-              <span className="text-[10px] text-slate-500">{kpi.sub}</span>
-              <Sparkline data={kpi.sparkData} width={48} height={16} color={kpi.color.replace('text-', '')} />
-            </div>
+            <span className="text-[10px] text-slate-500">{kpi.sub}</span>
           </div>
         ))}
       </div>
