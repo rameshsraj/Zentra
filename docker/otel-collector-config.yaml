@@ -1,0 +1,99 @@
+# Item 17: OpenTelemetry Collector Configuration for Zentra
+#
+# Topology: apps -> collector -> zentra-api ingest
+#
+#   ┌──────────────┐     ┌──────────────────┐     ┌──────────────┐
+#   │ zentra-api   │────▶│  otel-collector   │────▶│ zentra-api   │
+#   │ zentra-agent │     │  (this config)    │     │ /v1/traces   │
+#   │ frontend RUM │     │  :4317 gRPC       │     │ /v1/metrics  │
+#   │ plugins      │     │  :4318 HTTP       │     │ /v1/logs     │
+#   └──────────────┘     │  :8889 Prometheus │     └──────────────┘
+#                        └──────────────────┘
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: "0.0.0.0:4317"
+      http:
+        endpoint: "0.0.0.0:4318"
+
+processors:
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  batch:
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+    timeout: 5s
+
+  resourcedetection:
+    detectors: [system, env]
+    system:
+      hostname_sources: ["os"]
+
+  # Item 11: Tail sampling policies
+  tail_sampling:
+    decision_wait: 10s
+    num_traces: 100000
+    expected_new_traces_per_sec: 100
+    policies:
+      # Always sample errors
+      - name: errors-policy
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      # Always sample slow traces (>5s root span)
+      - name: latency-policy
+        type: latency
+        latency:
+          threshold_ms: 5000
+      # Probabilistic 10% for everything else
+      - name: probabilistic-policy
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 10
+
+  attributes:
+    actions:
+      # Drop high-cardinality keys that could explode metrics backends
+      - key: http.request.body
+        action: delete
+      - key: db.statement
+        action: hash
+
+exporters:
+  otlphttp:
+    endpoint: "http://zentra-api:5006"
+    tls:
+      insecure: true
+
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: "zentra_collector"
+
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, tail_sampling, batch]
+      exporters: [otlphttp]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, batch]
+      exporters: [otlphttp, prometheus]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, batch]
+      exporters: [otlphttp]
+
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      address: "0.0.0.0:8888"

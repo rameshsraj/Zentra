@@ -163,6 +163,9 @@ impl RuleEvaluator {
             let counters_ref = self.eval_counters.clone();
             let cancel_clone = cancel.clone();
 
+            // Item 1: Propagate trace context into spawned task
+            use tracing::Instrument;
+            let eval_span = tracing::info_span!("rule_evaluator", group.name = %group.name);
             let handle = tokio::spawn(async move {
                 let mut interval = tokio::time::interval(
                     std::time::Duration::from_secs(group.interval_seconds)
@@ -184,7 +187,7 @@ impl RuleEvaluator {
                         }
                     }
                 }
-            });
+            }.instrument(eval_span));
             handles.push(handle);
         }
 

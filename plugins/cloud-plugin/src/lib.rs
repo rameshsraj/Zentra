@@ -42,6 +42,7 @@ impl Plugin for CloudPlugin {
         }
     }
 
+    #[tracing::instrument(skip(self, target), fields(plugin.id = "cloud-plugin", cloud.provider = tracing::field::Empty))]
     async fn initialize(&mut self, target: &Target) -> Result<()> {
         info!(target = %target.name, "Cloud plugin initialized");
         Ok(())
@@ -63,6 +64,7 @@ impl Plugin for CloudPlugin {
         }
     }
 
+    #[tracing::instrument(skip(self, target), fields(plugin.id = "cloud-plugin", cloud.provider = tracing::field::Empty))]
     async fn collect_metrics(&self, target: &Target) -> Result<Vec<Metric>> {
         let subtype = target.target_subtype.as_str().to_lowercase();
         let metrics = match subtype.as_str() {

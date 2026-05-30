@@ -106,7 +106,7 @@ pub async fn login(
         "SELECT id, COALESCE(org_id, '00000000-0000-0000-0000-000000000001'::uuid), email, username, password_hash, \
          COALESCE(display_name, full_name), avatar_url, COALESCE(is_active, true), COALESCE(is_locked, false), locked_until, \
          COALESCE(mfa_enabled, false), mfa_secret, COALESCE(must_change_password, false) \
-         FROM users WHERE email = $1"
+         FROM users WHERE LOWER(email) = LOWER($1)"
     )
     .bind(&req.email)
     .fetch_optional(&state.pool)

@@ -45,6 +45,7 @@ impl Plugin for DatabasePlugin {
         }
     }
 
+    #[tracing::instrument(skip(self, target), fields(plugin.id = "database-plugin", db.system = "postgresql"))]
     async fn initialize(&mut self, target: &Target) -> Result<()> {
         info!(target = %target.name, "Database plugin initialized");
         Ok(())
@@ -59,6 +60,7 @@ impl Plugin for DatabasePlugin {
         }
     }
 
+    #[tracing::instrument(skip(self, target), fields(plugin.id = "database-plugin", db.system = "postgresql"))]
     async fn collect_metrics(&self, target: &Target) -> Result<Vec<Metric>> {
         let mut metrics = Vec::new();
 

@@ -6,6 +6,7 @@ pub mod error;
 pub mod plugin;
 pub mod ssh_utils;
 pub mod ssh_pool;
+pub mod telemetry;
 
 pub use error::{Error, Result};
 pub use models::metric::Metric;

@@ -36,7 +36,7 @@ async fn main() {
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_target(true);
 
-    let otel_layer = zentra_api::otel_self::init_tracer();
+    let otel_layer = zentra_core::telemetry::init_telemetry("zentra-api");
 
     tracing_subscriber::registry()
         .with(env_filter)
@@ -294,7 +294,6 @@ async fn request_id_middleware(
 }
 
 async fn shutdown_signal() {
-    tokio::signal::ctrl_c().await.ok();
+    zentra_core::telemetry::shutdown_signal().await;
     info!("Shutdown signal received — draining in-flight requests");
-    zentra_api::otel_self::shutdown_tracer();
 }

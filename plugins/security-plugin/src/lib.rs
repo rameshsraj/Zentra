@@ -112,6 +112,7 @@ impl Plugin for SecurityPlugin {
         }
     }
 
+    #[tracing::instrument(skip(self, _target), fields(plugin.id = "security-plugin"))]
     async fn initialize(&mut self, _target: &Target) -> Result<()> {
         info!(
             ids_rules = self.ids_engine.rule_count(),
@@ -125,6 +126,7 @@ impl Plugin for SecurityPlugin {
         Ok(true)
     }
 
+    #[tracing::instrument(skip(self, target), fields(plugin.id = "security-plugin"))]
     async fn collect_metrics(&self, target: &Target) -> Result<Vec<Metric>> {
         let mut metrics = Vec::new();
         let tid = target.target_id.to_string();

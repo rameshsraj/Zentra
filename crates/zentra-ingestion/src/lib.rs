@@ -8,6 +8,7 @@ use zentra_db::DbPool;
 use zentra_stream::EventBus;
 use tokio::sync::mpsc;
 use tracing::{info, error};
+use std::time::Instant;
 
 /// Main ingestion service — consumes from stream channels and writes to DB
 #[derive(Clone)]
@@ -28,8 +29,14 @@ impl IngestionService {
             if batch.is_empty() {
                 continue;
             }
+            let start = Instant::now();
+            let payload_bytes = batch.metrics.len() * std::mem::size_of::<zentra_core::Metric>();
             match zentra_db::repositories::metrics::insert_metrics(&self.pool, &batch.metrics).await {
                 Ok(count) => {
+                    // Item 6: Ingestion metrics
+                    metrics::counter!("zentra.ingestion.payloads", "signal" => "metrics", "status" => "ok").increment(1);
+                    metrics::histogram!("zentra.ingestion.payload_bytes", "signal" => "metrics").record(payload_bytes as f64);
+                    metrics::histogram!("zentra.ingestion.duration", "signal" => "metrics").record(start.elapsed().as_secs_f64());
                     self.event_bus.publish(zentra_core::Event::MetricsCollected {
                         plugin_id: batch.source_plugin.clone(),
                         target_id: uuid::Uuid::nil(),
@@ -38,6 +45,7 @@ impl IngestionService {
                     });
                 }
                 Err(e) => {
+                    metrics::counter!("zentra.ingestion.payloads", "signal" => "metrics", "status" => "error").increment(1);
                     error!(error = %e, plugin = %batch.source_plugin, "Failed to ingest metrics");
                 }
             }
@@ -52,8 +60,11 @@ impl IngestionService {
             if batch.is_empty() {
                 continue;
             }
+            let start = Instant::now();
             match zentra_db::repositories::logs::insert_logs(&self.pool, &batch.entries).await {
                 Ok(count) => {
+                    metrics::counter!("zentra.ingestion.payloads", "signal" => "logs", "status" => "ok").increment(1);
+                    metrics::histogram!("zentra.ingestion.duration", "signal" => "logs").record(start.elapsed().as_secs_f64());
                     self.event_bus.publish(zentra_core::Event::LogsIngested {
                         source: batch.source.clone(),
                         target_id: uuid::Uuid::nil(),
@@ -62,6 +73,7 @@ impl IngestionService {
                     });
                 }
                 Err(e) => {
+                    metrics::counter!("zentra.ingestion.payloads", "signal" => "logs", "status" => "error").increment(1);
                     error!(error = %e, source = %batch.source, "Failed to ingest logs");
                 }
             }

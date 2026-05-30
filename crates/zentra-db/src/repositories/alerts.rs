@@ -4,6 +4,7 @@ use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use tracing::info;
 
+#[tracing::instrument(skip(pool, alert), fields(db.system = "postgresql", db.operation = "INSERT", db.sql.table = "alerts", otel.kind = "client"))]
 pub async fn insert_alert(pool: &PgPool, alert: &Alert) -> Result<(), sqlx::Error> {
     let metadata = alert.metadata.as_ref();
     sqlx::query(
@@ -31,6 +32,7 @@ pub async fn insert_alert(pool: &PgPool, alert: &Alert) -> Result<(), sqlx::Erro
     Ok(())
 }
 
+#[tracing::instrument(skip(pool), fields(db.system = "postgresql", db.operation = "SELECT", db.sql.table = "alerts", otel.kind = "client"))]
 pub async fn list_alerts(
     pool: &PgPool,
     org_id: Uuid,
@@ -75,6 +77,7 @@ pub async fn list_alerts(
     Ok(rows.into_iter().map(|r| r.into()).collect())
 }
 
+#[tracing::instrument(skip(pool), fields(db.system = "postgresql", db.operation = "UPDATE", db.sql.table = "alerts", otel.kind = "client"))]
 pub async fn update_alert_status(
     pool: &PgPool,
     alert_id: Uuid,
@@ -113,6 +116,7 @@ pub async fn update_alert_status(
 }
 
 // Alert rules
+#[tracing::instrument(skip(pool, rule), fields(db.system = "postgresql", db.operation = "INSERT", db.sql.table = "alert_rules", otel.kind = "client"))]
 pub async fn insert_alert_rule(pool: &PgPool, rule: &AlertRule) -> Result<(), sqlx::Error> {
     let condition = serde_json::to_value(&rule.condition).unwrap_or_default();
     let tags = serde_json::to_value(&rule.tags).unwrap_or_default();
@@ -139,6 +143,7 @@ pub async fn insert_alert_rule(pool: &PgPool, rule: &AlertRule) -> Result<(), sq
     Ok(())
 }
 
+#[tracing::instrument(skip(pool), fields(db.system = "postgresql", db.operation = "SELECT", db.sql.table = "alert_rules", otel.kind = "client"))]
 pub async fn list_alert_rules(pool: &PgPool, org_id: Uuid) -> Result<Vec<AlertRule>, sqlx::Error> {
     let rows = sqlx::query_as::<_, AlertRuleRow>(
         "SELECT rule_id, org_id, name, description, metric_name, condition, window_seconds, severity, enabled, tags, created_at, updated_at FROM alert_rules WHERE org_id = $1 ORDER BY name"

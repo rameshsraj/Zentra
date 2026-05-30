@@ -39,6 +39,7 @@ impl Plugin for AiPlugin {
         }
     }
 
+    #[tracing::instrument(skip(self, _target), fields(plugin.id = "ai-plugin", gen_ai.system = "zentra"))]
     async fn initialize(&mut self, _target: &Target) -> Result<()> {
         debug!("AI plugin initialized");
         self.initialized = true;
@@ -50,6 +51,7 @@ impl Plugin for AiPlugin {
         Ok(true)
     }
 
+    #[tracing::instrument(skip(self, target), fields(plugin.id = "ai-plugin", gen_ai.system = "zentra", gen_ai.request.model = "zentra-anomaly-v1"))]
     async fn collect_metrics(&self, target: &Target) -> Result<Vec<Metric>> {
         let mut metrics = Vec::new();
 

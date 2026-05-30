@@ -35,6 +35,12 @@ impl Orchestrator {
 
     /// Start a collection loop for a single target + plugin pair.
     /// Respects the cancellation token for graceful shutdown.
+    /// Item 8: Top-level span for trace correlation across agent collection.
+    #[tracing::instrument(skip(self, plugin, target), fields(
+        target.name = %target.name,
+        target.id = %target.target_id,
+        otel.kind = "server",
+    ))]
     pub async fn run_collection_loop(
         &self,
         mut plugin: PluginInstance,

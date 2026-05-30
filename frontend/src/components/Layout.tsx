@@ -265,8 +265,12 @@ function ModeToggle({ collapsed }: { collapsed: boolean }) {
 }
 
 export default function Layout() {
-  const [collapsed, setCollapsed] = useState(false)
-  const [expanded, setExpanded] = useState<string[]>([])
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem('zentra-sidebar-collapsed') === 'true' } catch { return false }
+  })
+  const [expanded, setExpanded] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('zentra-sidebar-expanded') || '[]') } catch { return [] }
+  })
   const [paletteOpen, setPaletteOpen] = useState(false)
   const location = useLocation()
   const { isAdmin: userIsAdmin, hasModule, hasMenuItem } = useAuth()
@@ -395,10 +399,41 @@ export default function Layout() {
     return () => window.removeEventListener('keydown', handler)
   }, [])
 
+  // Auto-expand parent menu for current route on mount/navigation
+  useEffect(() => {
+    const toExpand: string[] = []
+    for (const item of dynamicNav) {
+      if (item.children) {
+        for (const child of item.children) {
+          if (location.pathname === child.to || location.pathname.startsWith(child.to + '/')) {
+            if (!toExpand.includes(item.label)) toExpand.push(item.label)
+          }
+          if (child.children) {
+            for (const sub of child.children) {
+              if (location.pathname === sub.to || location.pathname.startsWith(sub.to + '/')) {
+                if (!toExpand.includes(item.label)) toExpand.push(item.label)
+                if (!toExpand.includes(child.label)) toExpand.push(child.label)
+              }
+            }
+          }
+        }
+      }
+    }
+    if (toExpand.length > 0) {
+      setExpanded(prev => {
+        const merged = [...new Set([...prev, ...toExpand])]
+        try { localStorage.setItem('zentra-sidebar-expanded', JSON.stringify(merged)) } catch {}
+        return merged
+      })
+    }
+  }, [location.pathname, dynamicNav])
+
   const toggleExpand = (label: string) => {
-    setExpanded((prev) =>
-      prev.includes(label) ? prev.filter((l) => l !== label) : [...prev, label]
-    )
+    setExpanded((prev) => {
+      const next = prev.includes(label) ? prev.filter((l) => l !== label) : [...prev, label]
+      try { localStorage.setItem('zentra-sidebar-expanded', JSON.stringify(next)) } catch {}
+      return next
+    })
   }
 
   const isActive = (to: string) => location.pathname === to || location.pathname.startsWith(to + '/')
@@ -428,7 +463,7 @@ export default function Layout() {
             )}
           </div>
           <button
-            onClick={() => setCollapsed(!collapsed)}
+            onClick={() => { setCollapsed(c => { const next = !c; try { localStorage.setItem('zentra-sidebar-collapsed', String(next)) } catch {} return next }) }}
             className="p-1 rounded hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
           >
             {collapsed ? <Menu className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}

@@ -57,4 +57,7 @@ pub fn router() -> Router<AppState> {
 
         // O18: Logs correlated with a trace
         .route("/api/otel/logs-by-trace/:trace_id", get(handlers::otlp::otel_logs_by_trace))
+
+        // Item 16: Trace aggregates (p50/p95/p99)
+        .route("/api/otel/trace-aggregates", get(handlers::otlp::otel_trace_aggregates))
 }

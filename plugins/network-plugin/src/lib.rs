@@ -101,6 +101,7 @@ impl Plugin for NetworkPlugin {
         }
     }
 
+    #[tracing::instrument(skip(self, _target), fields(plugin.id = "network-plugin", net.transport = "ip"))]
     async fn initialize(&mut self, _target: &Target) -> Result<()> {
         self.networks = Some(Networks::new_with_refreshed_list());
         info!("Network plugin initialized with capture engine");
@@ -111,6 +112,7 @@ impl Plugin for NetworkPlugin {
         Ok(true)
     }
 
+    #[tracing::instrument(skip(self, target), fields(plugin.id = "network-plugin", net.transport = "ip"))]
     async fn collect_metrics(&self, target: &Target) -> Result<Vec<Metric>> {
         let mut metrics = Vec::new();
 

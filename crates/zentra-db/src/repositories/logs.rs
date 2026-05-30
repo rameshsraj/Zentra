@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use tracing::{info, error};
 
 /// Insert a batch of log entries
+#[tracing::instrument(skip(pool, entries), fields(db.system = "postgresql", db.operation = "INSERT", db.sql.table = "logs", otel.kind = "client"))]
 pub async fn insert_logs(pool: &PgPool, entries: &[LogEntry]) -> Result<u64, sqlx::Error> {
     if entries.is_empty() {
         return Ok(0);
@@ -65,6 +66,7 @@ pub async fn insert_logs(pool: &PgPool, entries: &[LogEntry]) -> Result<u64, sql
 }
 
 /// Search logs with full-text search and filters
+#[tracing::instrument(skip(pool), fields(db.system = "postgresql", db.operation = "SELECT", db.sql.table = "logs", otel.kind = "client"))]
 pub async fn search_logs(
     pool: &PgPool,
     org_id: Uuid,

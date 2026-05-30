@@ -1659,3 +1659,96 @@ struct AuditRow {
     remote_addr: Option<String>,
     created_at: DateTime<Utc>,
 }
+
+// ============================================================================
+// Item 16: Trace Aggregates (p50/p95/p99)
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct TraceAggregatesQuery {
+    pub service: Option<String>,
+    pub operation: Option<String>,
+    pub from: Option<DateTime<Utc>>,
+    pub to: Option<DateTime<Utc>>,
+}
+
+#[tracing::instrument(skip(state))]
+pub async fn otel_trace_aggregates(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    Query(q): Query<TraceAggregatesQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let from = q.from.unwrap_or_else(|| Utc::now() - chrono::Duration::hours(1));
+    let to = q.to.unwrap_or_else(Utc::now);
+
+    let mut sql = String::from(
+        r#"SELECT
+             service_name,
+             operation_name,
+             COUNT(*) AS request_count,
+             COUNT(*) FILTER (WHERE status = 'error') AS error_count,
+             ROUND(COUNT(*) FILTER (WHERE status = 'error')::numeric / NULLIF(COUNT(*), 0) * 100, 2) AS error_rate,
+             percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_us) AS p50_us,
+             percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_us) AS p95_us,
+             percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_us) AS p99_us,
+             AVG(duration_us)::bigint AS avg_us,
+             MAX(duration_us) AS max_us
+           FROM traces
+           WHERE org_id = $1 AND started_at >= $2 AND started_at < $3"#
+    );
+    let mut param_idx = 4;
+
+    if q.service.is_some() {
+        sql.push_str(&format!(" AND service_name = ${}", param_idx));
+        param_idx += 1;
+    }
+    if q.operation.is_some() {
+        sql.push_str(&format!(" AND operation_name = ${}", param_idx));
+    }
+    sql.push_str(" GROUP BY service_name, operation_name ORDER BY request_count DESC LIMIT 100");
+
+    let mut query = sqlx::query_as::<_, TraceAggRow>(&sql)
+        .bind(org_id)
+        .bind(from)
+        .bind(to);
+
+    if let Some(ref svc) = q.service {
+        query = query.bind(svc);
+    }
+    if let Some(ref op) = q.operation {
+        query = query.bind(op);
+    }
+
+    let rows = query.fetch_all(&state.pool).await
+        .map_err(|e| ApiError::Internal(format!("Trace aggregates query failed: {}", e)))?;
+
+    let results: Vec<Value> = rows.iter().map(|r| json!({
+        "service_name": r.service_name,
+        "operation_name": r.operation_name,
+        "request_count": r.request_count,
+        "error_count": r.error_count,
+        "error_rate": r.error_rate,
+        "p50_us": r.p50_us,
+        "p95_us": r.p95_us,
+        "p99_us": r.p99_us,
+        "avg_us": r.avg_us,
+        "max_us": r.max_us,
+    })).collect();
+
+    Ok(Json(json!({ "aggregates": results, "from": from, "to": to })))
+}
+
+#[derive(sqlx::FromRow)]
+#[allow(dead_code)]
+struct TraceAggRow {
+    service_name: String,
+    operation_name: String,
+    request_count: i64,
+    error_count: i64,
+    error_rate: Option<f64>,
+    p50_us: Option<f64>,
+    p95_us: Option<f64>,
+    p99_us: Option<f64>,
+    avg_us: Option<i64>,
+    max_us: Option<i64>,
+}

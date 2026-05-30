@@ -11,19 +11,23 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use uuid::Uuid;
 
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("info"))
-        )
-        .with_target(true)
+    // Item 5: Shared telemetry — OTel layer for self-instrumentation
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let fmt_layer = tracing_subscriber::fmt::layer().with_target(true);
+    let otel_layer = zentra_core::telemetry::init_telemetry("zentra-agent");
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(fmt_layer)
+        .with(otel_layer)
         .init();
 
     info!("Zentra Agent starting...");
@@ -158,6 +162,8 @@ async fn main() {
     tokio::signal::ctrl_c().await.ok();
     info!("Shutdown signal received, stopping agent...");
     cancel.cancel();
+    // Item 13: Flush pending spans before exit
+    zentra_core::telemetry::shutdown_telemetry();
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     info!("Zentra Agent stopped");
 }

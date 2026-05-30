@@ -179,6 +179,9 @@ impl NotificationRouter {
     /// Start listening to the event bus and routing notifications.
     /// This spawns a background task.
     pub fn start(mut self, mut rx: broadcast::Receiver<Event>) -> tokio::task::JoinHandle<()> {
+        // Item 1: Propagate trace context into spawned task
+        use tracing::Instrument;
+        let span = tracing::info_span!("notification_router");
         tokio::spawn(async move {
             info!("Notification router started");
             loop {
@@ -195,7 +198,7 @@ impl NotificationRouter {
                     }
                 }
             }
-        })
+        }.instrument(span))
     }
 
     async fn handle_event(&mut self, event: &Event) {

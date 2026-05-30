@@ -11,6 +11,7 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 tracing = { workspace = true }
+tracing-opentelemetry = { workspace = true }
 thiserror = { workspace = true }
 dashmap = { workspace = true }
 parking_lot = { workspace = true }

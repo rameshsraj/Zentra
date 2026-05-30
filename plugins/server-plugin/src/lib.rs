@@ -45,6 +45,7 @@ impl Plugin for ServerPlugin {
         }
     }
 
+    #[tracing::instrument(skip(self, _target), fields(plugin.id = "server-plugin"))]
     async fn initialize(&mut self, _target: &Target) -> Result<()> {
         let mut sys = System::new_all();
         sys.refresh_all();
@@ -57,6 +58,7 @@ impl Plugin for ServerPlugin {
         Ok(true)
     }
 
+    #[tracing::instrument(skip(self, target), fields(plugin.id = "server-plugin"))]
     async fn collect_metrics(&self, target: &Target) -> Result<Vec<Metric>> {
         let mut metrics = Vec::new();
 

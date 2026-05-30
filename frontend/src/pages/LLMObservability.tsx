@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { fetchJSON } from '@/lib/api/_client'
 import PageHeader from '@/components/PageHeader'
 import { cn } from '@/lib/utils'
+import { formatCurrency } from '@/lib/format'
 import {
   Brain, Zap, DollarSign, Clock, AlertTriangle,
   BarChart3, TrendingUp,
@@ -140,7 +141,7 @@ export default function LLMObservability() {
                       key={i}
                       className="flex-1 bg-emerald-500/50 hover:bg-emerald-400/70 rounded-t transition"
                       style={{ height: `${(p.cost / maxCost) * 100}%`, minHeight: '2px' }}
-                      title={`${new Date(p.bucket).toLocaleString()}: $${p.cost.toFixed(4)} (${p.tokens} tokens)`}
+                      title={`${new Date(p.bucket).toLocaleString()}: ${formatCurrency(p.cost, 4)} (${p.tokens} tokens)`}
                     />
                   )
                 })}
@@ -225,7 +226,7 @@ function StatCard({ icon: Icon, label, value, format, color }: {
 }) {
   let display: string
   switch (format) {
-    case 'currency': display = `$${value.toFixed(2)}`; break
+    case 'currency': display = formatCurrency(value, 2); break
     case 'ms': display = `${value.toFixed(0)}ms`; break
     case 'percent': display = `${value.toFixed(1)}%`; break
     default: display = value.toLocaleString()

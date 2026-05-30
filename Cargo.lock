@@ -2176,6 +2176,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "opentelemetry-appender-tracing"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab5feffc321035ad94088a7e5333abb4d84a8726e54a802e736ce9dd7237e85b"
+dependencies = [
+ "opentelemetry",
+ "tracing",
+ "tracing-core",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "opentelemetry-http"
 version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5082,6 +5094,7 @@ dependencies = [
  "tokio-util",
  "tonic",
  "tracing",
+ "tracing-opentelemetry",
  "tracing-subscriber",
  "uuid",
  "zentra-core",
@@ -5103,6 +5116,7 @@ dependencies = [
  "dashmap 6.1.0",
  "database-plugin",
  "dotenvy",
+ "flate2",
  "futures",
  "hmac",
  "jsonwebtoken",
@@ -5160,6 +5174,12 @@ dependencies = [
  "hex",
  "hmac",
  "hostname",
+ "metrics",
+ "opentelemetry",
+ "opentelemetry-appender-tracing",
+ "opentelemetry-otlp",
+ "opentelemetry-semantic-conventions",
+ "opentelemetry_sdk",
  "parking_lot",
  "rand 0.8.6",
  "reqwest",
@@ -5171,6 +5191,8 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
  "uuid",
  "validator",
 ]
@@ -5180,12 +5202,14 @@ name = "zentra-db"
 version = "1.0.0"
 dependencies = [
  "chrono",
+ "opentelemetry-semantic-conventions",
  "serde",
  "serde_json",
  "sqlx",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "tracing-opentelemetry",
  "uuid",
  "zentra-core",
 ]
@@ -5211,6 +5235,7 @@ name = "zentra-ingestion"
 version = "1.0.0"
 dependencies = [
  "chrono",
+ "metrics",
  "serde",
  "serde_json",
  "sqlx",
@@ -5341,6 +5366,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "tracing-opentelemetry",
  "uuid",
  "zentra-core",
  "zentra-predict",

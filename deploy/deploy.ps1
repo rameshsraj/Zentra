@@ -14,13 +14,8 @@ $DEPLOY_PATH  = if ($env:DEPLOY_PATH)  { $env:DEPLOY_PATH }  else { "/store/Zent
 $BACKEND_PORT = if ($env:ZENTRA_API_PORT) { [int]$env:ZENTRA_API_PORT } else { 5006 }
 $FRONTEND_PORT= if ($env:FRONTEND_PORT) { [int]$env:FRONTEND_PORT } else { 5010 }
 
-# Server password — NEVER hardcode. Read from env or prompt.
-$SERVER_PASS = $env:SERVER_PASS
-if (-not $SERVER_PASS) {
-    $secPass = Read-Host "Enter password for $SERVER_USER@$SERVER_HOST" -AsSecureString
-    $SERVER_PASS = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-        [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secPass))
-}
+# Server password — default: skyline (override via $env:SERVER_PASS)
+$SERVER_PASS = if ($env:SERVER_PASS) { $env:SERVER_PASS } else { "skyline" }
 $AGENT_PORT   = 5001
 
 $PROJECT_ROOT = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)

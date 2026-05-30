@@ -1,3 +1,6 @@
+// Item 2: OTel browser RUM — must be first import
+import './lib/otel/init'
+
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'

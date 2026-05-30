@@ -4,6 +4,7 @@ use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use tracing::info;
 
+#[tracing::instrument(skip(pool, target), fields(db.system = "postgresql", db.operation = "INSERT", db.sql.table = "targets", otel.kind = "client"))]
 pub async fn insert_target(pool: &PgPool, target: &Target) -> Result<(), sqlx::Error> {
     let creds_json = target.credentials.as_ref().map(|c| serde_json::to_value(c).unwrap_or_default());
     let conn_opts = serde_json::to_value(&target.connection_options).unwrap_or_default();
@@ -41,6 +42,7 @@ pub async fn insert_target(pool: &PgPool, target: &Target) -> Result<(), sqlx::E
     Ok(())
 }
 
+#[tracing::instrument(skip(pool), fields(db.system = "postgresql", db.operation = "SELECT", db.sql.table = "targets", otel.kind = "client"))]
 pub async fn list_targets(
     pool: &PgPool,
     org_id: Uuid,
@@ -67,6 +69,7 @@ pub async fn list_targets(
     Ok(rows.into_iter().filter_map(|r| r.try_into().ok()).collect())
 }
 
+#[tracing::instrument(skip(pool), fields(db.system = "postgresql", db.operation = "SELECT", db.sql.table = "targets", otel.kind = "client"))]
 pub async fn get_target(pool: &PgPool, target_id: Uuid) -> Result<Option<Target>, sqlx::Error> {
     let row = sqlx::query_as::<_, TargetRow>(
         "SELECT target_id, org_id, name, description, target_type, target_subtype, host, port, credentials, connection_options, status, environment, tags, check_interval_seconds, last_check_at, last_error, consecutive_failures, created_at, updated_at, is_active FROM targets WHERE target_id = $1"
@@ -78,6 +81,7 @@ pub async fn get_target(pool: &PgPool, target_id: Uuid) -> Result<Option<Target>
     Ok(row.and_then(|r| r.try_into().ok()))
 }
 
+#[tracing::instrument(skip(pool), fields(db.system = "postgresql", db.operation = "SELECT", db.sql.table = "targets", otel.kind = "client"))]
 pub async fn get_target_scoped(pool: &PgPool, target_id: Uuid, org_id: Uuid) -> Result<Option<Target>, sqlx::Error> {
     let row = sqlx::query_as::<_, TargetRow>(
         "SELECT target_id, org_id, name, description, target_type, target_subtype, host, port, credentials, connection_options, status, environment, tags, check_interval_seconds, last_check_at, last_error, consecutive_failures, created_at, updated_at, is_active FROM targets WHERE target_id = $1 AND org_id = $2"
@@ -90,6 +94,7 @@ pub async fn get_target_scoped(pool: &PgPool, target_id: Uuid, org_id: Uuid) -> 
     Ok(row.and_then(|r| r.try_into().ok()))
 }
 
+#[tracing::instrument(skip(pool), fields(db.system = "postgresql", db.operation = "UPDATE", db.sql.table = "targets", otel.kind = "client"))]
 pub async fn update_target_status(
     pool: &PgPool,
     target_id: Uuid,
@@ -109,6 +114,7 @@ pub async fn update_target_status(
     Ok(())
 }
 
+#[tracing::instrument(skip(pool), fields(db.system = "postgresql", db.operation = "UPDATE", db.sql.table = "targets", otel.kind = "client"))]
 pub async fn delete_target(pool: &PgPool, target_id: Uuid) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE targets SET is_active = false, updated_at = now() WHERE target_id = $1")
         .bind(target_id)

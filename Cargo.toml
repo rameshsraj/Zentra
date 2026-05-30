@@ -115,10 +115,11 @@ metrics = "0.23"
 metrics-exporter-prometheus = "0.15"
 
 # OpenTelemetry self-instrumentation
-opentelemetry = { version = "0.27", features = ["trace", "metrics"] }
-opentelemetry_sdk = { version = "0.27", features = ["trace", "metrics", "rt-tokio"] }
-opentelemetry-otlp = { version = "0.27", features = ["trace", "metrics", "grpc-tonic", "http-proto", "reqwest-client"] }
+opentelemetry = { version = "0.27", features = ["trace", "metrics", "logs"] }
+opentelemetry_sdk = { version = "0.27", features = ["trace", "metrics", "logs", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.27", features = ["trace", "metrics", "logs", "grpc-tonic", "http-proto", "reqwest-client"] }
 opentelemetry-semantic-conventions = "0.27"
+opentelemetry-appender-tracing = "0.27"
 tracing-opentelemetry = "0.28"
 
 # Protobuf (OTLP)

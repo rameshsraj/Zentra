@@ -30,6 +30,13 @@ impl EbpfProfiler {
     }
 
     /// Triggers a profiling job on a target server.
+    /// Item 15: Instrumented for continuous profiling observability.
+    #[tracing::instrument(skip(self, target), fields(
+        profile.type = "cpu",
+        profile.duration_s = duration_s,
+        target.name = %target.name,
+        target.id = %target.target_id,
+    ))]
     pub async fn profile_target(&self, target: &Target, duration_s: i32, pid: Option<String>) -> Result<(), String> {
         let job_id = Uuid::now_v7();
         let ssh_user = std::env::var("ZENTRA_SSH_USER").unwrap_or_else(|_| "root".into());

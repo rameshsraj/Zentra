@@ -11,7 +11,7 @@ import {
 interface OtelStatus {
   signals: string[]
   endpoints: { http: Record<string, string>; grpc: { port: number; status: string } }
-  encodings: string[]
+  encodings: Record<string, boolean> | string[]
   auth: string[]
 }
 
@@ -134,11 +134,11 @@ ${pipelines}`
               ))}
               <div className="flex justify-between text-slate-400 pt-1 border-t border-slate-700 mt-1">
                 <span>Encodings</span>
-                <span className="text-slate-300">{status?.encodings?.join(', ') || 'JSON, Protobuf'}</span>
+                <span className="text-slate-300">{Array.isArray(status?.encodings) ? status.encodings.join(', ') : status?.encodings ? Object.entries(status.encodings).filter(([,v]) => v).map(([k]) => k).join(', ') : 'JSON, Protobuf'}</span>
               </div>
               <div className="flex justify-between text-slate-400">
                 <span>Auth</span>
-                <span className="text-slate-300">{status?.auth?.join(', ') || 'JWT, API Key'}</span>
+                <span className="text-slate-300">{Array.isArray(status?.auth) ? status.auth.join(', ') : 'JWT, API Key'}</span>
               </div>
             </div>
           </div>

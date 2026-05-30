@@ -20,6 +20,7 @@ export default defineConfig({
   },
   build: {
     rollupOptions: {
+      external: (id: string) => id.startsWith('@opentelemetry/'),
       output: {
         manualChunks: {
           'vendor-react': ['react', 'react-dom', 'react-router-dom'],

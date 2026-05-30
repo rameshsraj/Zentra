@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use tracing::{info, error};
 
 /// Insert a batch of metrics into TimescaleDB
+#[tracing::instrument(skip(pool, metrics), fields(db.system = "postgresql", db.operation = "INSERT", db.sql.table = "metrics", otel.kind = "client"))]
 pub async fn insert_metrics(pool: &PgPool, metrics: &[Metric]) -> Result<u64, sqlx::Error> {
     if metrics.is_empty() {
         return Ok(0);
@@ -66,6 +67,7 @@ pub async fn insert_metrics(pool: &PgPool, metrics: &[Metric]) -> Result<u64, sq
 }
 
 /// Query metrics with time range and optional filters
+#[tracing::instrument(skip(pool), fields(db.system = "postgresql", db.operation = "SELECT", db.sql.table = "metrics", otel.kind = "client"))]
 pub async fn query_metrics(
     pool: &PgPool,
     org_id: Uuid,
@@ -111,6 +113,7 @@ pub async fn query_metrics(
 ///   - bucket >= 300s   (5m) → metrics_5m
 ///   - bucket >= 60s    (1m) → metrics_1m
 ///   - bucket < 60s          → raw hypertable with time_bucket
+#[tracing::instrument(skip(pool), fields(db.system = "postgresql", db.operation = "SELECT", db.sql.table = "metrics", otel.kind = "client"))]
 pub async fn query_metrics_aggregated(
     pool: &PgPool,
     org_id: Uuid,
@@ -194,6 +197,7 @@ pub async fn query_metrics_aggregated(
 }
 
 /// Get TimescaleDB compression stats for monitoring
+#[tracing::instrument(skip(pool), fields(db.system = "postgresql", db.operation = "SELECT", db.sql.table = "compression_stats", otel.kind = "client"))]
 pub async fn get_compression_stats(pool: &PgPool) -> Result<Vec<CompressionStats>, sqlx::Error> {
     let rows = sqlx::query_as::<_, CompressionStatsRow>(
         r#"SELECT
@@ -226,6 +230,7 @@ pub async fn get_compression_stats(pool: &PgPool) -> Result<Vec<CompressionStats
 }
 
 /// Get hypertable size information
+#[tracing::instrument(skip(pool), fields(db.system = "postgresql", db.operation = "SELECT", db.sql.table = "hypertable_sizes", otel.kind = "client"))]
 pub async fn get_hypertable_sizes(pool: &PgPool) -> Result<Vec<HypertableSize>, sqlx::Error> {
     let rows = sqlx::query_as::<_, HypertableSizeRow>(
         r#"SELECT

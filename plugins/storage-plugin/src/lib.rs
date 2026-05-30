@@ -45,6 +45,7 @@ impl Plugin for StoragePlugin {
         }
     }
 
+    #[tracing::instrument(skip(self, target), fields(plugin.id = "storage-plugin"))]
     async fn initialize(&mut self, target: &Target) -> Result<()> {
         info!(target = %target.name, "Storage plugin initialized");
         Ok(())
@@ -58,6 +59,7 @@ impl Plugin for StoragePlugin {
         }
     }
 
+    #[tracing::instrument(skip(self, target), fields(plugin.id = "storage-plugin"))]
     async fn collect_metrics(&self, target: &Target) -> Result<Vec<Metric>> {
         let mut metrics = Vec::new();
 

@@ -22,12 +22,27 @@ pub async fn otel_trace_middleware(req: Request, next: Next) -> Response {
     let path = req.uri().path().to_string();
     let version = format!("{:?}", req.version());
 
+    // Item 10: Extract semantic convention attributes
+    let user_agent = req.headers()
+        .get(axum::http::header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let host = req.headers()
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
     let span = tracing::info_span!(
         "http.request",
         http.request.method = %method,
+        http.route = %path,
         url.path = %path,
         http.response.status_code = tracing::field::Empty,
-        http.version = %version,
+        network.protocol.version = %version,
+        server.address = %host,
+        user_agent.original = %user_agent,
         otel.kind = "server",
         otel.status_code = tracing::field::Empty,
     );
