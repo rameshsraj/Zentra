@@ -68,12 +68,20 @@ RUN dnf remove -y gcc make cpp gdb strace ltrace 2>/dev/null || true \
     && dnf clean all \
     && rm -rf /var/cache/dnf /tmp/* /var/tmp/*
 
+# Install e2fsprogs for chattr (used by entrypoint to make files immutable)
+RUN dnf install -y e2fsprogs && dnf clean all
+
 # Disable core dumps
 RUN echo '* hard core 0' >> /etc/security/limits.conf \
     && echo '* soft core 0' >> /etc/security/limits.conf
 
 # Remove unnecessary SUID/SGID binaries
 RUN find / -perm /6000 -type f -exec chmod a-s {} \; 2>/dev/null || true
+
+# Remove editors and scripting languages at build time
+# NOTE: python3 is preserved — supervisord depends on it
+RUN rm -f /usr/bin/vi /usr/bin/vim /usr/bin/nano /usr/bin/ed \
+         /usr/bin/perl /usr/bin/lua /usr/bin/ruby 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # PostgreSQL configuration
@@ -97,6 +105,7 @@ COPY target/release/zentra-server /usr/local/bin/zentra-server
 
 # D03: Strip the binary to remove debug symbols and reduce size
 RUN strip /usr/local/bin/zentra-server 2>/dev/null || true \
+    && chown root:zentra /usr/local/bin/zentra-server \
     && chmod 550 /usr/local/bin/zentra-server
 
 # ---------------------------------------------------------------------------
@@ -150,6 +159,7 @@ RUN echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /opt/zentra/.build-info &
 RUN chmod 400 /opt/zentra/migrations/*.sql && \
     chmod 600 /etc/supervisord.conf && \
     chmod 600 /etc/nginx/conf.d/zentra.conf && \
+    chown root:postgres /usr/pgsql-16/bin/psql && \
     chmod 750 /usr/pgsql-16/bin/psql
 
 # ---------------------------------------------------------------------------
@@ -183,6 +193,12 @@ RUN rm -rf /root/.bash_history /root/.cache /tmp/* /var/tmp/* && \
     history -c 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
+# D09: Restrict entrypoint — make it read-only so it cannot be overwritten
+# ---------------------------------------------------------------------------
+RUN chmod 500 /usr/local/bin/docker-entrypoint.sh && \
+    chown root:root /usr/local/bin/docker-entrypoint.sh
+
+# ---------------------------------------------------------------------------
 # D05: Only expose frontend port — API is internal (proxied by nginx)
 # ---------------------------------------------------------------------------
 # 5010 = Nginx (frontend + API proxy) — the ONLY externally accessible port
@@ -197,6 +213,21 @@ VOLUME ["/var/lib/postgresql/data"]
 # ---------------------------------------------------------------------------
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD curl -sf http://localhost:5010/api/health | grep -q '"status"' || exit 1
+
+# ---------------------------------------------------------------------------
+# Recommended runtime security flags (documented for operators):
+#   docker run --read-only \
+#     --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+#     --tmpfs /var/run:rw,noexec,nosuid,size=16m \
+#     --tmpfs /var/log:rw,noexec,nosuid,size=128m \
+#     --tmpfs /opt/zentra/logs:rw,noexec,nosuid,size=64m \
+#     --security-opt=no-new-privileges:true \
+#     --cap-drop ALL --cap-add CHOWN --cap-add SETUID --cap-add SETGID \
+#     --cap-add DAC_OVERRIDE --cap-add FOWNER --cap-add NET_BIND_SERVICE \
+#     --cap-add LINUX_IMMUTABLE \
+#     -v zentra-data:/var/lib/postgresql/data \
+#     -p 5010:5010 zentra:latest
+# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Entrypoint — initializes PostgreSQL on first run, then starts all services

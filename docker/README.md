@@ -34,6 +34,8 @@ All configuration is passed at runtime via environment variables.
 - [14. Datacenter Simulation](#14-datacenter-simulation)
 - [15. SSH Key Setup](#15-ssh-key-setup)
 - [16. Traffic Generator](#16-traffic-generator)
+- [17. Building the Docker Image](#17-building-the-docker-image)
+- [18. Security Considerations](#18-security-considerations)
 
 ---
 
@@ -925,6 +927,178 @@ docker/
             ├── setup-oracle-ssh.sh    # Oracle + SSH entrypoint
             └── init-oracle.sql        # DB init (monitoring user + sample schema)
 ```
+
+---
+
+## 17. Building the Docker Image
+
+This section is for engineers who need to rebuild the Docker image from source.
+
+### Prerequisites on the Build Server (`10.88.11.162`)
+
+| Requirement | Version |
+|---|---|
+| Rust toolchain | `rustc 1.95+`, `cargo` |
+| Node.js | 18+ with npm |
+| Docker | Installed and running |
+| Network | Access to pull `rockylinux:8` base image and RPM repos |
+
+### Build Steps
+
+```bash
+# SSH into the build server
+ssh root@10.88.11.162
+cd /store/Zentra
+
+# 1. Build frontend
+cd frontend && npm ci && npx vite build && cd ..
+
+# 2. Build backend (release)
+cargo build --release --bin zentra-server
+
+# 3. Build Docker image
+docker build -f docker/Dockerfile -t zentra:latest .
+
+# 4. Export image as tarball
+docker save zentra:latest | gzip > docker/zentra-latest.tar.gz
+ls -lh docker/zentra-latest.tar.gz
+```
+
+### Validate the Build
+
+```bash
+# Check build info
+docker run --rm zentra:latest cat /opt/zentra/.build-info
+
+# Verify binary exists and is stripped
+docker run --rm zentra:latest ls -la /usr/local/bin/zentra-server
+docker run --rm zentra:latest file /usr/local/bin/zentra-server
+
+# Verify frontend dist
+docker run --rm zentra:latest ls /opt/zentra/frontend/dist/index.html
+
+# Verify no source code leaked
+docker run --rm zentra:latest sh -c 'find / -name "*.rs" -o -name "*.toml" -o -name "Cargo.lock" -o -name ".git" -o -name "node_modules" 2>/dev/null | head -20'
+# Must return empty
+
+# Run full validation suite
+bash docker/validate.sh
+```
+
+### Environment-Specific Examples
+
+**Quick local test (zero config):**
+```bash
+docker run -d -p 5010:5010 \
+  --security-opt=no-new-privileges:true \
+  -v zentra-data:/var/lib/postgresql/data \
+  zentra:latest
+```
+
+**Production (hardened, with persistent storage + env file):**
+```bash
+docker run -d \
+  --name zentra \
+  --restart unless-stopped \
+  --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --tmpfs /var/run:rw,noexec,nosuid,size=16m \
+  --tmpfs /var/log:rw,noexec,nosuid,size=128m \
+  --tmpfs /opt/zentra/logs:rw,noexec,nosuid,size=64m \
+  --tmpfs /root/.ssh:rw,noexec,nosuid,size=4m \
+  --security-opt=no-new-privileges:true \
+  --cap-drop ALL \
+  --cap-add CHOWN --cap-add SETUID --cap-add SETGID \
+  --cap-add DAC_OVERRIDE --cap-add FOWNER \
+  --cap-add NET_BIND_SERVICE --cap-add LINUX_IMMUTABLE \
+  --env-file /opt/zentra/.env \
+  -p 5010:5010 \
+  -v zentra-data:/var/lib/postgresql/data \
+  zentra:latest
+```
+
+**Air-gapped deployment:**
+```bash
+# On a machine with no internet
+docker load -i zentra-latest.tar.gz
+docker run -d -p 5010:5010 --name zentra \
+  --security-opt=no-new-privileges:true \
+  -v zentra-data:/var/lib/postgresql/data \
+  zentra:latest
+```
+
+### Downloading the Image Locally
+
+```powershell
+# From your Windows dev machine
+pscp -pw skyline root@10.88.11.162:/store/Zentra/docker/zentra-latest.tar.gz C:\git\Zentra\docker\zentra-latest.tar.gz
+```
+
+### Renewing / Extending Licenses
+
+The Docker image includes a 3-day trial license that activates on first boot.
+After the trial expires, the container continues to run in **degraded mode** — only the Dashboard is displayed and all other features are disabled.
+To renew:
+
+1. **Rebuild and redeploy** — Build a fresh image and deploy it. The license resets on first boot with a new volume.
+2. **Reset the volume** — `docker volume rm zentra-data` and re-run the container (data will be lost).
+3. **Contact Zentra team** — For extended or permanent licenses.
+
+---
+
+## 18. Security Considerations
+
+The Docker image includes multiple layers of hardening:
+
+| Measure | Description |
+|---|---|
+| **No source code** | Image contains only compiled binary, frontend dist, and SQL migrations. No `.rs`, `.toml`, `.git`, `node_modules`. |
+| **Stripped binary** | Debug symbols removed from `zentra-server` to reduce size and prevent reverse engineering. |
+| **Non-root runtime** | `zentra-server` runs as dedicated `zentra` user (no shell access). |
+| **Restricted DB user** | API connects as `zentra_app` (DML-only), not the `postgres` superuser. |
+| **Internal-only API** | Backend binds to `127.0.0.1:5006` — only accessible via Nginx proxy on port 5010. |
+| **Internal-only DB** | PostgreSQL binds to `127.0.0.1:5434` — not exposed outside the container. |
+| **Single port exposure** | Only port 5010 is `EXPOSE`d. No direct access to API or DB ports. |
+| **Tamper protection** | SHA-256 integrity manifest verifies critical files on every startup. |
+| **License enforcement** | Signed 3-day trial license stored in the PG volume, verified independently by the Rust binary (HMAC + binary hash). After expiry, runs in degraded mode (Dashboard only). |
+| **Immutable files** | Config, license, binary, migrations, and frontend files are locked with `chattr +i` after startup. Even root cannot modify them. |
+| **No shells** | All shell binaries (`bash`, `sh`, `csh`, `zsh`, etc.) are removed 5 seconds after startup. `docker exec` becomes useless. |
+| **No package managers** | `dnf`, `yum`, `rpm` are removed at startup. No software can be installed at runtime. |
+| **No editors** | `vi`, `vim`, `nano`, `ed`, `perl`, `lua`, `ruby` all removed. |
+| **No dangerous tools** | `wget`, `ftp`, `telnet`, `dd`, `strings`, `gcc`, `make`, `strace`, `gdb` all removed. |
+| **chattr removed** | After making files immutable, `chattr` itself is deleted — immutable bits can never be reversed. |
+| **SSH preserved** | Only `sshpass`, `ssh`, `scp` are kept (required for monitoring target servers). |
+| **Rate limiting** | Nginx rate-limits login endpoint (5 req/min per IP). |
+| **Security headers** | CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy all set. |
+| **Core dumps disabled** | Hard and soft core limits set to 0. SUID/SGID bits cleared on all binaries. |
+| **Blocked endpoints** | `/api/system/*` and `/api/pool-status` blocked from external access via Nginx. |
+| **Binary-verified license** | Rust backend independently reads the license file from disk, verifies the HMAC against its own SHA-256 hash, and checks expiry. Env var spoofing is ignored in Docker. |
+| **Anti-deletion** | If the license file is missing but the DB directory exists, the backend treats it as a bypass attempt and enforces degraded mode. |
+
+### Recommended Hardened Run Command
+
+```bash
+docker run -d \
+  --name zentra \
+  --restart unless-stopped \
+  --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --tmpfs /var/run:rw,noexec,nosuid,size=16m \
+  --tmpfs /var/log:rw,noexec,nosuid,size=128m \
+  --tmpfs /opt/zentra/logs:rw,noexec,nosuid,size=64m \
+  --tmpfs /root/.ssh:rw,noexec,nosuid,size=4m \
+  --security-opt=no-new-privileges:true \
+  --cap-drop ALL \
+  --cap-add CHOWN --cap-add SETUID --cap-add SETGID \
+  --cap-add DAC_OVERRIDE --cap-add FOWNER \
+  --cap-add NET_BIND_SERVICE --cap-add LINUX_IMMUTABLE \
+  --env-file /opt/zentra/.env \
+  -p 5010:5010 \
+  -v zentra-data:/var/lib/postgresql/data \
+  zentra:latest
+```
+
+> **Note:** The `ZENTRA_SKIP_LOCKDOWN=1` env var disables the self-lockdown phase (for debugging only — never use in production).
 
 ---
 

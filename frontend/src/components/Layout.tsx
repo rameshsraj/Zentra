@@ -37,8 +37,8 @@ import {
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
 import { useQuery } from '@tanstack/react-query'
-import { getMiddlewareDashboard, type MiddlewareServiceStatus } from '@/lib/api'
-import { LogOut, User, Lock } from 'lucide-react'
+import { getMiddlewareDashboard, getLicenseStatus, type MiddlewareServiceStatus } from '@/lib/api'
+import { LogOut, User, Lock, AlertTriangle } from 'lucide-react'
 
 const MIDDLEWARE_META: Record<string, { label: string; icon: LucideIcon }> = {
   nginx: { label: 'Nginx', icon: Globe },
@@ -282,6 +282,15 @@ export default function Layout() {
     refetchInterval: 120_000,
   })
 
+  const { data: licenseData } = useQuery({
+    queryKey: ['license-status'],
+    queryFn: getLicenseStatus,
+    staleTime: 300_000,
+    refetchInterval: 300_000,
+    retry: false,
+  })
+  const trialExpired = licenseData?.trial_expired ?? false
+
   // Map nav labels to module IDs for access control
   const NAV_MODULE_MAP: Record<string, string> = {
     'Command Center': 'command_center',
@@ -487,6 +496,7 @@ export default function Layout() {
         {/* Navigation */}
         <nav role="navigation" aria-label="Main navigation" className="flex-1 py-3 px-2 space-y-0.5 overflow-y-auto custom-scrollbar">
           {dynamicNav.filter(item => {
+            if (trialExpired) return item.label === 'Command Center'
             if (item.label === 'Administration') return userIsAdmin
             const moduleId = NAV_MODULE_MAP[item.label]
             if (moduleId && !hasModule(moduleId)) return false
@@ -631,6 +641,19 @@ export default function Layout() {
 
       {/* Main content */}
       <main id="main-content" className="flex-1 overflow-y-auto bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+        {trialExpired && (
+          <div className="bg-amber-900/80 border-b border-amber-600/50 px-6 py-3 flex items-center gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0" />
+            <div className="flex-1">
+              <p className="text-amber-200 text-sm font-medium">
+                Trial period has expired. Only the Dashboard is available.
+              </p>
+              <p className="text-amber-300/70 text-xs mt-0.5">
+                Contact the Zentra team for a production license to unlock all features.
+              </p>
+            </div>
+          </div>
+        )}
         <div className="p-6 max-w-[1600px] mx-auto">
           <ErrorBoundary>
             <Outlet />

@@ -27,6 +27,25 @@ export const getDashboardOverview = () => fetchJSON<any>('/dashboard/overview')
 export const getDashboardHealthSummary = () => fetchJSON<any>('/dashboard/health-summary')
 export const getDashboardTimeline = () => fetchJSON<any>('/dashboard/timeline')
 
+// License Status
+export interface LicenseStatus {
+  is_licensed: boolean
+  trial_expired: boolean
+  customer_name: string
+  onboarded_at: string | null
+  trial_duration_days: number
+  days_remaining: number
+  max_targets: number
+  features: {
+    enable_oracle: boolean
+    enable_ebpf_network: boolean
+    enable_ai_observability: boolean
+    enable_otel: boolean
+    allowed_menu_items: string[]
+  }
+}
+export const getLicenseStatus = () => fetchJSON<LicenseStatus>('/system/license-status')
+
 // Data Audit (V5 Prompt 19)
 export const getDataSourceAudit = () => fetchJSON<any>('/audit/data-sources')
 export const getMockDataCheck = () => fetchJSON<any>('/audit/mock-data')

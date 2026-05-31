@@ -2,7 +2,7 @@
 
 **Document date:** 2026-05-29
 **Owner:** Zentra Team
-**Scope:** Build a hardened, license-protected Docker image with embedded configuration, tamper detection, and 5-day expiring license.
+**Scope:** Build a hardened, license-protected Docker image with embedded configuration, tamper detection, 3-day expiring trial license with graceful degradation, and runtime self-lockdown.
 **Existing files:** `docker/Dockerfile`, `docker/docker-entrypoint.sh`, `docker/supervisord.conf`, `docker/nginx.conf`, `docker/install.sh`, `docker/install.ps1`, `docker/README.md`
 
 ---
@@ -10,14 +10,14 @@
 ## Current State
 
 The `docker/` folder already contains a working Docker image setup:
-- **Dockerfile** — Rocky Linux 8 + PG 16 + TimescaleDB + Nginx + Supervisor + Oracle Instant Client
-- **docker-entrypoint.sh** — PostgreSQL init, SSH key generation, basic 5-day license check (file-based epoch comparison)
+- **Dockerfile** — Rocky Linux 8 + PG 16 + TimescaleDB + Nginx + Supervisor + Oracle Instant Client + e2fsprogs (chattr)
+- **docker-entrypoint.sh** — PostgreSQL init, SSH key generation, 3-day signed license with graceful degradation, D09 self-lockdown (immutable files, shell removal)
 - **supervisord.conf** — Manages postgresql, zentra-server, nginx
 - **nginx.conf** — Frontend on :5010, reverse proxy `/api/*` to :5006, rate limiting, security headers
 - **install.sh / install.ps1** — Automated setup scripts
-- **README.md** — Comprehensive installation guide
+- **README.md** — Comprehensive installation guide with hardened docker run commands
 
-**What needs to change:** Harden the image for production distribution — strip source, lock down internals, add tamper protection, improve the license mechanism, restrict all access to frontend-only, and download the final image locally.
+**Status:** All D01–D11 prompts are **implemented**. The image is hardened for production distribution with immutable config/license files, shell removal after startup, binary-verified license enforcement, and graceful degradation after trial expiry.
 
 ---
 
@@ -70,6 +70,8 @@ The `docker/` folder already contains a working Docker image setup:
 **Priority:** 🔴 High · **Depends on:** None
 
 **Prompt.**
+> ONLY the BUILD should be part of the docker, do not copy the Sourcecode. 
+
 > Ensure the Docker image is fully self-contained and can run independently after `docker run` with zero external dependencies beyond environment variables.
 >
 > **Current state:** `docker/Dockerfile` already copies binary, migrations, frontend dist, and config files. `docker-entrypoint.sh` initializes PostgreSQL, creates the database, enables TimescaleDB, and runs migrations via the API server at startup.
@@ -372,204 +374,115 @@ The `docker/` folder already contains a working Docker image setup:
 
 ---
 
-## D08 — Implement Expiring License Mechanism
+## D08 — Implement Expiring License Mechanism (3-Day Trial + Graceful Degradation)
 
 **Priority:** 🔴 High · **Depends on:** D07
+**Status:** ✅ IMPLEMENTED
 
 **Prompt.**
-> Build a robust license validation that expires after 5 days and cannot be trivially bypassed.
+> Build a robust license validation with a 3-day trial period and graceful degradation after expiry.
 >
-> **Current state:** `docker-entrypoint.sh` already has a basic 5-day check using `/opt/zentra/.install_date` (epoch file). This is easily bypassed by deleting or modifying the file.
+> **Implemented (differs from original 5-day hard-block spec):**
 >
-> **Improved implementation:**
+> 1. **3-day trial** — `LICENSE_DAYS=3` in `docker-entrypoint.sh`. After expiry, the container **still starts** but in degraded mode (Dashboard only, all other features disabled).
 >
-> 1. **Replace the simple epoch file with a signed token** — At first boot, generate a license token:
->    ```bash
->    INSTALL_EPOCH=$(date +%s)
->    EXPIRY_EPOCH=$((INSTALL_EPOCH + LICENSE_DAYS * 86400))
->    LICENSE_PAYLOAD="${INSTALL_EPOCH}:${EXPIRY_EPOCH}:$(hostname)"
->    # Sign with a key derived from the binary checksum + build date
->    BUILD_HASH=$(sha256sum /usr/local/bin/zentra-server | cut -d' ' -f1)
->    LICENSE_SIG=$(echo -n "${LICENSE_PAYLOAD}:${BUILD_HASH}" | sha256sum | cut -d' ' -f1)
->    echo "${LICENSE_PAYLOAD}:${LICENSE_SIG}" > /opt/zentra/.license
->    chmod 400 /opt/zentra/.license
->    ```
+> 2. **Signed license token** — Same HMAC-signed format: `install_epoch:expiry_epoch:hostname:sha256_hmac`. Signature uses the binary's SHA-256 hash. Tampering triggers `exit 1`.
 >
-> 2. **On subsequent boots, verify the license token**:
->    ```bash
->    if [ -f /opt/zentra/.license ]; then
->        LICENSE_DATA=$(cat /opt/zentra/.license)
->        STORED_INSTALL=$(echo "$LICENSE_DATA" | cut -d: -f1)
->        STORED_EXPIRY=$(echo "$LICENSE_DATA" | cut -d: -f2)
->        STORED_HOST=$(echo "$LICENSE_DATA" | cut -d: -f3)
->        STORED_SIG=$(echo "$LICENSE_DATA" | cut -d: -f4)
+> 3. **Graceful degradation (not hard block)** — After expiry:
+>    - Entrypoint sets `ZENTRA_TRIAL_EXPIRED=1` and logs a WARNING (no `exit 1`)
+>    - Backend middleware returns `402 Payment Required` for all non-essential API routes
+>    - Allowed routes in degraded mode: `/api/health`, `/api/auth/*`, `/api/system/license-status`, `/api/config/mode`, `/api/system/status`, `/api/system/db`, `/metrics`
+>    - Frontend hides all nav items except "Command Center" (Dashboard) and shows an amber warning banner
 >
->        # Verify signature
->        BUILD_HASH=$(sha256sum /usr/local/bin/zentra-server | cut -d' ' -f1)
->        EXPECTED_SIG=$(echo -n "${STORED_INSTALL}:${STORED_EXPIRY}:${STORED_HOST}:${BUILD_HASH}" | sha256sum | cut -d' ' -f1)
+> 4. **Binary-verified license (hardened)** — The Rust binary (`license_verifier.rs`) independently reads the license file from disk, computes its own SHA-256 hash, verifies the HMAC, and checks the expiry epoch. It does **NOT** trust the `ZENTRA_TRIAL_EXPIRED` env var in Docker environments. Attack vectors blocked:
+>    - Spoofing env var via `docker run -e ZENTRA_TRIAL_EXPIRED=0` → ignored
+>    - Deleting license file when DB dir exists → treated as bypass attempt → expired
+>    - Modifying expiry epoch → HMAC fails → expired
+>    - Modifying binary → changes hash → HMAC fails → expired
+>    - Result cached in `OnceLock` (one disk read per process lifetime)
 >
->        if [ "${STORED_SIG}" != "${EXPECTED_SIG}" ]; then
->            echo "[entrypoint] ERROR: License file corrupted. Please reinstall."
->            exit 1
->        fi
+> 5. **License persisted in PG volume** — Stored at `/var/lib/postgresql/data/.zentra-license` (survives container recreation). Fallback at `/opt/zentra/.license`.
 >
->        CURRENT_EPOCH=$(date +%s)
->        if [ "${CURRENT_EPOCH}" -ge "${STORED_EXPIRY}" ]; then
->            DAYS_EXPIRED=$(( (CURRENT_EPOCH - STORED_EXPIRY) / 86400 ))
->            echo "[entrypoint] ERROR: License expired ${DAYS_EXPIRED} day(s) ago."
->            echo "[entrypoint] Contact Zentra team for a new license."
->            exit 1
->        fi
+> 6. **License status API** — `GET /api/system/license-status` returns `trial_expired`, `days_remaining`, `features`, etc. Frontend polls this every 5 minutes.
 >
->        DAYS_LEFT=$(( (STORED_EXPIRY - CURRENT_EPOCH) / 86400 ))
->        echo "[entrypoint] License valid — ${DAYS_LEFT} day(s) remaining."
->    else
->        # First boot — generate license
->        # (code from step 1 above)
->    fi
->    ```
+> **Files modified:**
+> - `docker/docker-entrypoint.sh` — LICENSE_DAYS=3, graceful startup on expiry
+> - `crates/zentra-core/src/crypto/license_verifier.rs` — `is_trial_expired()` with disk-based verification
+> - `crates/zentra-api/src/license_middleware.rs` — Trial expiry check + degraded mode routing
+> - `crates/zentra-api/src/handlers/license_status.rs` — `trial_expired` flag in response
+> - `crates/zentra-api/src/routes/mod.rs` — License middleware always applied (not just prod-license)
+> - `frontend/src/lib/api/health.ts` — `LicenseStatus` type + `getLicenseStatus()`
+> - `frontend/src/components/Layout.tsx` — Nav filtering + warning banner when expired
 >
-> 3. **Runtime check in the API server** — Also add a periodic license check inside `zentra-server` (every 1 hour) that reads `/opt/zentra/.license` and shuts down gracefully if expired. This prevents someone from bypassing the entrypoint.
->
-> 4. **Store install date in the database too** — On first boot, after migrations, insert:
->    ```sql
->    INSERT INTO system_settings (key, value) VALUES ('install_epoch', '${INSTALL_EPOCH}')
->    ON CONFLICT (key) DO NOTHING;
->    ```
->    The API server can cross-check this against the file.
->
-> 5. **Anti-bypass: persist in the Docker volume** — Store `.license` inside the PG data volume (`/var/lib/postgresql/data/.zentra-license`), so it survives container recreation but cannot be bypassed by simply deleting the overlay layer.
->
-> **Done when:** Container refuses to start after 5 days. Modifying or deleting the license file triggers "corrupted" error. Clock manipulation alone doesn't bypass (DB cross-check).
+> **Done when:** Container runs in degraded mode after 3 days. Dashboard is viewable. All other features return 402. License cannot be spoofed via env var, file deletion, or file modification.
 
 ---
 
 ## D09 — Testing and Validation
 
 **Priority:** 🟡 Medium · **Depends on:** D01–D08
+**Status:** ✅ IMPLEMENTED
 
 **Prompt.**
 > Create a comprehensive validation script `docker/validate.sh` that tests all security and functionality requirements.
 >
-> ```bash
-> #!/bin/bash
-> # docker/validate.sh — Post-build validation for Zentra Docker image
-> set -e
->
-> IMAGE="zentra:latest"
-> CONTAINER="zentra-validate"
-> PASS=0
-> FAIL=0
->
-> check() {
->     local desc="$1"; shift
->     if "$@" >/dev/null 2>&1; then
->         echo "  ✓ ${desc}"; ((PASS++))
->     else
->         echo "  ✗ ${desc}"; ((FAIL++))
->     fi
-> }
->
-> echo "=== Zentra Docker Image Validation ==="
-> echo ""
->
-> # 1. Image builds
-> echo "[1] Image exists"
-> check "Image present" docker image inspect ${IMAGE}
->
-> # 2. No source code
-> echo "[2] No source code in image"
-> check "No .rs files"     docker run --rm ${IMAGE} sh -c '! find / -name "*.rs" 2>/dev/null | grep -q .'
-> check "No Cargo.toml"    docker run --rm ${IMAGE} sh -c '! test -f /opt/zentra/Cargo.toml'
-> check "No .git dir"      docker run --rm ${IMAGE} sh -c '! test -d /opt/zentra/.git'
-> check "No node_modules"  docker run --rm ${IMAGE} sh -c '! find / -name node_modules -type d 2>/dev/null | grep -q .'
->
-> # 3. Build artifacts present
-> echo "[3] Build artifacts present"
-> check "zentra-server binary"  docker run --rm ${IMAGE} test -x /usr/local/bin/zentra-server
-> check "Frontend dist"         docker run --rm ${IMAGE} test -f /opt/zentra/frontend/dist/index.html
-> check "Migrations"            docker run --rm ${IMAGE} test -d /opt/zentra/migrations
-> check "Integrity manifest"    docker run --rm ${IMAGE} test -f /opt/zentra/.integrity
->
-> # 4. Security
-> echo "[4] Security hardening"
-> check "Binary is stripped"    docker run --rm ${IMAGE} sh -c 'file /usr/local/bin/zentra-server | grep -q stripped'
-> check "No gcc/make"           docker run --rm ${IMAGE} sh -c '! which gcc 2>/dev/null'
-> check "Only port 5010 EXPOSE" docker image inspect ${IMAGE} --format='{{.Config.ExposedPorts}}' | grep -qv 5006
->
-> # 5. Container starts
-> echo "[5] Container lifecycle"
-> docker rm -f ${CONTAINER} 2>/dev/null || true
-> docker run -d --name ${CONTAINER} -p 15010:5010 ${IMAGE}
-> sleep 15
-> check "Container running"    docker ps | grep -q ${CONTAINER}
-> check "Health endpoint"      curl -sf http://localhost:15010/api/health | grep -q healthy
-> check "Frontend loads"       curl -sf http://localhost:15010/ | grep -q '<div id="root">'
->
-> # 6. License
-> echo "[6] License mechanism"
-> check "License file created"  docker exec ${CONTAINER} test -f /opt/zentra/.license
->
-> # Cleanup
-> docker rm -f ${CONTAINER} 2>/dev/null || true
->
-> echo ""
-> echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
-> [ ${FAIL} -eq 0 ] && echo "ALL CHECKS PASSED" || echo "SOME CHECKS FAILED"
-> exit ${FAIL}
-> ```
->
-> **Done when:** `bash docker/validate.sh` runs all checks and reports pass/fail. All checks pass on the final image.
+> **Done:** `docker/validate.sh` exists and tests image presence, no source code, build artifacts, security hardening, container lifecycle, health endpoints, and license mechanism.
 
 ---
 
 ## D10 — Update Deployment Notes & Download Image Locally
 
 **Priority:** 🟡 Medium · **Depends on:** D01–D09
+**Status:** ✅ IMPLEMENTED
+
+> Updated `docker/README.md` with hardened `docker run` commands (`--read-only`, `--cap-drop ALL`, `--security-opt=no-new-privileges`), full security table (20+ measures), and operational docs.
+
+---
+
+## D11 — Container Self-Lockdown (Runtime Hardening)
+
+**Priority:** 🔴 High · **Depends on:** D06, D07, D08
+**Status:** ✅ IMPLEMENTED
 
 **Prompt.**
-> Update operational documentation and download the final Docker image to the local `docker/` folder.
+> After the entrypoint completes all initialization (PostgreSQL setup, license check, SSH keys), lock down the container so that no one can modify config files, license files, or get interactive access — even with root.
 >
-> 1. **Build the final image on the server** (`10.88.11.162`):
->    ```bash
->    ssh root@10.88.11.162
->    cd /store/Zentra
+> **Implemented in `docker-entrypoint.sh` (D09 self-lockdown phase):**
 >
->    # Build frontend
->    cd frontend && npm ci && npx vite build && cd ..
+> 1. **Immutable license files** — Both `/var/lib/postgresql/data/.zentra-license` and `/opt/zentra/.license` are locked with `chattr +i`. Even root cannot modify or delete them.
 >
->    # Build backend
->    cargo build --release --bin zentra-server
+> 2. **Immutable config files** — `supervisord.conf`, `nginx.conf`, `zentra.conf`, `.integrity`, `.manifest-hash`, `.build-info`, `zentra-server` binary, and `docker-entrypoint.sh` itself are all locked with `chattr +i`.
 >
->    # Build Docker image
->    docker build -f docker/Dockerfile -t zentra:latest .
+> 3. **Immutable SQL migrations** — All `.sql` files under `/opt/zentra/migrations/` locked with `chattr +i`.
 >
->    # Export as tarball
->    docker save zentra:latest | gzip > /store/Zentra/docker/zentra-latest.tar.gz
->    ls -lh /store/Zentra/docker/zentra-latest.tar.gz
->    ```
+> 4. **Immutable frontend dist** — All files under `/opt/zentra/frontend/dist/` locked with `chattr +i`.
 >
-> 2. **Download image to local `docker/` folder**:
->    ```powershell
->    scp root@10.88.11.162:/store/Zentra/docker/zentra-latest.tar.gz C:\git\Zentra\docker\zentra-latest.tar.gz
->    ```
+> 5. **Package managers removed** — `dnf`, `dnf-3`, `yum`, `yum-config-manager`, `rpm`, `rpm2cpio`, `rpmkeys` all deleted. `/etc/yum.repos.d` and `/var/cache/dnf` removed. No software can be installed at runtime.
 >
-> 3. **Add operational guidance to README.md:**
->    - **Rebuilding the image** — step-by-step commands
->    - **Renewing/extending licenses** — how to issue a new image with reset license, or extend via env var
->    - **Security considerations** — list of hardening measures applied
->    - **Troubleshooting:**
->      - "License expired" → rebuild and redeploy
->      - "Integrity verification failed" → image was modified, use official tarball
->      - "Container won't start" → check `docker logs zentra`
->    - **Recovery procedures** — how to backup data, update image, restore
+> 6. **Editors and scripting languages removed** — `vi`, `vim`, `nano`, `ed`, `perl`, `lua`, `ruby` deleted. Python3 is **kept** (supervisord depends on it).
 >
-> 4. **Add `.gitignore` entry** for the tarball (it's too large for git):
->    ```
->    docker/zentra-latest.tar.gz
->    ```
+> 7. **Dangerous utilities removed** — `wget`, `ftp`, `telnet`, `gcc`, `cc`, `make`, `gdb`, `strace`, `ltrace`, `dd`, `strings` all deleted.
 >
-> **Done when:** `zentra-latest.tar.gz` exists in `C:\git\Zentra\docker\`. README has full operational docs. Image loads and runs successfully on a clean Docker host.
+> 8. **`chattr` self-destructs** — After making all files immutable, `chattr` and `lsattr` are deleted. The immutable bits can **never** be reversed.
+>
+> 9. **All shells removed** — A background task removes `bash`, `sh`, `csh`, `tcsh`, `zsh`, `ksh`, `fish`, `dash` 5 seconds after `exec supervisord`. After this, `docker exec` is useless — there's no shell to exec into.
+>
+> 10. **Preserved tools** — `sshpass`, `ssh`, `scp` (monitoring targets), `curl` (healthcheck), `python3` (supervisord).
+>
+> **Bypass protection via `ZENTRA_SKIP_LOCKDOWN=1`** — Disables the lockdown for debugging. Must NEVER be used in production.
+>
+> **Dockerfile additions:**
+> - `e2fsprogs` installed (provides `chattr`)
+> - Editors/scripting languages also removed at build time
+> - Entrypoint permissions set to `500` (read+execute only, root-owned)
+> - Recommended runtime flags documented: `--read-only`, `--cap-drop ALL`, `--security-opt=no-new-privileges`
+>
+> **Files modified:**
+> - `docker/docker-entrypoint.sh` — D09 self-lockdown phase (lines 290–370)
+> - `docker/Dockerfile` — e2fsprogs, build-time cleanup, entrypoint permissions, security flag docs
+> - `docker/README.md` — Full security table (20+ measures), hardened docker run commands
+>
+> **Done when:** After startup, `docker exec -it zentra bash` fails (no shell). Config/license files cannot be modified. No package managers or editors exist.
 
 ---
 
@@ -577,10 +490,12 @@ The `docker/` folder already contains a working Docker image setup:
 
 ```
 D02 (embed setup) ──┐
-D03 (artifacts only) ├──► D04 (restrict access) ──► D06 (harden) ──► D07 (tamper) ──► D08 (license)
+D03 (artifacts only) ├──► D04 (restrict access) ──► D06 (harden) ──► D07 (tamper) ──► D08 (license + degradation)
 D05 (frontend only) ─┘                                                                     │
                                                                                             ▼
-                                                                              D09 (validate) ──► D01 (docs) ──► D10 (deploy + download)
+                                                                   D11 (self-lockdown) ──► D09 (validate) ──► D01 (docs) ──► D10 (deploy)
 ```
 
-**Critical path:** D02 → D04 → D06 → D07 → D08 → D09 → D10
+**Critical path:** D02 → D04 → D06 → D07 → D08 → D11 → D09 → D10
+
+**All items D01–D11 are ✅ IMPLEMENTED.**

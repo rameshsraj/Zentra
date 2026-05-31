@@ -1,20 +1,63 @@
 use axum::{
-    extract::{Request, State},
+    extract::Request,
     http::StatusCode,
     middleware::Next,
-    response::Response,
+    response::{IntoResponse, Response},
+    Json,
 };
-use zentra_core::crypto::license_verifier::{check_license_active, load_and_verify_license};
+use zentra_core::crypto::license_verifier::{check_license_active, is_trial_expired, load_and_verify_license};
+
+/// Routes that remain accessible even after trial expiry.
+/// These allow the user to log in, view the dashboard, and see the license status.
+const TRIAL_ALLOWED_PREFIXES: &[&str] = &[
+    "/api/health",
+    "/api/auth/",
+    "/api/system/license-status",
+    "/api/config/mode",
+    "/api/system/status",
+    "/api/system/db",
+    "/metrics",
+];
+
+/// Check if a path is allowed in trial-expired (degraded) mode.
+fn is_allowed_in_degraded_mode(path: &str) -> bool {
+    // Exact matches
+    if path == "/api/health" || path == "/api/auth/me" {
+        return true;
+    }
+    // Prefix matches
+    for prefix in TRIAL_ALLOWED_PREFIXES {
+        if path.starts_with(prefix) {
+            return true;
+        }
+    }
+    false
+}
 
 /// Axum Middleware to validate license integrity and limits dynamically on production builds.
-/// In local development or with licensing disabled, it passes through.
+/// When trial is expired, allows only health/auth/dashboard endpoints (degraded mode).
 #[cfg(feature = "prod-license")]
 pub async fn enforce_license_middleware(
     request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
+    let path = request.uri().path().to_string();
+
+    // --- Trial expiry check (graceful degradation) ---
+    if is_trial_expired() {
+        if is_allowed_in_degraded_mode(&path) {
+            return Ok(next.run(request).await);
+        }
+        tracing::warn!(target: "license_middleware", path = %path, "Trial expired — blocked in degraded mode");
+        let body = serde_json::json!({
+            "error": "trial_expired",
+            "message": "Your trial period has expired. Only the Dashboard is available. Contact the Zentra team for a production license."
+        });
+        return Ok((StatusCode::PAYMENT_REQUIRED, Json(body)).into_response());
+    }
+
+    // --- Standard license verification (prod-license feature) ---
     if check_license_active() {
-        // Parse and verify standard OS-specific system license json
         let license = match load_and_verify_license() {
             Ok(lic) => lic,
             Err(e) => {
@@ -23,9 +66,6 @@ pub async fn enforce_license_middleware(
             }
         };
 
-        // Enforce route-based premium feature gates
-        let path = request.uri().path();
-        
         // 1. Oracle Feature Gate
         if path.starts_with("/api/v1/oracle") && !license.features.enable_oracle {
             tracing::warn!(target: "license_middleware", "Access denied: Oracle premium features are not enabled by your license.");
@@ -56,11 +96,26 @@ pub async fn enforce_license_middleware(
     Ok(next.run(request).await)
 }
 
-/// Axum Middleware to validate license integrity (dev/test stub - pass through).
+/// Axum Middleware (non-prod builds). Still enforces trial expiry degradation
+/// via the ZENTRA_TRIAL_EXPIRED env var set by docker-entrypoint.sh.
 #[cfg(not(feature = "prod-license"))]
 pub async fn enforce_license_middleware(
     request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
+    let path = request.uri().path().to_string();
+
+    if is_trial_expired() {
+        if is_allowed_in_degraded_mode(&path) {
+            return Ok(next.run(request).await);
+        }
+        tracing::warn!(target: "license_middleware", path = %path, "Trial expired — blocked in degraded mode");
+        let body = serde_json::json!({
+            "error": "trial_expired",
+            "message": "Your trial period has expired. Only the Dashboard is available. Contact the Zentra team for a production license."
+        });
+        return Ok((StatusCode::PAYMENT_REQUIRED, Json(body)).into_response());
+    }
+
     Ok(next.run(request).await)
 }

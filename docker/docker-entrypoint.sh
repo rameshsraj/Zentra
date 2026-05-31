@@ -33,9 +33,10 @@ elif [ -f "${INTEGRITY_FILE}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# D08: License expiration check (5-day trial, signed + tamper-resistant)
+# D08: License expiration check (3-day trial, signed + tamper-resistant)
+# After expiry the container still starts but in degraded mode (Dashboard only).
 # ---------------------------------------------------------------------------
-LICENSE_DAYS=5
+LICENSE_DAYS=3
 LICENSE_FILE="/var/lib/postgresql/data/.zentra-license"
 BUILD_HASH=$(sha256sum /usr/local/bin/zentra-server | cut -d' ' -f1)
 
@@ -66,15 +67,17 @@ verify_license() {
     local current_epoch=$(date +%s)
     if [ "${current_epoch}" -ge "${stored_expiry}" ]; then
         local days_expired=$(( (current_epoch - stored_expiry) / 86400 ))
-        echo "[entrypoint] ERROR: License expired ${days_expired} day(s) ago."
-        echo "[entrypoint] Contact the Zentra team for a new license or image."
-        exit 1
-    fi
-
-    local days_left=$(( (stored_expiry - current_epoch) / 86400 ))
-    echo "[entrypoint] License valid — ${days_left} day(s) remaining."
-    if [ "${days_left}" -le 1 ]; then
-        echo "[entrypoint] WARNING: License expires in less than 24 hours!"
+        echo "[entrypoint] WARNING: Trial license expired ${days_expired} day(s) ago."
+        echo "[entrypoint] Running in DEGRADED mode — Dashboard view only, all features disabled."
+        echo "[entrypoint] Contact the Zentra team for a production license."
+        export ZENTRA_TRIAL_EXPIRED=1
+    else
+        local days_left=$(( (stored_expiry - current_epoch) / 86400 ))
+        echo "[entrypoint] License valid — ${days_left} day(s) remaining."
+        if [ "${days_left}" -le 1 ]; then
+            echo "[entrypoint] WARNING: License expires in less than 24 hours!"
+        fi
+        export ZENTRA_TRIAL_EXPIRED=0
     fi
 }
 
@@ -92,6 +95,7 @@ else
     LICENSE_TOKEN=$(generate_license)
     echo "${LICENSE_TOKEN}" > "${FALLBACK_LICENSE}"
     chmod 400 "${FALLBACK_LICENSE}"
+    export ZENTRA_TRIAL_EXPIRED=0
     echo "[entrypoint] License activated — ${LICENSE_DAYS}-day trial started."
 fi
 
@@ -123,7 +127,8 @@ export ZENTRA_ORG_ID="${ZENTRA_ORG_ID:-00000000-0000-0000-0000-000000000001}"
 export ZENTRA_BIND_ADDR="${ZENTRA_BIND_ADDR:-127.0.0.1}"
 
 # D04: Use restricted app user for DATABASE_URL (not superuser)
-export DATABASE_URL="${DATABASE_URL:-postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/${POSTGRES_DB}}"
+# zentra_app has DML + CREATE (for migrations) but no superuser/DDL-on-system privileges
+export DATABASE_URL="${DATABASE_URL:-postgresql://zentra_app:${POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/${POSTGRES_DB}}"
 
 PGDATA="/var/lib/postgresql/data"
 
@@ -185,6 +190,27 @@ EOFCONF
     su - postgres -c "psql -p ${POSTGRES_PORT} -d ${POSTGRES_DB} -c 'CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;'"
     su - postgres -c "psql -p ${POSTGRES_PORT} -d ${POSTGRES_DB} -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm;'" || true
     su - postgres -c "psql -p ${POSTGRES_PORT} -d ${POSTGRES_DB} -c 'CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";'" || true
+
+    # D04: Create restricted application user (least-privilege)
+    echo "[entrypoint] Creating restricted 'zentra_app' database user..."
+    su - postgres -c "psql -p ${POSTGRES_PORT} -d ${POSTGRES_DB}" <<EOFSQL
+DO \$\$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'zentra_app') THEN
+        CREATE USER zentra_app WITH PASSWORD '${POSTGRES_PASSWORD}';
+    ELSE
+        ALTER USER zentra_app WITH PASSWORD '${POSTGRES_PASSWORD}';
+    END IF;
+END
+\$\$;
+GRANT CONNECT ON DATABASE ${POSTGRES_DB} TO zentra_app;
+GRANT USAGE ON SCHEMA public TO zentra_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO zentra_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO zentra_app;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO zentra_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO zentra_app;
+GRANT CREATE ON SCHEMA public TO zentra_app;
+EOFSQL
 
     echo "[entrypoint] Stopping PostgreSQL after init..."
     su - postgres -c "/usr/pgsql-16/bin/pg_ctl -D ${PGDATA} stop -m fast -w"
@@ -259,6 +285,85 @@ Host *
     ConnectTimeout 10
 EOFSSH
     chmod 600 /root/.ssh/config
+fi
+
+# ---------------------------------------------------------------------------
+# D09: Self-lockdown — harden the container BEFORE starting services
+# After this block: no shells, no editors, no package managers, and all
+# config/license files are immutable (even root cannot modify).
+# Preserved: sshpass, ssh, scp, curl (needed for monitoring + healthcheck)
+# ---------------------------------------------------------------------------
+if [ "${ZENTRA_SKIP_LOCKDOWN:-0}" != "1" ]; then
+    echo "[entrypoint] Phase: SELF-LOCKDOWN — securing container..."
+
+    # 1. Make license files immutable (even root cannot modify without chattr -i)
+    for lf in "${LICENSE_FILE}" "${FALLBACK_LICENSE}"; do
+        if [ -f "${lf}" ]; then
+            chattr +i "${lf}" 2>/dev/null || true
+        fi
+    done
+
+    # 2. Make configuration and integrity files immutable
+    for cf in \
+        /etc/supervisord.conf \
+        /etc/nginx/conf.d/zentra.conf \
+        /etc/nginx/nginx.conf \
+        /opt/zentra/.integrity \
+        /opt/zentra/.manifest-hash \
+        /opt/zentra/.build-info \
+        /usr/local/bin/zentra-server \
+        /usr/local/bin/docker-entrypoint.sh \
+    ; do
+        if [ -f "${cf}" ]; then
+            chattr +i "${cf}" 2>/dev/null || true
+        fi
+    done
+
+    # 3. Make all SQL migrations immutable
+    find /opt/zentra/migrations -name '*.sql' -exec chattr +i {} \; 2>/dev/null || true
+
+    # 4. Make frontend dist immutable
+    find /opt/zentra/frontend/dist -type f -exec chattr +i {} \; 2>/dev/null || true
+
+    # 5. Remove package managers (prevent installing tools at runtime)
+    rm -f /usr/bin/dnf /usr/bin/dnf-3 /usr/bin/yum \
+          /usr/bin/yum-config-manager /usr/bin/rpm \
+          /usr/bin/rpm2cpio /usr/bin/rpmkeys 2>/dev/null || true
+    rm -rf /etc/yum.repos.d /var/cache/dnf 2>/dev/null || true
+
+    # 6. Remove editors and scripting languages
+    #    NOTE: python3 is kept because supervisord depends on it.
+    #    We remove perl/lua/ruby and all editors.
+    rm -f /usr/bin/vi /usr/bin/vim /usr/bin/nano /usr/bin/ed \
+          /usr/bin/perl /usr/bin/lua /usr/bin/ruby 2>/dev/null || true
+
+    # 7. Remove dangerous file-manipulation utilities
+    rm -f /usr/bin/wget /usr/bin/ftp /usr/bin/telnet \
+          /usr/bin/gcc /usr/bin/cc /usr/bin/make \
+          /usr/bin/gdb /usr/bin/strace /usr/bin/ltrace \
+          /usr/bin/dd /usr/bin/strings 2>/dev/null || true
+
+    # 8. Remove chattr itself (so immutable bits can NEVER be reversed)
+    rm -f /usr/bin/chattr /usr/bin/lsattr 2>/dev/null || true
+
+    echo "[entrypoint] Config and license files locked (immutable)."
+    echo "[entrypoint] Package managers, editors, scripting languages removed."
+
+    # 9. Remove all shells AFTER exec hands off to supervisord.
+    #    We cannot remove bash while we're running in it, so we spawn a
+    #    background task that waits for supervisord to start, then removes
+    #    all shell binaries. After this, 'docker exec' becomes useless.
+    (
+        sleep 5
+        rm -f /bin/bash /bin/sh /usr/bin/bash /usr/bin/sh \
+              /usr/bin/csh /usr/bin/tcsh /usr/bin/zsh \
+              /usr/bin/ksh /usr/bin/fish /usr/bin/dash 2>/dev/null
+        # Remove the cleanup script itself
+        rm -f /opt/zentra/cleanup-seeds.sh 2>/dev/null
+        echo "[lockdown] All shells removed. Container is now locked down."
+    ) &
+
+    echo "[entrypoint] LOCKDOWN COMPLETE — container will be fully sealed in 5s."
 fi
 
 echo "[entrypoint] Starting all services via supervisord..."

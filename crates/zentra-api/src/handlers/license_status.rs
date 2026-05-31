@@ -1,13 +1,14 @@
 use axum::{
-    extract::State,
     response::IntoResponse,
     Json,
 };
 use serde_json::json;
-use zentra_core::crypto::license_verifier::{check_license_active, load_and_verify_license};
+use zentra_core::crypto::license_verifier::{is_trial_expired, load_and_verify_license};
 
 /// API handler returning the current cryptographic license status and menu item permissions
 pub async fn get_license_status() -> impl IntoResponse {
+    let trial_expired = is_trial_expired();
+
     // Try loading and parsing production license
     match load_and_verify_license() {
         Ok(payload) => {
@@ -18,6 +19,7 @@ pub async fn get_license_status() -> impl IntoResponse {
 
             Json(json!({
                 "is_licensed": true,
+                "trial_expired": trial_expired,
                 "customer_name": payload.customer_name,
                 "onboarded_at": payload.onboarded_at,
                 "trial_duration_days": payload.trial_duration_days,
@@ -33,9 +35,9 @@ pub async fn get_license_status() -> impl IntoResponse {
             }))
         }
         Err(e) => {
-            // Unlicensed or signature failed
             Json(json!({
                 "is_licensed": false,
+                "trial_expired": trial_expired,
                 "error": e,
                 "customer_name": "Unlicensed Installation",
                 "onboarded_at": null,

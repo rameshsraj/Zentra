@@ -13,6 +13,117 @@ pub const fn check_license_active() -> bool {
     cfg!(feature = "prod-license")
 }
 
+/// Returns true when the trial period has expired.
+///
+/// **Hardened:** Does NOT trust the ZENTRA_TRIAL_EXPIRED env var alone.
+/// Instead, reads the license token file directly from disk, verifies the
+/// HMAC signature against the binary hash, and checks expiry independently.
+///
+/// Attack vectors this prevents:
+/// - Spoofing ZENTRA_TRIAL_EXPIRED=0 via `docker run -e`
+/// - Deleting the license file to force regeneration (detected: DB dir
+///   exists but license is missing → treated as expired/tampered)
+///
+/// The result is cached in a OnceLock so the file is only read once per
+/// process lifetime.
+pub fn is_trial_expired() -> bool {
+    use std::sync::OnceLock;
+    static CACHED: OnceLock<bool> = OnceLock::new();
+    *CACHED.get_or_init(|| verify_trial_token_from_disk())
+}
+
+/// Independently verify the shell-level license token by reading the file,
+/// checking the HMAC, and comparing the expiry epoch against the current time.
+///
+/// Token format (colon-separated):
+///   install_epoch : expiry_epoch : hostname : sha256_hmac
+///
+/// The HMAC is: sha256("install:expiry:hostname:binary_sha256")
+fn verify_trial_token_from_disk() -> bool {
+    use sha2::{Sha256, Digest};
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    // Paths matching docker-entrypoint.sh
+    let primary = "/var/lib/postgresql/data/.zentra-license";
+    let fallback = "/opt/zentra/.license";
+    let binary = "/usr/local/bin/zentra-server";
+    let pgdata = "/var/lib/postgresql/data";
+
+    // Read the license token from primary or fallback location
+    let token_content = if let Ok(content) = fs::read_to_string(primary) {
+        content
+    } else if let Ok(content) = fs::read_to_string(fallback) {
+        content
+    } else {
+        // No license file found.
+        // If PGDATA dir exists, this is a bypass attempt (file was deleted).
+        // If PGDATA doesn't exist, we're in a dev/non-Docker environment.
+        if std::path::Path::new(pgdata).exists() {
+            tracing::error!(target: "license", "License file missing but DB exists — treating as expired (possible bypass attempt)");
+            return true; // expired / tampered
+        }
+        // Non-Docker environment: fall back to env var for dev/test
+        return std::env::var("ZENTRA_TRIAL_EXPIRED")
+            .map(|v| v == "1" || v == "true")
+            .unwrap_or(false);
+    };
+
+    let token = token_content.trim();
+    let parts: Vec<&str> = token.split(':').collect();
+    if parts.len() != 4 {
+        tracing::error!(target: "license", "Malformed license token ({} fields, expected 4)", parts.len());
+        return true; // treat malformed as expired
+    }
+
+    let stored_install = parts[0];
+    let stored_expiry = parts[1];
+    let stored_host = parts[2];
+    let stored_sig = parts[3];
+
+    // Compute the binary hash (same as BUILD_HASH in entrypoint)
+    let binary_hash = match fs::read(binary) {
+        Ok(bytes) => {
+            let mut hasher = Sha256::new();
+            hasher.update(&bytes);
+            format!("{:x}", hasher.finalize())
+        }
+        Err(_) => {
+            // Binary not found — dev environment, fall back to env var
+            return std::env::var("ZENTRA_TRIAL_EXPIRED")
+                .map(|v| v == "1" || v == "true")
+                .unwrap_or(false);
+        }
+    };
+
+    // Verify HMAC: sha256("install:expiry:hostname:binary_hash")
+    let payload = format!("{}:{}:{}:{}", stored_install, stored_expiry, stored_host, binary_hash);
+    let mut hasher = Sha256::new();
+    hasher.update(payload.as_bytes());
+    let expected_sig = format!("{:x}", hasher.finalize());
+
+    if stored_sig != expected_sig {
+        tracing::error!(target: "license", "License signature mismatch — file may be tampered");
+        return true; // tampered = expired
+    }
+
+    // Parse expiry epoch and compare to current time
+    let expiry_epoch: u64 = match stored_expiry.parse() {
+        Ok(v) => v,
+        Err(_) => {
+            tracing::error!(target: "license", "Invalid expiry epoch in license token");
+            return true;
+        }
+    };
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    now >= expiry_epoch
+}
+
 #[cfg(feature = "prod-license")]
 use crate::models::license_verification::LicenseFile;
 

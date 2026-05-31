@@ -77,7 +77,6 @@ pub fn build_router(state: AppState) -> Router {
         .merge(ai::router())
         .merge(otlp::router());
 
-    #[cfg(feature = "prod-license")]
     let router = router.layer(middleware::from_fn(crate::license_middleware::enforce_license_middleware));
 
     router
