@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Outlet, NavLink, useLocation } from 'react-router-dom'
+import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import ErrorBoundary from './ErrorBoundary'
 import CommandPalette from './CommandPalette'
 import FloatingChatbot from './FloatingChatbot'
@@ -282,6 +282,8 @@ export default function Layout() {
     refetchInterval: 120_000,
   })
 
+  const navigate = useNavigate()
+
   const { data: licenseData } = useQuery({
     queryKey: ['license-status'],
     queryFn: getLicenseStatus,
@@ -290,6 +292,13 @@ export default function Layout() {
     retry: false,
   })
   const trialExpired = licenseData?.trial_expired ?? false
+
+  // When trial is expired, force-redirect any non-dashboard route to /dashboard
+  useEffect(() => {
+    if (trialExpired && location.pathname !== '/dashboard') {
+      navigate('/dashboard', { replace: true })
+    }
+  }, [trialExpired, location.pathname, navigate])
 
   // Map nav labels to module IDs for access control
   const NAV_MODULE_MAP: Record<string, string> = {

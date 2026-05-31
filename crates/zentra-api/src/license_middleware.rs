@@ -9,14 +9,26 @@ use zentra_core::crypto::license_verifier::{check_license_active, is_trial_expir
 
 /// Routes that remain accessible even after trial expiry.
 /// These allow the user to log in, view the dashboard, and see the license status.
+/// The Command Center (Dashboard) is the only UI available in degraded mode,
+/// so all API endpoints it calls must be allowed here.
 const TRIAL_ALLOWED_PREFIXES: &[&str] = &[
     "/api/health",
     "/api/auth/",
     "/api/system/license-status",
-    "/api/config/mode",
     "/api/system/status",
     "/api/system/db",
+    "/api/config/mode",
     "/metrics",
+    // Dashboard (Command Center) data endpoints — read-only
+    "/api/alerts",
+    "/api/targets",
+    "/api/events",
+    "/api/network/capture",
+    "/api/network/traffic",
+    "/api/network/protocols",
+    "/api/ai/insights",
+    "/api/predictions/summary",
+    "/api/dashboard/",
 ];
 
 /// Check if a path is allowed in trial-expired (degraded) mode.

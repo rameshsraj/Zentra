@@ -50,6 +50,12 @@ fn verify_trial_token_from_disk() -> bool {
     let binary = "/usr/local/bin/zentra-server";
     let pgdata = "/var/lib/postgresql/data";
 
+    // Detect if we're running inside a Docker container
+    let in_docker = std::path::Path::new("/.dockerenv").exists()
+        || fs::read_to_string("/proc/1/cgroup")
+            .map(|s| s.contains("docker") || s.contains("containerd") || s.contains("kubepods"))
+            .unwrap_or(false);
+
     // Read the license token from primary or fallback location
     let token_content = if let Ok(content) = fs::read_to_string(primary) {
         content
@@ -57,13 +63,15 @@ fn verify_trial_token_from_disk() -> bool {
         content
     } else {
         // No license file found.
-        // If PGDATA dir exists, this is a bypass attempt (file was deleted).
-        // If PGDATA doesn't exist, we're in a dev/non-Docker environment.
-        if std::path::Path::new(pgdata).exists() {
+        // Anti-deletion check ONLY inside Docker: if PGDATA dir exists but
+        // license file is missing, someone deleted it → treat as expired.
+        // Outside Docker (dev/bare-metal), PGDATA may exist from the system
+        // PostgreSQL and has nothing to do with Zentra licensing.
+        if in_docker && std::path::Path::new(pgdata).exists() {
             tracing::error!(target: "license", "License file missing but DB exists — treating as expired (possible bypass attempt)");
             return true; // expired / tampered
         }
-        // Non-Docker environment: fall back to env var for dev/test
+        // Non-Docker or no PGDATA: fall back to env var for dev/test
         return std::env::var("ZENTRA_TRIAL_EXPIRED")
             .map(|v| v == "1" || v == "true")
             .unwrap_or(false);

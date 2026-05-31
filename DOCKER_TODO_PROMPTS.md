@@ -1,501 +1,566 @@
-# Zentra — Secure Docker Image: TODO Prompts
+# Zentra — Docker Image: Build & Deploy Prompts
 
-**Document date:** 2026-05-29
+**Document date:** 2026-05-31
 **Owner:** Zentra Team
-**Scope:** Build a hardened, license-protected Docker image with embedded configuration, tamper detection, 3-day expiring trial license with graceful degradation, and runtime self-lockdown.
-**Existing files:** `docker/Dockerfile`, `docker/docker-entrypoint.sh`, `docker/supervisord.conf`, `docker/nginx.conf`, `docker/install.sh`, `docker/install.ps1`, `docker/README.md`
+**Scope:** Step-by-step prompts for building, verifying, and distributing the Zentra Docker image on the Linux build server (`10.88.11.162`).
 
 ---
 
-## Current State
+## Golden Rules
 
-The `docker/` folder already contains a working Docker image setup:
-- **Dockerfile** — Rocky Linux 8 + PG 16 + TimescaleDB + Nginx + Supervisor + Oracle Instant Client + e2fsprogs (chattr)
-- **docker-entrypoint.sh** — PostgreSQL init, SSH key generation, 3-day signed license with graceful degradation, D09 self-lockdown (immutable files, shell removal)
-- **supervisord.conf** — Manages postgresql, zentra-server, nginx
-- **nginx.conf** — Frontend on :5010, reverse proxy `/api/*` to :5006, rate limiting, security headers
-- **install.sh / install.ps1** — Automated setup scripts
-- **README.md** — Comprehensive installation guide with hardened docker run commands
+> **1. BUILD ON THE SERVER ONLY — NEVER LOCALLY.**
+> The Docker image must be built on the Linux build server (`10.88.11.162`) where Rust, Node.js, and Docker are installed.
+> Do NOT attempt to build the image on a Windows/macOS dev machine. The Dockerfile targets Linux (Rocky Linux 8) and requires a Linux ELF binary.
 
-**Status:** All D01–D11 prompts are **implemented**. The image is hardened for production distribution with immutable config/license files, shell removal after startup, binary-verified license enforcement, and graceful degradation after trial expiry.
-
----
-
-## D01 — Document Docker Image Creation Process
-
-**Priority:** 🟡 Medium · **Depends on:** D02–D06 (write docs after implementation)
-
-**Prompt.**
-> Update `docker/README.md` to add a new section **"Building the Docker Image"** covering:
->
-> 1. **Prerequisites on the build server** (`10.88.11.162`):
->    - Rust toolchain (`rustc 1.95+`, `cargo`)
->    - Node.js 18+ and npm (for frontend build)
->    - Docker installed and running
->    - Network access to pull base image `rockylinux:8` and RPM repos
->
-> 2. **Build steps** (step-by-step commands):
->    ```bash
->    # 1. Build frontend
->    cd /store/Zentra/frontend && npm ci && npx vite build
->
->    # 2. Build backend (release)
->    cd /store/Zentra && cargo build --release --bin zentra-server
->
->    # 3. Build Docker image
->    docker build -f docker/Dockerfile -t zentra:latest .
->
->    # 4. Export image as tarball
->    docker save zentra:latest | gzip > docker/zentra-latest.tar.gz
->    ```
->
-> 3. **Validation commands** after build:
->    ```bash
->    docker run --rm zentra:latest cat /opt/zentra/.build-info
->    docker run --rm zentra:latest ls -la /usr/local/bin/zentra-server
->    docker run --rm zentra:latest ls /opt/zentra/frontend/dist/index.html
->    ```
->
-> 4. **Environment-specific examples:**
->    - Local dev: `docker run -d -p 5010:5010 zentra:latest`
->    - Production: full command with `--env-file`, named volume, `--restart unless-stopped`
->    - Air-gapped: `docker load -i zentra-latest.tar.gz`
->
-> **Done when:** README has a complete "Building" section a new engineer can follow cold.
+> **2. IMAGE CONTAINS ONLY THE EXECUTABLE — NO SOURCE CODE.**
+> The Docker image ships **only** the compiled binary (`zentra-server`), compiled frontend (`dist/`), SQL migrations, and config files.
+> NO `.rs` files, NO `.ts` files, NO `Cargo.toml`, NO `Cargo.lock`, NO `.git/`, NO `node_modules/`, NO `frontend/src/`, NO `crates/`.
+> The Rust source and TypeScript source are compiled **before** `docker build` and only the output artifacts are copied in.
 
 ---
 
-## D02 — Embed Full Application Setup into Docker Image
+## What Gets Copied Into the Image
 
-**Priority:** 🔴 High · **Depends on:** None
+| Source (Build Output) | Destination in Image | Purpose |
+|-----------------------|----------------------|---------|
+| `target/release/zentra-server` | `/usr/local/bin/zentra-server` | Stripped Rust/Axum backend binary |
+| `migrations/*.sql` | `/opt/zentra/migrations/` | SQL schema migrations |
+| `frontend/dist/` | `/opt/zentra/frontend/dist/` | Compiled React SPA (Vite build output) |
+| `docker/supervisord.conf` | `/etc/supervisord.conf` | Process manager config |
+| `docker/nginx.conf` | `/etc/nginx/conf.d/zentra.conf` | Reverse proxy config |
+| `docker/docker-entrypoint.sh` | `/usr/local/bin/docker-entrypoint.sh` | Container startup script |
 
-**Prompt.**
-> ONLY the BUILD should be part of the docker, do not copy the Sourcecode. 
+**Generated at build time inside the image:**
 
-> Ensure the Docker image is fully self-contained and can run independently after `docker run` with zero external dependencies beyond environment variables.
->
-> **Current state:** `docker/Dockerfile` already copies binary, migrations, frontend dist, and config files. `docker-entrypoint.sh` initializes PostgreSQL, creates the database, enables TimescaleDB, and runs migrations via the API server at startup.
->
-> **Tweaks needed:**
->
-> 1. **Add a build-info file** — In the Dockerfile, after copying the binary, write build metadata:
->    ```dockerfile
->    RUN echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /opt/zentra/.build-info && \
->        echo "image_version=1.0.0" >> /opt/zentra/.build-info
->    ```
->
-> 2. **Embed default `.env` values** — The entrypoint already sets defaults for `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_PORT`, `DATABASE_URL`, `ZENTRA_API_PORT`. Verify all required env vars have sane defaults so the container starts with zero configuration:
->    ```bash
->    docker run -d --name zentra-test -p 5010:5010 zentra:latest
->    # Must start successfully with auto-generated password + JWT secret
->    ```
->
-> 3. **Auto-generate JWT secret if not provided** — In `docker-entrypoint.sh`, if `ZENTRA_JWT_SECRET` is empty, generate one:
->    ```bash
->    if [ -z "${ZENTRA_JWT_SECRET}" ]; then
->        export ZENTRA_JWT_SECRET=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 48)
->        echo "[entrypoint] ZENTRA_JWT_SECRET not set - auto-generated for this session."
->    fi
->    ```
->
-> 4. **Validate startup end-to-end** — After the container starts, confirm:
->    - `curl http://localhost:5010/api/health` returns `{"status":"healthy"}`
->    - `curl http://localhost:5010` returns the React SPA
->    - `docker exec zentra supervisorctl status` shows all 3 services RUNNING
->    - Login with `admin@zentra.local` / `Admin@12345` works
->
-> **Done when:** `docker run -d -p 5010:5010 zentra:latest` works end-to-end with zero env vars passed.
+| File | Purpose |
+|------|---------|
+| `/opt/zentra/.build-info` | Build date + image version |
+| `/opt/zentra/.integrity` | SHA-256 checksums of critical files |
+| `/opt/zentra/.manifest-hash` | SHA-256 of the integrity file itself |
 
 ---
 
-## D03 — Package Build Artifacts Only (No Source Code)
+## Container Architecture — IP & Port Map
 
-**Priority:** 🔴 High · **Depends on:** None
+### Zentra Main Container (single container, all-in-one)
 
-**Prompt.**
-> Verify and enforce that the Docker image contains ONLY runtime artifacts. No source code, development files, git history, or build tooling.
->
-> **Current state:** The Dockerfile already uses selective `COPY` (binary, migrations, frontend dist, config). The `.dockerignore` file exists at project root.
->
-> **Tweaks needed:**
->
-> 1. **Audit the `.dockerignore`** — Ensure it excludes:
->    ```
->    .git/
->    .github/
->    crates/
->    frontend/src/
->    frontend/node_modules/
->    frontend/package.json
->    frontend/vite.config.*
->    target/debug/
->    target/release/deps/
->    target/release/build/
->    target/release/incremental/
->    target/release/.fingerprint/
->    *.rs
->    *.toml
->    *.lock
->    *.md
->    *.txt
->    *.log
->    docs/
->    tools/
->    plugins/
->    deploy/
->    ```
->
-> 2. **Add a verification step in the Dockerfile** — At the end, before the ENTRYPOINT, add:
->    ```dockerfile
->    # Verify no source code leaked into the image
->    RUN test ! -d /opt/zentra/crates && \
->        test ! -d /opt/zentra/.git && \
->        test ! -f /opt/zentra/Cargo.toml && \
->        test ! -d /opt/zentra/frontend/src && \
->        test ! -d /opt/zentra/frontend/node_modules && \
->        echo "Source-code verification passed"
->    ```
->
-> 3. **Verify after build** — Run this check against the built image:
->    ```bash
->    docker run --rm zentra:latest sh -c '
->      find / -name "*.rs" -o -name "*.toml" -o -name "Cargo.lock" \
->             -o -name ".git" -o -name "node_modules" 2>/dev/null | head -20
->    '
->    # Must return empty
->    ```
->
-> 4. **Strip the binary** — Add to Dockerfile after COPY:
->    ```dockerfile
->    RUN strip /usr/local/bin/zentra-server 2>/dev/null || true
->    ```
->
-> **Done when:** `docker run --rm zentra:latest find / -name '*.rs' 2>/dev/null` returns nothing. Binary is stripped. No Cargo.toml, no .git, no node_modules.
+| Component | Bind Address | Port | Protocol | Exposed to Host? | Description |
+|-----------|-------------|------|----------|------------------|-------------|
+| **Nginx** | `0.0.0.0` | **5010** | HTTP | **Yes — only exposed port** | React SPA + reverse proxy to API |
+| **Zentra API** | `127.0.0.1` | 5006 | HTTP | No | Rust/Axum backend (via Nginx `/api/*`) |
+| **PostgreSQL** | `127.0.0.1` | 5434 | TCP | No | PG 16 + TimescaleDB |
+| **OTLP gRPC** | `0.0.0.0` | 4317 | gRPC/H2 | No (optional `-p 4317:4317`) | OpenTelemetry gRPC ingest |
+| **OTLP HTTP** | `0.0.0.0` | 4318 | HTTP | No (optional `-p 4318:4318`) | OpenTelemetry HTTP ingest |
+| **Supervisord** | `127.0.0.1` | — | Unix socket | No | Process manager |
 
----
-
-## D04 — Restrict Access to Sensitive Docker Contents
-
-**Priority:** 🔴 High · **Depends on:** D02
-
-**Prompt.**
-> Implement least-privilege access controls inside the container so that even if someone gets shell access, sensitive data is protected.
->
-> **Tweaks needed:**
->
-> 1. **Database access restriction** — In `docker-entrypoint.sh`, after creating the database, create a restricted application user:
->    ```sql
->    CREATE USER zentra_app WITH PASSWORD '${POSTGRES_PASSWORD}';
->    GRANT CONNECT ON DATABASE zentra TO zentra_app;
->    GRANT USAGE ON SCHEMA public TO zentra_app;
->    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO zentra_app;
->    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO zentra_app;
->    GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO zentra_app;
->    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO zentra_app;
->    ```
->    The `DATABASE_URL` used by `zentra-server` should use `zentra_app`, not `postgres`.
->
-> 2. **File permissions** — In the Dockerfile:
->    ```dockerfile
->    RUN chmod 500 /usr/local/bin/zentra-server && \
->        chmod 400 /opt/zentra/migrations/*.sql && \
->        chmod 700 /opt/zentra/logs && \
->        chmod 600 /etc/supervisord.conf && \
->        chmod 600 /etc/nginx/conf.d/zentra.conf
->    ```
->
-> 3. **PostgreSQL `pg_hba.conf` hardening** — Already restricts to localhost. Add comment confirming no external access:
->    ```
->    # No external DB access — PostgreSQL is internal-only
->    ```
->
-> 4. **Remove psql for non-postgres users** — Don't remove psql entirely (needed for migrations), but restrict:
->    ```dockerfile
->    RUN chmod 750 /usr/pgsql-16/bin/psql
->    ```
->
-> **Done when:** `zentra-server` connects as `zentra_app` (not superuser). SQL files are read-only. Sensitive configs are permission-locked.
-
----
-
-## D05 — Expose Frontend URL Only
-
-**Priority:** 🔴 High · **Depends on:** None
-
-**Prompt.**
-> Ensure only port 5010 (Nginx frontend + API proxy) is externally accessible. No internal ports, no database, no admin panels.
->
-> **Current state:** Dockerfile has `EXPOSE 5010 5006`. Nginx proxies `/api/*` to :5006 and blocks sensitive file extensions.
->
-> **Tweaks needed:**
->
-> 1. **Remove port 5006 from EXPOSE** — Only 5010 should be exposed:
->    ```dockerfile
->    EXPOSE 5010
->    ```
->    Port 5006 (backend API) is internal — Nginx proxies to it on 127.0.0.1.
->
-> 2. **Bind zentra-server to 127.0.0.1 only** — In `supervisord.conf` or the server binary config, ensure the API binds to `127.0.0.1:5006` not `0.0.0.0:5006`. Check if the binary respects a `ZENTRA_BIND_ADDR` env var; if not, add one. This prevents direct access even if someone maps port 5006.
->
-> 3. **Block internal endpoints in Nginx** — Add to `nginx.conf`:
->    ```nginx
->    # Block internal/debug endpoints from external access
->    location /api/system/ {
->        allow 127.0.0.1;
->        deny all;
->    }
->    location /api/pool-status {
->        allow 127.0.0.1;
->        deny all;
->    }
->    ```
->
-> 4. **Ensure PostgreSQL binds to 127.0.0.1 only** — Already the case via `pg_hba.conf`, but also add to `postgresql.conf`:
->    ```
->    listen_addresses = '127.0.0.1'
->    ```
->
-> 5. **Validate** — After running the container with `-p 5010:5010`:
->    ```bash
->    curl http://localhost:5010          # ✓ works (frontend)
->    curl http://localhost:5010/api/health  # ✓ works (proxied)
->    curl http://localhost:5006/api/health  # ✗ connection refused (not exposed)
->    psql -h localhost -p 5434            # ✗ connection refused (not exposed)
->    ```
->
-> **Done when:** Only `-p 5010:5010` is needed. Direct access to :5006 and :5434 is impossible from outside the container.
-
----
-
-## D06 — Harden Docker Image Security
-
-**Priority:** 🔴 High · **Depends on:** D03, D04, D05
-
-**Prompt.**
-> Remove unnecessary packages, disable debug access, minimize attack surface.
->
-> **Tweaks needed:**
->
-> 1. **Remove unnecessary packages after install** — In the Dockerfile, after all setup, add a cleanup layer:
->    ```dockerfile
->    RUN dnf remove -y gcc make cpp && \
->        dnf clean all && \
->        rm -rf /var/cache/dnf /tmp/* /var/tmp/*
->    ```
->
-> 2. **Remove shell access from non-root users** — Create a dedicated `zentra` runtime user:
->    ```dockerfile
->    RUN useradd -r -s /sbin/nologin zentra
->    ```
->    Note: The container still needs root for supervisord to manage PostgreSQL (which runs as `postgres`). But the zentra-server process should run as the `zentra` user. Update `supervisord.conf`:
->    ```ini
->    [program:zentra-server]
->    user=zentra
->    ```
->
-> 3. **Disable core dumps**:
->    ```dockerfile
->    RUN echo '* hard core 0' >> /etc/security/limits.conf
->    ```
->
-> 4. **Remove unnecessary SUID/SGID binaries**:
->    ```dockerfile
->    RUN find / -perm /6000 -type f -exec chmod a-s {} \; 2>/dev/null || true
->    ```
->
-> 5. **Add `--read-only` support** — Document that the container can be run with `--read-only --tmpfs /tmp --tmpfs /run` for extra security (PostgreSQL volume is mounted writable).
->
-> 6. **Remove bash history and temp files in final layer**:
->    ```dockerfile
->    RUN rm -rf /root/.bash_history /root/.cache /tmp/* /var/tmp/* && \
->        history -c 2>/dev/null || true
->    ```
->
-> **Done when:** `docker run --rm zentra:latest rpm -qa | wc -l` is minimal. No compiler, no debug tools. zentra-server runs as non-root user.
-
----
-
-## D07 — Implement Docker Tamper Protection
-
-**Priority:** 🔴 High · **Depends on:** D03, D06
-
-**Prompt.**
-> Add integrity verification so that if the Docker image or its protected contents are modified, the application refuses to start.
->
-> **Implementation:**
->
-> 1. **Build-time: generate integrity manifest** — At the END of the Dockerfile (last RUN before ENTRYPOINT), compute checksums of all critical files:
->    ```dockerfile
->    RUN sha256sum \
->        /usr/local/bin/zentra-server \
->        /opt/zentra/frontend/dist/index.html \
->        /etc/nginx/conf.d/zentra.conf \
->        /etc/supervisord.conf \
->        /usr/local/bin/docker-entrypoint.sh \
->        > /opt/zentra/.integrity && \
->        chmod 400 /opt/zentra/.integrity
->    ```
->
-> 2. **Runtime: verify on startup** — In `docker-entrypoint.sh`, BEFORE the license check, add:
->    ```bash
->    # Tamper detection
->    INTEGRITY_FILE="/opt/zentra/.integrity"
->    if [ -f "${INTEGRITY_FILE}" ]; then
->        if ! sha256sum -c "${INTEGRITY_FILE}" --quiet 2>/dev/null; then
->            echo "[entrypoint] FATAL: Integrity verification failed. Image may be tampered."
->            echo "[entrypoint] Application cannot start. Please use an official image."
->            exit 1
->        fi
->    else
->        echo "[entrypoint] FATAL: Integrity manifest missing."
->        exit 1
->    fi
->    ```
->
-> 3. **Protect the manifest itself** — Embed a secondary checksum of `.integrity` inside the binary or as a Docker LABEL:
->    ```dockerfile
->    RUN MANIFEST_HASH=$(sha256sum /opt/zentra/.integrity | cut -d' ' -f1) && \
->        echo "${MANIFEST_HASH}" > /opt/zentra/.manifest-hash && \
->        chmod 400 /opt/zentra/.manifest-hash
->    ```
->    In the entrypoint, verify the manifest hash too:
->    ```bash
->    EXPECTED_HASH=$(cat /opt/zentra/.manifest-hash)
->    ACTUAL_HASH=$(sha256sum /opt/zentra/.integrity | cut -d' ' -f1)
->    if [ "${EXPECTED_HASH}" != "${ACTUAL_HASH}" ]; then
->        echo "[entrypoint] FATAL: Integrity manifest has been modified."
->        exit 1
->    fi
->    ```
->
-> 4. **On failure** — Log the error and `exit 1`. Supervisord won't start. Container goes to "exited" state.
->
-> **Done when:** Modifying any protected file (e.g., `docker exec zentra bash -c 'echo x >> /usr/local/bin/zentra-server'`) causes the next startup to fail with an integrity error.
-
----
-
-## D08 — Implement Expiring License Mechanism (3-Day Trial + Graceful Degradation)
-
-**Priority:** 🔴 High · **Depends on:** D07
-**Status:** ✅ IMPLEMENTED
-
-**Prompt.**
-> Build a robust license validation with a 3-day trial period and graceful degradation after expiry.
->
-> **Implemented (differs from original 5-day hard-block spec):**
->
-> 1. **3-day trial** — `LICENSE_DAYS=3` in `docker-entrypoint.sh`. After expiry, the container **still starts** but in degraded mode (Dashboard only, all other features disabled).
->
-> 2. **Signed license token** — Same HMAC-signed format: `install_epoch:expiry_epoch:hostname:sha256_hmac`. Signature uses the binary's SHA-256 hash. Tampering triggers `exit 1`.
->
-> 3. **Graceful degradation (not hard block)** — After expiry:
->    - Entrypoint sets `ZENTRA_TRIAL_EXPIRED=1` and logs a WARNING (no `exit 1`)
->    - Backend middleware returns `402 Payment Required` for all non-essential API routes
->    - Allowed routes in degraded mode: `/api/health`, `/api/auth/*`, `/api/system/license-status`, `/api/config/mode`, `/api/system/status`, `/api/system/db`, `/metrics`
->    - Frontend hides all nav items except "Command Center" (Dashboard) and shows an amber warning banner
->
-> 4. **Binary-verified license (hardened)** — The Rust binary (`license_verifier.rs`) independently reads the license file from disk, computes its own SHA-256 hash, verifies the HMAC, and checks the expiry epoch. It does **NOT** trust the `ZENTRA_TRIAL_EXPIRED` env var in Docker environments. Attack vectors blocked:
->    - Spoofing env var via `docker run -e ZENTRA_TRIAL_EXPIRED=0` → ignored
->    - Deleting license file when DB dir exists → treated as bypass attempt → expired
->    - Modifying expiry epoch → HMAC fails → expired
->    - Modifying binary → changes hash → HMAC fails → expired
->    - Result cached in `OnceLock` (one disk read per process lifetime)
->
-> 5. **License persisted in PG volume** — Stored at `/var/lib/postgresql/data/.zentra-license` (survives container recreation). Fallback at `/opt/zentra/.license`.
->
-> 6. **License status API** — `GET /api/system/license-status` returns `trial_expired`, `days_remaining`, `features`, etc. Frontend polls this every 5 minutes.
->
-> **Files modified:**
-> - `docker/docker-entrypoint.sh` — LICENSE_DAYS=3, graceful startup on expiry
-> - `crates/zentra-core/src/crypto/license_verifier.rs` — `is_trial_expired()` with disk-based verification
-> - `crates/zentra-api/src/license_middleware.rs` — Trial expiry check + degraded mode routing
-> - `crates/zentra-api/src/handlers/license_status.rs` — `trial_expired` flag in response
-> - `crates/zentra-api/src/routes/mod.rs` — License middleware always applied (not just prod-license)
-> - `frontend/src/lib/api/health.ts` — `LicenseStatus` type + `getLicenseStatus()`
-> - `frontend/src/components/Layout.tsx` — Nav filtering + warning banner when expired
->
-> **Done when:** Container runs in degraded mode after 3 days. Dashboard is viewable. All other features return 402. License cannot be spoofed via env var, file deletion, or file modification.
-
----
-
-## D09 — Testing and Validation
-
-**Priority:** 🟡 Medium · **Depends on:** D01–D08
-**Status:** ✅ IMPLEMENTED
-
-**Prompt.**
-> Create a comprehensive validation script `docker/validate.sh` that tests all security and functionality requirements.
->
-> **Done:** `docker/validate.sh` exists and tests image presence, no source code, build artifacts, security hardening, container lifecycle, health endpoints, and license mechanism.
-
----
-
-## D10 — Update Deployment Notes & Download Image Locally
-
-**Priority:** 🟡 Medium · **Depends on:** D01–D09
-**Status:** ✅ IMPLEMENTED
-
-> Updated `docker/README.md` with hardened `docker run` commands (`--read-only`, `--cap-drop ALL`, `--security-opt=no-new-privileges`), full security table (20+ measures), and operational docs.
-
----
-
-## D11 — Container Self-Lockdown (Runtime Hardening)
-
-**Priority:** 🔴 High · **Depends on:** D06, D07, D08
-**Status:** ✅ IMPLEMENTED
-
-**Prompt.**
-> After the entrypoint completes all initialization (PostgreSQL setup, license check, SSH keys), lock down the container so that no one can modify config files, license files, or get interactive access — even with root.
->
-> **Implemented in `docker-entrypoint.sh` (D09 self-lockdown phase):**
->
-> 1. **Immutable license files** — Both `/var/lib/postgresql/data/.zentra-license` and `/opt/zentra/.license` are locked with `chattr +i`. Even root cannot modify or delete them.
->
-> 2. **Immutable config files** — `supervisord.conf`, `nginx.conf`, `zentra.conf`, `.integrity`, `.manifest-hash`, `.build-info`, `zentra-server` binary, and `docker-entrypoint.sh` itself are all locked with `chattr +i`.
->
-> 3. **Immutable SQL migrations** — All `.sql` files under `/opt/zentra/migrations/` locked with `chattr +i`.
->
-> 4. **Immutable frontend dist** — All files under `/opt/zentra/frontend/dist/` locked with `chattr +i`.
->
-> 5. **Package managers removed** — `dnf`, `dnf-3`, `yum`, `yum-config-manager`, `rpm`, `rpm2cpio`, `rpmkeys` all deleted. `/etc/yum.repos.d` and `/var/cache/dnf` removed. No software can be installed at runtime.
->
-> 6. **Editors and scripting languages removed** — `vi`, `vim`, `nano`, `ed`, `perl`, `lua`, `ruby` deleted. Python3 is **kept** (supervisord depends on it).
->
-> 7. **Dangerous utilities removed** — `wget`, `ftp`, `telnet`, `gcc`, `cc`, `make`, `gdb`, `strace`, `ltrace`, `dd`, `strings` all deleted.
->
-> 8. **`chattr` self-destructs** — After making all files immutable, `chattr` and `lsattr` are deleted. The immutable bits can **never** be reversed.
->
-> 9. **All shells removed** — A background task removes `bash`, `sh`, `csh`, `tcsh`, `zsh`, `ksh`, `fish`, `dash` 5 seconds after `exec supervisord`. After this, `docker exec` is useless — there's no shell to exec into.
->
-> 10. **Preserved tools** — `sshpass`, `ssh`, `scp` (monitoring targets), `curl` (healthcheck), `python3` (supervisord).
->
-> **Bypass protection via `ZENTRA_SKIP_LOCKDOWN=1`** — Disables the lockdown for debugging. Must NEVER be used in production.
->
-> **Dockerfile additions:**
-> - `e2fsprogs` installed (provides `chattr`)
-> - Editors/scripting languages also removed at build time
-> - Entrypoint permissions set to `500` (read+execute only, root-owned)
-> - Recommended runtime flags documented: `--read-only`, `--cap-drop ALL`, `--security-opt=no-new-privileges`
->
-> **Files modified:**
-> - `docker/docker-entrypoint.sh` — D09 self-lockdown phase (lines 290–370)
-> - `docker/Dockerfile` — e2fsprogs, build-time cleanup, entrypoint permissions, security flag docs
-> - `docker/README.md` — Full security table (20+ measures), hardened docker run commands
->
-> **Done when:** After startup, `docker exec -it zentra bash` fails (no shell). Config/license files cannot be modified. No package managers or editors exist.
-
----
-
-## Execution Order
+### Required Docker Port Mapping
 
 ```
-D02 (embed setup) ──┐
-D03 (artifacts only) ├──► D04 (restrict access) ──► D06 (harden) ──► D07 (tamper) ──► D08 (license + degradation)
-D05 (frontend only) ─┘                                                                     │
-                                                                                            ▼
-                                                                   D11 (self-lockdown) ──► D09 (validate) ──► D01 (docs) ──► D10 (deploy)
+docker run -p 5010:5010 ...                                      # Required — UI + API
+docker run -p 5010:5010 -p 4317:4317 -p 4318:4318 ...           # Optional — adds OTLP ingest
 ```
 
-**Critical path:** D02 → D04 → D06 → D07 → D08 → D11 → D09 → D10
+> **Security:** Ports 5006 and 5434 are internal-only. Nginx proxies `/api/*` to `127.0.0.1:5006`. PostgreSQL `listen_addresses = '127.0.0.1'`. Direct access from outside the container is impossible.
 
-**All items D01–D11 are ✅ IMPLEMENTED.**
+---
+
+## Simulation Lab — Full IP & Port Reference
+
+The `docker/simulation/` lab creates **12 Docker containers** simulating a datacenter.
+
+### Linux Host — macvlan (subnet `10.88.11.0/24`)
+
+| # | Component | Container | IP | Ports | Image | Role |
+|---|-----------|-----------|-----|-------|-------|------|
+| 1 | **Linux Server 01** | `srv-linux-01` | `10.88.11.201` | 22 (SSH), 161 (SNMP) | `rockylinux:8` | Web Server |
+| 2 | **Linux Server 02** | `srv-linux-02` | `10.88.11.202` | 22 (SSH), 161 (SNMP) | `ubuntu:22.04` | App Server |
+| 3 | **Windows Server 01** | `srv-win-01` | `10.88.11.203` | 22 (SSH), 161 (SNMP) | `polinux/snmpd:alpine` | AD/DNS (sim) |
+| 4 | **Windows Server 02** | `srv-win-02` | `10.88.11.204` | 22 (SSH), 161 (SNMP) | `polinux/snmpd:alpine` | File Server (sim) |
+| 5 | **Core Switch** | `sw-core-01` | `10.88.11.205` | 22 (SSH), 161 (SNMP) | `polinux/snmpd:alpine` | Cisco 9300 (sim) |
+| 6 | **Access Switch** | `sw-access-01` | `10.88.11.206` | 22 (SSH), 161 (SNMP) | `polinux/snmpd:alpine` | Arista 7050X (sim) |
+| 7 | **Firewall** | `fw-01` | `10.88.11.207` | 22 (SSH), 161 (SNMP) | `polinux/snmpd:alpine` | Palo Alto PA-3260 (sim) |
+| 8 | **Storage Array** | `stor-01` | `10.88.11.208` | 22 (SSH), 161 (SNMP) | `polinux/snmpd:alpine` | Dell PowerStore (sim) |
+| 9 | **Nginx** | `mw-nginx-01` | `10.88.11.209` | 22, 80, 8080 (status) | `nginx:1.25-alpine` | Reverse Proxy |
+| 10 | **Apache** | `mw-apache-01` | `10.88.11.210` | 22, 80, 8080 (status) | `httpd:2.4-alpine` | HTTP Server |
+| 11 | **Tomcat** | `mw-tomcat-01` | `10.88.11.211` | 22, 8080, 9090 (JMX) | `tomcat:9-jdk17` | App Server |
+| 12 | **Oracle DB** | `db-oracle-01` | `10.88.11.212` | 22, 1521 (OCI) | `gvenzl/oracle-xe:21-slim` | Oracle 21c XE |
+
+### Windows Host — Docker Bridge (`10.100.0.0/24`)
+
+| # | Component | Container | IP | Ports | Role |
+|---|-----------|-----------|-----|-------|------|
+| 1 | Linux Server 01 | `srv-linux-01` | `10.100.0.11` | 22, 161 | Rocky Linux 8 |
+| 2 | Linux Server 02 | `srv-linux-02` | `10.100.0.12` | 22, 161 | Ubuntu 22.04 |
+| 3 | Windows Server 01 | `srv-win-01` | `10.100.0.13` | 22, 161 | Win 2022 (sim) |
+| 4 | Windows Server 02 | `srv-win-02` | `10.100.0.14` | 22, 161 | Win 2019 (sim) |
+| 5 | Core Switch | `sw-core-01` | `10.100.0.15` | 22, 161 | Cisco 9300 (sim) |
+| 6 | Access Switch | `sw-access-01` | `10.100.0.16` | 22, 161 | Arista 7050X (sim) |
+| 7 | Firewall | `fw-01` | `10.100.0.17` | 22, 161 | Palo Alto (sim) |
+| 8 | Storage Array | `stor-01` | `10.100.0.18` | 22, 161 | Dell PowerStore (sim) |
+| 9 | Nginx | `mw-nginx-01` | `10.100.0.19` | 22, 80, 8080 | Reverse Proxy |
+| 10 | Apache | `mw-apache-01` | `10.100.0.20` | 22, 80, 8080 | HTTP Server |
+| 11 | Tomcat | `mw-tomcat-01` | `10.100.0.21` | 22, 8080, 9090 | App Server |
+| 12 | Oracle DB | `db-oracle-01` | `10.100.0.22` | 22, 1521 | Oracle 21c XE |
+
+### Lab Credentials
+
+| Service | Username | Password / Community | Notes |
+|---------|----------|----------------------|-------|
+| **SSH (all 12)** | `root` | `zentra123` | Port 22 |
+| **SNMP (all)** | — | `public` | v2c, port 161, read-only |
+| **Tomcat Manager** | `zentra` | `zentra123` | `http://<ip>:8080/manager` |
+| **Nginx Status** | — | — | `http://<ip>:8080/nginx_status` |
+| **Apache Status** | — | — | `http://<ip>:8080/server-status` |
+| **Oracle SYS** | `SYS` | `zentra123` | SID `XE`, Service `ZENTRADB`, port 1521 |
+| **Oracle Monitor** | `zentra_mon` | `zentra123` | Read-only monitoring user |
+| **Zentra Web UI** | `admin@zentra.local` | `changeme` | Host port 5010 |
+
+---
+
+## Prompt D01 — Build the Frontend
+
+**Run on:** Linux build server (`10.88.11.162`)
+
+> ```bash
+> cd /store/Zentra/frontend
+> npm ci
+> npx vite build
+> ```
+>
+> **Verify:**
+> ```bash
+> ls -la /store/Zentra/frontend/dist/index.html
+> ls /store/Zentra/frontend/dist/assets/
+> ```
+>
+> **Done when:** `frontend/dist/index.html` exists and `frontend/dist/assets/` contains hashed `.js` + `.css` bundles.
+
+---
+
+## Prompt D02 — Build the Rust Backend Binary
+
+**Run on:** Linux build server (`10.88.11.162`)
+
+> ```bash
+> cd /store/Zentra
+> cargo build --release --bin zentra-server
+> ```
+>
+> **Verify:**
+> ```bash
+> file target/release/zentra-server
+> # Must show: ELF 64-bit LSB executable, x86-64, dynamically linked
+> ls -lh target/release/zentra-server
+> # Size: ~30-50 MB before stripping
+> ```
+>
+> **Done when:** `target/release/zentra-server` is a Linux ELF binary.
+
+---
+
+## Prompt D03 — Build the Docker Image
+
+**Run on:** Linux build server (`10.88.11.162`)
+**Depends on:** D01 (frontend dist), D02 (backend binary)
+
+> ```bash
+> cd /store/Zentra
+> docker build -f docker/Dockerfile -t zentra:latest .
+> ```
+>
+> **What the Dockerfile does (already implemented):**
+>
+> 1. Base: Rocky Linux 8 + PG 16 + TimescaleDB + Nginx + Supervisor + Oracle Instant Client + e2fsprogs
+> 2. Removes dev tools (gcc, make, gdb, strace, editors, scripting languages)
+> 3. Creates non-root `zentra` user (API server runs as this user via supervisord)
+> 4. Copies and strips `target/release/zentra-server`, sets permissions `550 root:zentra`
+> 5. Copies `migrations/`, `frontend/dist/`, `supervisord.conf`, `nginx.conf`, `docker-entrypoint.sh`
+> 6. Writes `.build-info` with build timestamp
+> 7. Sets file permissions: SQL files `400`, configs `600`, psql `750`
+> 8. Build-time source-code leak check (fails if `.git`, `crates/`, `frontend/src/` exist)
+> 9. Generates `.integrity` manifest (SHA-256 of critical files) + `.manifest-hash`
+> 10. `EXPOSE 5010` only, `HEALTHCHECK`, `VOLUME /var/lib/postgresql/data`
+>
+> **Verify:**
+> ```bash
+> docker images zentra:latest
+> # Should be ~800 MB – 1.2 GB
+> ```
+>
+> **Done when:** `docker images zentra:latest` shows the image.
+
+---
+
+## Prompt D04 — Verify No Source Code in Image
+
+**Run on:** Linux build server
+**Depends on:** D03
+
+> ```bash
+> # Must return absolutely nothing
+> docker run --rm zentra:latest sh -c '
+>   find / -name "*.rs" -o -name "Cargo.toml" -o -name "Cargo.lock" \
+>          -o -name ".git" -o -name "node_modules" 2>/dev/null | head -20
+> '
+>
+> # Must show build-info
+> docker run --rm zentra:latest cat /opt/zentra/.build-info
+>
+> # Must show the binary
+> docker run --rm zentra:latest ls -la /usr/local/bin/zentra-server
+>
+> # Must show frontend dist
+> docker run --rm zentra:latest ls /opt/zentra/frontend/dist/index.html
+>
+> # Must show integrity manifest
+> docker run --rm zentra:latest cat /opt/zentra/.integrity
+> ```
+>
+> **Done when:** No source code found, binary present, frontend present, integrity manifest present.
+
+---
+
+## Prompt D05 — Test Container Startup (End-to-End)
+
+**Run on:** Linux build server
+**Depends on:** D03
+
+> ```bash
+> # Start with zero configuration
+> docker run -d --name zentra-test -p 5010:5010 \
+>   -v zentra-test-data:/var/lib/postgresql/data \
+>   zentra:latest
+>
+> # Wait for startup (30-45 seconds)
+> sleep 45
+>
+> # Check health
+> curl -sf http://localhost:5010/api/health
+> # Expected: {"database":true,"status":"healthy",...}
+>
+> # Check frontend loads
+> curl -sf http://localhost:5010 | head -5
+> # Expected: <!doctype html>...
+>
+> # Check all 3 services running
+> docker exec zentra-test supervisorctl status
+> # Expected: nginx RUNNING, postgresql RUNNING, zentra-server RUNNING
+>
+> # Check license activated
+> curl -sf http://localhost:5010/api/system/license-status
+> # Expected: {"trial_expired":false,"days_remaining":3,...}
+>
+> # Check internal ports NOT accessible from outside
+> curl -sf http://localhost:5006/api/health 2>&1 || echo "GOOD: port 5006 not exposed"
+>
+> # Cleanup
+> docker stop zentra-test && docker rm zentra-test
+> docker volume rm zentra-test-data
+> ```
+>
+> **Done when:** Health returns `"healthy"`, frontend loads, 3 services RUNNING, license valid, port 5006 not accessible.
+
+---
+
+## Prompt D06 — Verify Security Hardening
+
+**Run on:** Linux build server
+**Depends on:** D05
+
+> ```bash
+> docker run -d --name zentra-sec -p 5011:5010 \
+>   -v zentra-sec-data:/var/lib/postgresql/data \
+>   zentra:latest
+>
+> sleep 45
+>
+> # 1. zentra-server runs as non-root 'zentra' user
+> docker exec zentra-sec ps aux | grep zentra-server
+> # Must show user=zentra, NOT root
+>
+> # 2. No compilers or debug tools
+> docker exec zentra-sec which gcc 2>&1 || echo "GOOD: no gcc"
+> docker exec zentra-sec which make 2>&1 || echo "GOOD: no make"
+> docker exec zentra-sec which gdb 2>&1 || echo "GOOD: no gdb"
+> docker exec zentra-sec which vi 2>&1 || echo "GOOD: no vi"
+>
+> # 3. Shells removed (after 5s lockdown delay)
+> sleep 10
+> docker exec zentra-sec /bin/bash -c "echo test" 2>&1 || echo "GOOD: no bash"
+> docker exec zentra-sec /bin/sh -c "echo test" 2>&1 || echo "GOOD: no sh"
+>
+> # 4. No package managers
+> docker exec zentra-sec which dnf 2>&1 || echo "GOOD: no dnf"
+> docker exec zentra-sec which rpm 2>&1 || echo "GOOD: no rpm"
+>
+> # 5. chattr removed (immutable bits cannot be reversed)
+> docker exec zentra-sec which chattr 2>&1 || echo "GOOD: chattr removed"
+> docker exec zentra-sec which lsattr 2>&1 || echo "GOOD: lsattr removed"
+>
+> # 6. PostgreSQL not accessible from host
+> psql -h localhost -p 5434 -U postgres 2>&1 || echo "GOOD: PG not exposed"
+>
+> # 7. /api/system/ blocked by Nginx from external
+> curl -sf http://localhost:5011/api/system/db 2>&1 || echo "GOOD: /api/system/ blocked"
+>
+> # Cleanup
+> docker stop zentra-sec && docker rm zentra-sec
+> docker volume rm zentra-sec-data
+> ```
+>
+> **Done when:** All checks pass — non-root user, no dev tools, no shells, no package managers, immutable files, PG not exposed, system endpoints blocked.
+
+---
+
+## Prompt D07 — Verify License & Tamper Protection
+
+**Run on:** Linux build server
+**Depends on:** D05
+
+> ```bash
+> # 1. Test integrity verification
+> docker run -d --name zentra-tamper -p 5012:5010 \
+>   -e ZENTRA_SKIP_LOCKDOWN=1 \
+>   -v zentra-tamper-data:/var/lib/postgresql/data \
+>   zentra:latest
+> sleep 30
+>
+> # Check integrity passed on startup
+> docker logs zentra-tamper 2>&1 | grep -i "integrity"
+> # Expected: "Integrity verification PASSED"
+>
+> # 2. Test license spoofing — env var override must NOT work
+> docker stop zentra-tamper && docker rm zentra-tamper
+> docker run -d --name zentra-spoof -p 5013:5010 \
+>   -e ZENTRA_TRIAL_EXPIRED=0 \
+>   -e ZENTRA_SKIP_LOCKDOWN=1 \
+>   -v zentra-spoof-data:/var/lib/postgresql/data \
+>   zentra:latest
+> sleep 45
+>
+> # Binary verifies license independently from disk — env var is ignored
+> curl -sf http://localhost:5013/api/system/license-status
+> # Should show real license state, not the spoofed env var
+>
+> # 3. Test graceful degradation
+> # After 3 days, the container still starts but in degraded mode:
+> #   - Only Dashboard is accessible
+> #   - All other features return 402 Payment Required
+> #   - Frontend shows amber warning banner
+>
+> # Cleanup
+> docker stop zentra-spoof && docker rm zentra-spoof
+> docker volume rm zentra-tamper-data zentra-spoof-data
+> ```
+>
+> **Done when:** Tamper detection works, env var spoofing ignored, license verified from disk.
+
+---
+
+## Prompt D08 — Export Image as Portable Tarball
+
+**Run on:** Linux build server
+**Depends on:** D03, D04, D05, D06
+
+> ```bash
+> cd /store/Zentra
+>
+> # Export and compress
+> docker save zentra:latest | gzip > docker/zentra-latest.tar.gz
+>
+> # Verify size
+> ls -lh docker/zentra-latest.tar.gz
+> # Expected: ~200-300 MB
+>
+> # Verify it can be loaded on a clean machine
+> docker rmi zentra:latest
+> docker load -i docker/zentra-latest.tar.gz
+> docker images zentra:latest
+> # Must show the image again
+> ```
+>
+> **Done when:** `docker/zentra-latest.tar.gz` exists, is loadable, and produces a working image.
+
+---
+
+## Prompt D09 — Deploy to Target Machine
+
+**Run on:** Target deployment machine (any Linux/Windows/macOS with Docker)
+
+> ```bash
+> # 1. Load the image
+> docker load -i zentra-latest.tar.gz
+>
+> # 2. Quick start (zero config)
+> docker run -d --name zentra -p 5010:5010 \
+>   -v zentra-data:/var/lib/postgresql/data \
+>   zentra:latest
+>
+> # 3. Production start (hardened)
+> docker run -d --name zentra \
+>   --restart unless-stopped \
+>   --read-only \
+>   --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+>   --tmpfs /var/run:rw,noexec,nosuid,size=16m \
+>   --tmpfs /var/log:rw,noexec,nosuid,size=128m \
+>   --tmpfs /opt/zentra/logs:rw,noexec,nosuid,size=64m \
+>   --tmpfs /root/.ssh:rw,noexec,nosuid,size=4m \
+>   --security-opt=no-new-privileges:true \
+>   --cap-drop ALL \
+>   --cap-add CHOWN --cap-add SETUID --cap-add SETGID \
+>   --cap-add DAC_OVERRIDE --cap-add FOWNER \
+>   --cap-add NET_BIND_SERVICE --cap-add LINUX_IMMUTABLE \
+>   -p 5010:5010 \
+>   -v zentra-data:/var/lib/postgresql/data \
+>   zentra:latest
+>
+> # 4. Access
+> # Browser: http://<host-ip>:5010
+> # Login:   admin@zentra.local / changeme
+> ```
+>
+> **Done when:** Browser shows the Zentra login page at `http://<host-ip>:5010`.
+
+---
+
+## Prompt D10 — Run the Simulation Lab
+
+**Run on:** Same machine as Zentra, or a dedicated lab host
+
+> **Linux:**
+> ```bash
+> cd /store/Zentra/docker/simulation
+> sudo ./setup.sh
+> ```
+>
+> **Windows:**
+> ```powershell
+> cd C:\git\Zentra\docker\simulation
+> powershell -ExecutionPolicy Bypass -File setup.ps1
+> ```
+>
+> **Verify all 12 containers are running:**
+> ```bash
+> docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E "srv-|sw-|fw-|stor-|mw-|db-"
+> ```
+>
+> **Add targets to Zentra UI:**
+>
+> | Target Type | Where in Zentra | What to Enter |
+> |-------------|----------------|---------------|
+> | Linux/Windows Servers | Infrastructure > Servers > Add | IP, port 22, `root` / `zentra123` |
+> | Network Switches | Infrastructure > Network > Add | IP, SNMP community `public` |
+> | Firewall | Infrastructure > Network > Add | IP, SNMP community `public` |
+> | Storage Array | Infrastructure > Storage > Add | IP, SSH `root` / `zentra123` |
+> | Nginx | Middleware > Nginx > Add | IP, `http://<ip>:8080/nginx_status` |
+> | Apache | Middleware > Apache > Add | IP, `http://<ip>:8080/server-status` |
+> | Tomcat | Middleware > Tomcat > Add | IP:8080, `zentra` / `zentra123` |
+> | Oracle | Database > Oracle > Add | IP:1521, SID `XE`, `zentra_mon` / `zentra123` |
+>
+> **Done when:** All 12 lab containers are running and added as targets in Zentra.
+
+---
+
+## Automated Build Script (`docker/build-image.sh`)
+
+For **frequent builds**, use the automated script instead of running prompts manually.
+
+### Full Build (frontend + backend + image + tarball)
+
+```bash
+# On the build server (10.88.11.162)
+cd /store/Zentra
+bash docker/build-image.sh
+```
+
+### Incremental Builds (faster)
+
+```bash
+# Skip frontend (reuse existing dist/)
+bash docker/build-image.sh --skip-fe
+
+# Skip backend (reuse existing binary)
+bash docker/build-image.sh --skip-be
+
+# Rebuild Docker image only (reuse both frontend + backend)
+bash docker/build-image.sh --image-only
+```
+
+### Download Tarball to Local Machine
+
+```powershell
+# From your Windows dev machine
+scp root@10.88.11.162:/store/Zentra/docker/zentra-latest.tar.gz C:\git\Zentra\docker\zentra-latest.tar.gz
+```
+
+```bash
+# From a Linux/macOS dev machine
+scp root@10.88.11.162:/store/Zentra/docker/zentra-latest.tar.gz ./docker/zentra-latest.tar.gz
+```
+
+### One-Liner: Build on Server + Download Locally
+
+```powershell
+# Run from Windows dev machine — builds on server, then downloads the tarball
+ssh root@10.88.11.162 "cd /store/Zentra && bash docker/build-image.sh" ; scp root@10.88.11.162:/store/Zentra/docker/zentra-latest.tar.gz C:\git\Zentra\docker\zentra-latest.tar.gz
+```
+
+### What the Script Does
+
+1. **D01** — `npm ci && npx vite build` (skippable with `--skip-fe`)
+2. **D02** — `cargo build --release --bin zentra-server` (skippable with `--skip-be`)
+3. **D03** — `docker build -f docker/Dockerfile -t zentra:latest .`
+4. **D04** — Verifies no `.rs`, `.toml`, `.git`, `node_modules` in image
+5. **D04** — Prints binary size, frontend status, migration count, integrity check
+6. **D08** — `docker save | gzip > docker/zentra-latest.tar.gz`
+
+All verification uses `--entrypoint sh` to bypass the container entrypoint.
+
+---
+
+## Existing Docker Files Reference
+
+| File | Lines | What It Does |
+|------|-------|--------------|
+| `docker/Dockerfile` | 238 | Rocky Linux 8 base, PG 16, TimescaleDB, Nginx, Supervisor, Oracle IC, hardening, build verification, integrity manifest |
+| `docker/docker-entrypoint.sh` | 371 | Tamper verification, license check (3-day trial), PG init, restricted `zentra_app` user, SSH keys, self-lockdown (chattr, shell removal) |
+| `docker/supervisord.conf` | 69 | Manages postgresql (priority 10), zentra-server as user `zentra` (priority 20), nginx (priority 30) |
+| `docker/nginx.conf` | 117 | Frontend on `:5010`, proxy `/api/*` to `:5006`, OTLP `/v1/*` proxy, rate limiting login, security headers, CSP, blocks `/api/system/` and `/api/pool-status` |
+| `.dockerignore` | 93 | Excludes `crates/`, `frontend/src/`, `frontend/node_modules/`, `*.rs`, `*.toml`, `.git/`, `docs/`, `deploy/`, `*.log`, `*.txt`, build intermediates |
+| `docker/validate.sh` | — | Post-build validation script |
+| `docker/install.sh` | — | Linux automated setup |
+| `docker/install.ps1` | — | Windows automated setup |
+| `docker/README.md` | — | Full installation guide with hardened `docker run` commands |
+
+## Security Measures Summary
+
+| # | Measure | Where |
+|---|---------|-------|
+| 1 | No source code in image | `.dockerignore` + Dockerfile build-time check |
+| 2 | Binary stripped | `strip /usr/local/bin/zentra-server` in Dockerfile |
+| 3 | Non-root API process | `user=zentra` in `supervisord.conf` |
+| 4 | Restricted DB user | `zentra_app` with DML-only grants (not superuser) |
+| 5 | Only port 5010 exposed | `EXPOSE 5010` — no 5006, no 5434 |
+| 6 | API binds to localhost | `ZENTRA_BIND_ADDR=127.0.0.1` |
+| 7 | PG binds to localhost | `listen_addresses = '127.0.0.1'` |
+| 8 | SQL files read-only | `chmod 400` in Dockerfile |
+| 9 | Configs permission-locked | `chmod 600` for supervisord.conf, nginx.conf |
+| 10 | Security headers | CSP, X-Frame-Options, X-Content-Type-Options, etc. in nginx.conf |
+| 11 | Login rate limiting | 5 req/min per IP with burst 3 |
+| 12 | Internal endpoints blocked | `/api/system/` and `/api/pool-status` — Nginx `deny all` |
+| 13 | Sensitive files blocked | `.env`, `.git`, `.rs`, `.sql`, `.sh` — Nginx `deny all` |
+| 14 | Dev tools removed | gcc, make, gdb, strace, vi, nano, perl, lua, ruby |
+| 15 | Core dumps disabled | `* hard core 0` |
+| 16 | SUID/SGID cleared | `find / -perm /6000 ... chmod a-s` |
+| 17 | Integrity manifest | SHA-256 checksums of critical files + manifest hash |
+| 18 | Tamper detection on startup | Entrypoint verifies `.integrity` + `.manifest-hash` before anything else |
+| 19 | 3-day signed trial license | HMAC-signed with binary hash, persisted in PG volume |
+| 20 | Graceful degradation | Dashboard-only mode after expiry, 402 for all other APIs |
+| 21 | Binary license verification | Rust binary verifies independently — ignores env vars |
+| 22 | Immutable files (chattr +i) | License, configs, integrity, binary, migrations, frontend dist |
+| 23 | chattr self-destructs | Removed after making files immutable — bits cannot be reversed |
+| 24 | Package managers removed | dnf, yum, rpm deleted at runtime |
+| 25 | All shells removed | bash, sh, csh, zsh, ksh, fish, dash — removed 5s after supervisord starts |
+| 26 | `--read-only` support | Documented with required tmpfs mounts |
+| 27 | `--cap-drop ALL` | Only CHOWN, SETUID, SETGID, DAC_OVERRIDE, FOWNER, NET_BIND_SERVICE, LINUX_IMMUTABLE |
+| 28 | `--security-opt=no-new-privileges` | Prevents privilege escalation |
