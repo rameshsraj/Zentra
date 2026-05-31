@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
 # =============================================================================
 # Zentra — Docker Image Build Script
-# Run this on the Linux build server (10.88.11.162)
+# Run this on the Linux build server.
+#
+# This script builds the Docker image, verifies it, exports a tarball,
+# then CLEANS UP all Docker artifacts. Nothing is left running on the server.
+# The server is a build machine only — not a Docker runtime host.
 #
 # Usage:
 #   ./docker/build-image.sh              # Full build (frontend + backend + image + tarball)
 #   ./docker/build-image.sh --skip-fe    # Skip frontend build (use existing dist/)
 #   ./docker/build-image.sh --skip-be    # Skip backend build (use existing binary)
 #   ./docker/build-image.sh --image-only # Skip both, just rebuild Docker image + tarball
+#
+# After build:
+#   scp <server>:/path/to/docker/zentra-latest.tar.gz ./docker/
 #
 # Prerequisites:
 #   - Rust 1.95+ (rustc, cargo)
@@ -36,6 +43,26 @@ for arg in "$@"; do
         *) echo "Unknown arg: $arg"; exit 1 ;;
     esac
 done
+
+# ---------------------------------------------------------------------------
+# Cleanup function — always runs on exit (success or failure)
+# Ensures NO Docker containers, images, or volumes are left on the server.
+# ---------------------------------------------------------------------------
+cleanup_docker() {
+    echo ""
+    echo "[CLEANUP] Stopping all Docker containers..."
+    docker ps -q 2>/dev/null | xargs -r docker stop 2>/dev/null || true
+    echo "[CLEANUP] Removing all Docker containers..."
+    docker ps -aq 2>/dev/null | xargs -r docker rm -f 2>/dev/null || true
+    echo "[CLEANUP] Removing the built image..."
+    docker rmi "${IMAGE_NAME}:${IMAGE_TAG}" 2>/dev/null || true
+    echo "[CLEANUP] Pruning dangling images, volumes, and networks..."
+    docker image prune -f 2>/dev/null || true
+    docker volume prune -f 2>/dev/null || true
+    docker network prune -f 2>/dev/null || true
+    echo "[CLEANUP] Docker is clean — nothing running on this server."
+}
+trap cleanup_docker EXIT
 
 echo "=============================================="
 echo "  Zentra — Docker Image Build"
@@ -125,10 +152,15 @@ docker save "${IMAGE_NAME}:${IMAGE_TAG}" | gzip > "${TARBALL}"
 TARBALL_SIZE=$(ls -lh "${TARBALL}" | awk '{print $5}')
 echo "[D08] Tarball created: ${TARBALL} (${TARBALL_SIZE})"
 
+# ── Cleanup happens automatically via EXIT trap ──
+# After tarball is saved, the trap removes all Docker containers, images, volumes, networks.
+
 echo ""
 echo "=============================================="
 echo "  BUILD COMPLETE"
-echo "  Image:   ${IMAGE_NAME}:${IMAGE_TAG}"
 echo "  Tarball: ${TARBALL} (${TARBALL_SIZE})"
 echo "  Date:    $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo ""
+echo "  Next: copy the tarball to your local machine:"
+echo "    scp $(hostname):${TARBALL} ./docker/zentra-latest.tar.gz"
 echo "=============================================="

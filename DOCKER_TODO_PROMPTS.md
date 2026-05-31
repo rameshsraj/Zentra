@@ -68,39 +68,42 @@ docker run -p 5010:5010 -p 4317:4317 -p 4318:4318 ...           # Optional — a
 
 The `docker/simulation/` lab creates **12 Docker containers** simulating a datacenter.
 
-### Linux Host — macvlan (subnet `10.88.11.0/24`)
+> **IPs are auto-detected at runtime.** The `setup.sh` (Linux) or `setup.ps1` (Windows) script
+> detects the host's default network interface, subnet, and gateway, then assigns IPs
+> starting from offset `+201` in the host's subnet. **No hardcoded IPs.**
 
-| # | Component | Container | IP | Ports | Image | Role |
-|---|-----------|-----------|-----|-------|-------|------|
-| 1 | **Linux Server 01** | `srv-linux-01` | `10.88.11.201` | 22 (SSH), 161 (SNMP) | `rockylinux:8` | Web Server |
-| 2 | **Linux Server 02** | `srv-linux-02` | `10.88.11.202` | 22 (SSH), 161 (SNMP) | `ubuntu:22.04` | App Server |
-| 3 | **Windows Server 01** | `srv-win-01` | `10.88.11.203` | 22 (SSH), 161 (SNMP) | `polinux/snmpd:alpine` | AD/DNS (sim) |
-| 4 | **Windows Server 02** | `srv-win-02` | `10.88.11.204` | 22 (SSH), 161 (SNMP) | `polinux/snmpd:alpine` | File Server (sim) |
-| 5 | **Core Switch** | `sw-core-01` | `10.88.11.205` | 22 (SSH), 161 (SNMP) | `polinux/snmpd:alpine` | Cisco 9300 (sim) |
-| 6 | **Access Switch** | `sw-access-01` | `10.88.11.206` | 22 (SSH), 161 (SNMP) | `polinux/snmpd:alpine` | Arista 7050X (sim) |
-| 7 | **Firewall** | `fw-01` | `10.88.11.207` | 22 (SSH), 161 (SNMP) | `polinux/snmpd:alpine` | Palo Alto PA-3260 (sim) |
-| 8 | **Storage Array** | `stor-01` | `10.88.11.208` | 22 (SSH), 161 (SNMP) | `polinux/snmpd:alpine` | Dell PowerStore (sim) |
-| 9 | **Nginx** | `mw-nginx-01` | `10.88.11.209` | 22, 80, 8080 (status) | `nginx:1.25-alpine` | Reverse Proxy |
-| 10 | **Apache** | `mw-apache-01` | `10.88.11.210` | 22, 80, 8080 (status) | `httpd:2.4-alpine` | HTTP Server |
-| 11 | **Tomcat** | `mw-tomcat-01` | `10.88.11.211` | 22, 8080, 9090 (JMX) | `tomcat:9-jdk17` | App Server |
-| 12 | **Oracle DB** | `db-oracle-01` | `10.88.11.212` | 22, 1521 (OCI) | `gvenzl/oracle-xe:21-slim` | Oracle 21c XE |
+### IP Assignment Pattern
 
-### Windows Host — Docker Bridge (`10.100.0.0/24`)
+If the host IP is `X.X.X.Y` on a `/24` or `/23` subnet, containers get `X.X.X.201` through `X.X.X.212`:
 
-| # | Component | Container | IP | Ports | Role |
-|---|-----------|-----------|-----|-------|------|
-| 1 | Linux Server 01 | `srv-linux-01` | `10.100.0.11` | 22, 161 | Rocky Linux 8 |
-| 2 | Linux Server 02 | `srv-linux-02` | `10.100.0.12` | 22, 161 | Ubuntu 22.04 |
-| 3 | Windows Server 01 | `srv-win-01` | `10.100.0.13` | 22, 161 | Win 2022 (sim) |
-| 4 | Windows Server 02 | `srv-win-02` | `10.100.0.14` | 22, 161 | Win 2019 (sim) |
-| 5 | Core Switch | `sw-core-01` | `10.100.0.15` | 22, 161 | Cisco 9300 (sim) |
-| 6 | Access Switch | `sw-access-01` | `10.100.0.16` | 22, 161 | Arista 7050X (sim) |
-| 7 | Firewall | `fw-01` | `10.100.0.17` | 22, 161 | Palo Alto (sim) |
-| 8 | Storage Array | `stor-01` | `10.100.0.18` | 22, 161 | Dell PowerStore (sim) |
-| 9 | Nginx | `mw-nginx-01` | `10.100.0.19` | 22, 80, 8080 | Reverse Proxy |
-| 10 | Apache | `mw-apache-01` | `10.100.0.20` | 22, 80, 8080 | HTTP Server |
-| 11 | Tomcat | `mw-tomcat-01` | `10.100.0.21` | 22, 8080, 9090 | App Server |
-| 12 | Oracle DB | `db-oracle-01` | `10.100.0.22` | 22, 1521 | Oracle 21c XE |
+| # | Container | IP (auto-assigned) | Ports | Image | Role |
+|---|-----------|---------------------|-------|-------|------|
+| 1 | `srv-linux-01` | `<subnet>.201` | 22 (SSH), 161 (SNMP) | `rockylinux:8` | Linux Web Server |
+| 2 | `srv-linux-02` | `<subnet>.202` | 22 (SSH), 161 (SNMP) | `ubuntu:22.04` | Linux App Server |
+| 3 | `srv-win-01` | `<subnet>.203` | 22 (SSH), 161 (SNMP) | `polinux/snmpd:alpine` | Windows AD/DNS (sim) |
+| 4 | `srv-win-02` | `<subnet>.204` | 22 (SSH), 161 (SNMP) | `polinux/snmpd:alpine` | Windows File Server (sim) |
+| 5 | `sw-core-01` | `<subnet>.205` | 22 (SSH), 161 (SNMP) | `polinux/snmpd:alpine` | Cisco Catalyst 9300 (sim) |
+| 6 | `sw-access-01` | `<subnet>.206` | 22 (SSH), 161 (SNMP) | `polinux/snmpd:alpine` | Arista 7050X (sim) |
+| 7 | `fw-01` | `<subnet>.207` | 22 (SSH), 161 (SNMP) | `polinux/snmpd:alpine` | Palo Alto PA-3260 (sim) |
+| 8 | `stor-01` | `<subnet>.208` | 22 (SSH), 161 (SNMP) | `polinux/snmpd:alpine` | Dell PowerStore (sim) |
+| 9 | `mw-nginx-01` | `<subnet>.209` | 22, 80, 8080 (status) | `nginx:1.25-alpine` | Reverse Proxy |
+| 10 | `mw-apache-01` | `<subnet>.210` | 22, 80, 8080 (status) | `httpd:2.4-alpine` | HTTP Server |
+| 11 | `mw-tomcat-01` | `<subnet>.211` | 22, 8080, 9090 (JMX) | `tomcat:9-jdk17` | App Server |
+| 12 | `db-oracle-01` | `<subnet>.212` | 22, 1521 (OCI) | `gvenzl/oracle-xe:21-slim` | Oracle 21c XE |
+
+### How IPs Are Detected
+
+- **Linux (`setup.sh`):** Uses macvlan on the host's default interface. Detects via `ip route` + `ip addr`.
+- **Windows (`setup.ps1`):** Creates a Docker bridge network. Detects via `Get-NetRoute` + `Get-NetIPAddress`.
+- The offset (`200`) is configurable in `setup.sh` → `IP_OFFSET_START=200`.
+
+### After Setup — View Actual IPs
+
+```bash
+# Show all running lab containers with their actual IPs
+docker ps --format 'table {{.Names}}\t{{.Status}}' | grep -E 'srv-|sw-|fw-|stor-|mw-|db-'
+docker network inspect simulation_zentra-dc --format '{{range .Containers}}{{.Name}}\t{{.IPv4Address}}\n{{end}}'
+```
 
 ### Lab Credentials
 
@@ -383,81 +386,84 @@ The `docker/simulation/` lab creates **12 Docker containers** simulating a datac
 
 ---
 
-## Prompt D09 — Deploy to Target Machine
+## Prompt D09 — Deploy to Client Machine (Zentra + Simulation Lab)
 
-**Run on:** Target deployment machine (any Linux/Windows/macOS with Docker)
+**Run on:** The **client/target machine** where Zentra will run. NOT the build server.
 
+> Copy the `docker/` folder (with `zentra-latest.tar.gz`) to the client machine, then run:
+>
+> **Linux (full deploy — Zentra + 12-container simulation lab):**
 > ```bash
-> # 1. Load the image
-> docker load -i zentra-latest.tar.gz
->
-> # 2. Quick start (zero config)
-> docker run -d --name zentra -p 5010:5010 \
->   -v zentra-data:/var/lib/postgresql/data \
->   zentra:latest
->
-> # 3. Production start (hardened)
-> docker run -d --name zentra \
->   --restart unless-stopped \
->   --read-only \
->   --tmpfs /tmp:rw,noexec,nosuid,size=64m \
->   --tmpfs /var/run:rw,noexec,nosuid,size=16m \
->   --tmpfs /var/log:rw,noexec,nosuid,size=128m \
->   --tmpfs /opt/zentra/logs:rw,noexec,nosuid,size=64m \
->   --tmpfs /root/.ssh:rw,noexec,nosuid,size=4m \
->   --security-opt=no-new-privileges:true \
->   --cap-drop ALL \
->   --cap-add CHOWN --cap-add SETUID --cap-add SETGID \
->   --cap-add DAC_OVERRIDE --cap-add FOWNER \
->   --cap-add NET_BIND_SERVICE --cap-add LINUX_IMMUTABLE \
->   -p 5010:5010 \
->   -v zentra-data:/var/lib/postgresql/data \
->   zentra:latest
->
-> # 4. Access
-> # Browser: http://<host-ip>:5010
-> # Login:   admin@zentra.local / changeme
+> cd /path/to/docker
+> sudo bash deploy-all.sh
 > ```
 >
-> **Done when:** Browser shows the Zentra login page at `http://<host-ip>:5010`.
+> **Windows (full deploy — Zentra + 12-container simulation lab):**
+> ```powershell
+> cd C:\path\to\docker
+> powershell -ExecutionPolicy Bypass -File deploy-all.ps1
+> ```
+>
+> **What `deploy-all` does automatically:**
+>
+> 1. **Phase 1 — Zentra App** (calls `install.sh` / `install.ps1`):
+>    - Loads `zentra-latest.tar.gz` into Docker
+>    - Creates `.env` with auto-generated JWT secret + PG password
+>    - Starts the Zentra container on port `5010`
+>    - Waits for health check to pass
+>
+> 2. **Phase 2 — Simulation Lab** (calls `simulation/setup.sh` / `simulation/setup.ps1`):
+>    - **Auto-detects** the client's network interface, subnet, and gateway
+>    - Assigns IPs `<subnet>.201` through `<subnet>.212` (macvlan on Linux, bridge on Windows)
+>    - Pulls and starts all 12 lab containers
+>
+> 3. **Phase 3 — Connect Zentra to Lab:**
+>    - Connects the Zentra container to the simulation network
+>    - Generates SSH keys inside Zentra
+>    - Distributes SSH keys to all 12 lab containers (passwordless SSH)
+>    - Verifies connectivity
+>
+> 4. **Phase 4 — Summary Report:**
+>    - Prints all container names, auto-detected IPs, ports, status, and credentials
+>
+> **Zentra-only (no lab):**
+> ```bash
+> sudo bash install.sh        # Linux
+> ```
+> ```powershell
+> powershell -ExecutionPolicy Bypass -File install.ps1   # Windows
+> ```
+>
+> **Lab-only (Zentra already running):**
+> ```bash
+> cd simulation && sudo bash setup.sh     # Linux
+> ```
+> ```powershell
+> cd simulation; powershell -ExecutionPolicy Bypass -File setup.ps1   # Windows
+> ```
+>
+> **Done when:** `deploy-all` prints the summary with all IPs, all 12 lab containers UP, and Zentra healthy.
 
 ---
 
-## Prompt D10 — Run the Simulation Lab
+## Prompt D10 — Add Lab Targets to Zentra UI
 
-**Run on:** Same machine as Zentra, or a dedicated lab host
+**Run on:** Browser, after D09 completes
 
-> **Linux:**
-> ```bash
-> cd /store/Zentra/docker/simulation
-> sudo ./setup.sh
-> ```
->
-> **Windows:**
-> ```powershell
-> cd C:\git\Zentra\docker\simulation
-> powershell -ExecutionPolicy Bypass -File setup.ps1
-> ```
->
-> **Verify all 12 containers are running:**
-> ```bash
-> docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E "srv-|sw-|fw-|stor-|mw-|db-"
-> ```
->
-> **Add targets to Zentra UI:**
+> Open `http://<client-ip>:5010`, login with `admin@zentra.local` / `changeme`, then add:
 >
 > | Target Type | Where in Zentra | What to Enter |
 > |-------------|----------------|---------------|
-> | Linux/Windows Servers | Infrastructure > Servers > Add | IP, port 22, `root` / `zentra123` |
-> | Network Switches | Infrastructure > Network > Add | IP, SNMP community `public` |
-> | Firewall | Infrastructure > Network > Add | IP, SNMP community `public` |
-> | Storage Array | Infrastructure > Storage > Add | IP, SSH `root` / `zentra123` |
-> | Nginx | Middleware > Nginx > Add | IP, `http://<ip>:8080/nginx_status` |
-> | Apache | Middleware > Apache > Add | IP, `http://<ip>:8080/server-status` |
+> | Linux/Windows Servers | Infrastructure > Servers > Add | IP from report, port 22, `root` / `zentra123` |
+> | Network Switches | Infrastructure > Network > Add | IP from report, SNMP community `public` |
+> | Firewall | Infrastructure > Network > Add | IP from report, SNMP community `public` |
+> | Storage Array | Infrastructure > Storage > Add | IP from report, SSH `root` / `zentra123` |
+> | Nginx | Middleware > Nginx > Add | IP from report, `http://<ip>:8080/nginx_status` |
+> | Apache | Middleware > Apache > Add | IP from report, `http://<ip>:8080/server-status` |
 > | Tomcat | Middleware > Tomcat > Add | IP:8080, `zentra` / `zentra123` |
 > | Oracle | Database > Oracle > Add | IP:1521, SID `XE`, `zentra_mon` / `zentra123` |
 >
-> **Done when:** All 12 lab containers are running and added as targets in Zentra.
+> **Done when:** All 12 lab components appear as targets in the Zentra dashboard.
 
 ---
 
@@ -520,17 +526,34 @@ All verification uses `--entrypoint sh` to bypass the container entrypoint.
 
 ## Existing Docker Files Reference
 
-| File | Lines | What It Does |
-|------|-------|--------------|
-| `docker/Dockerfile` | 238 | Rocky Linux 8 base, PG 16, TimescaleDB, Nginx, Supervisor, Oracle IC, hardening, build verification, integrity manifest |
-| `docker/docker-entrypoint.sh` | 371 | Tamper verification, license check (3-day trial), PG init, restricted `zentra_app` user, SSH keys, self-lockdown (chattr, shell removal) |
-| `docker/supervisord.conf` | 69 | Manages postgresql (priority 10), zentra-server as user `zentra` (priority 20), nginx (priority 30) |
-| `docker/nginx.conf` | 117 | Frontend on `:5010`, proxy `/api/*` to `:5006`, OTLP `/v1/*` proxy, rate limiting login, security headers, CSP, blocks `/api/system/` and `/api/pool-status` |
-| `.dockerignore` | 93 | Excludes `crates/`, `frontend/src/`, `frontend/node_modules/`, `*.rs`, `*.toml`, `.git/`, `docs/`, `deploy/`, `*.log`, `*.txt`, build intermediates |
-| `docker/validate.sh` | — | Post-build validation script |
-| `docker/install.sh` | — | Linux automated setup |
-| `docker/install.ps1` | — | Windows automated setup |
+### Image Build (run on build server)
+
+| File | What It Does |
+|------|--------------|
+| `docker/Dockerfile` | Rocky Linux 8 base, PG 16, TimescaleDB, Nginx, Supervisor, Oracle IC, hardening, integrity manifest |
+| `docker/docker-entrypoint.sh` | Tamper verification, license check (3-day trial), PG init, restricted `zentra_app` user, SSH keys, self-lockdown |
+| `docker/supervisord.conf` | Manages postgresql → zentra-server → nginx startup order |
+| `docker/nginx.conf` | Frontend on `:5010`, proxy `/api/*` to `:5006`, rate limiting, security headers, CSP |
+| `.dockerignore` | Excludes all source code, `.git/`, `node_modules/`, build intermediates |
+| `docker/build-image.sh` | **Build server script** — builds image, verifies, exports tarball, cleans up Docker |
+
+### Client Deployment (run on target machine)
+
+| File | OS | What It Does |
+|------|----|--------------|
+| `docker/deploy-all.sh` | Linux | **Full deploy** — Zentra + simulation lab + SSH keys + network connect + IP report |
+| `docker/deploy-all.ps1` | Windows | **Full deploy** — same as above for PowerShell |
+| `docker/install.sh` | Linux | **Zentra-only** — load image, create `.env`, start container, health check |
+| `docker/install.ps1` | Windows | **Zentra-only** — same as above for PowerShell |
+| `docker/simulation/setup.sh` | Linux | **Lab-only** — auto-detect network, start 12 containers (macvlan) |
+| `docker/simulation/setup.ps1` | Windows | **Lab-only** — auto-detect network, start 12 containers (bridge) |
+| `docker/simulation/traffic-sim.sh` | Linux | Generate simulated traffic between lab containers |
+| `docker/simulation/traffic-sim.ps1` | Windows | Same as above for PowerShell |
+| `docker/simulation/docker-compose.yml` | — | Template compose file (IPs replaced at runtime by setup scripts) |
+| `docker/simulation/configs/` | — | SNMP, SSH, Nginx, Apache, Tomcat, Oracle configs for lab containers |
+| `docker/validate.sh` | Linux | Post-build validation script |
 | `docker/README.md` | — | Full installation guide with hardened `docker run` commands |
+| `docker/.env.example` | — | Template environment variables |
 
 ## Security Measures Summary
 

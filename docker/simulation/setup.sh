@@ -90,12 +90,20 @@ HOST_CIDR=$(ip -4 addr show "${HOST_IFACE}" | grep -oP '(?<=inet\s)\d+(\.\d+){3}
 HOST_SUBNET_MASK=$(echo "${HOST_CIDR}" | cut -d'/' -f2)
 HOST_GATEWAY=$(ip route | grep default | awk '{print $3}' | head -1)
 
-# Calculate subnet base (e.g., 10.88.11.0)
+# Calculate subnet base using proper bitwise masking
 IFS='.' read -r o1 o2 o3 o4 <<< "${HOST_IP}"
 
-# For /24 subnets
 if [ "${HOST_SUBNET_MASK}" -ge 24 ]; then
+    # /24-/32: zero out last octet
     HOST_SUBNET="${o1}.${o2}.${o3}.0/${HOST_SUBNET_MASK}"
+    IP_BASE="${o1}.${o2}.${o3}"
+elif [ "${HOST_SUBNET_MASK}" -ge 16 ]; then
+    # /16-/23: mask the third octet properly
+    # For /23: mask = 0xFE (254), e.g. 11 & 254 = 10 → 10.88.10.0/23
+    BITS_IN_O3=$((HOST_SUBNET_MASK - 16))
+    MASK_O3=$(( (255 << (8 - BITS_IN_O3)) & 255 ))
+    MASKED_O3=$(( o3 & MASK_O3 ))
+    HOST_SUBNET="${o1}.${o2}.${MASKED_O3}.0/${HOST_SUBNET_MASK}"
     IP_BASE="${o1}.${o2}.${o3}"
 else
     HOST_SUBNET="${o1}.${o2}.0.0/${HOST_SUBNET_MASK}"
