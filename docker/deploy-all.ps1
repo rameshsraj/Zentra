@@ -127,6 +127,11 @@ if ($simSuccess) {
 Write-Host ""
 Write-Info "Checking SSH tools in Zentra container..."
 
+# Suppress stderr from docker exec calls (GPG key imports, SSH warnings, test failures)
+# $ErrorActionPreference = "Stop" treats any native stderr as a terminating error
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "SilentlyContinue"
+
 # Check if sshpass is available
 docker exec zentra which sshpass >$null 2>$null
 if ($LASTEXITCODE -ne 0) {
@@ -155,6 +160,7 @@ if ($keyExists) {
         Write-Ok "SSH key pair already exists (no passphrase)"
     }
 }
+
 if (-not $keyExists) {
     Write-Info "Generating SSH key pair in Zentra container..."
     docker exec zentra mkdir -p /root/.ssh
@@ -215,6 +221,9 @@ if (-not $simNetwork) {
         Write-Warn "Ping to 10.100.0.11 failed from Zentra container"
     }
 }
+
+# Restore ErrorActionPreference after all docker exec blocks
+$ErrorActionPreference = $prevEAP
 
 # ---------------------------------------------------------------------------
 # Step 6: Distribute SSH keys to simulation nodes
