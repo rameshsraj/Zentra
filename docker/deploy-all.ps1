@@ -131,7 +131,7 @@ Write-Info "Checking SSH tools in Zentra container..."
 docker exec zentra which sshpass >$null 2>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Info "Installing openssh-clients and sshpass in Zentra container..."
-    docker exec zentra dnf install -y openssh-clients sshpass >$null 2>$null
+    docker exec zentra dnf install -y openssh-clients sshpass 2>&1 | Out-Null
     if ($LASTEXITCODE -eq 0) {
         Write-Ok "SSH tools installed successfully"
     } else {
