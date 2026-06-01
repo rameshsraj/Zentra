@@ -62,6 +62,7 @@ const UserManagementPage = lazy(() => import('./pages/admin/UserManagement'))
 const UserGroupManagementPage = lazy(() => import('./pages/admin/UserGroupManagement'))
 const RoleManagementPage = lazy(() => import('./pages/admin/RoleManagement'))
 const UserProfilePage = lazy(() => import('./pages/admin/UserProfile'))
+const OrganizationManagementPage = lazy(() => import('./pages/admin/OrganizationManagement'))
 
 // AI & Analytics
 const AIInsightsPage = lazy(() => import('./pages/AIInsights'))
@@ -157,6 +158,7 @@ export default function App() {
             <Route path="admin/groups" element={<UserGroupManagementPage />} />
             <Route path="admin/roles" element={<RoleManagementPage />} />
             <Route path="admin/profile" element={<UserProfilePage />} />
+            <Route path="admin/organizations" element={<OrganizationManagementPage />} />
 
             {/* AI & Analytics */}
             <Route path="ai-insights" element={<AIInsightsPage />} />

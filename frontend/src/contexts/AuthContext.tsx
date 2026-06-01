@@ -71,6 +71,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       localStorage.setItem('Zentra_token', res.token)
       localStorage.setItem('Zentra_refresh_token', res.refresh_token)
+      // Reset sidebar menu state on new login
+      localStorage.removeItem('zentra-sidebar-expanded')
       // Fetch full profile
       const profile = await authMe()
       setState({ user: profile, isAuthenticated: true, isLoading: false, error: null })
@@ -88,6 +90,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch { /* ignore */ }
     localStorage.removeItem('Zentra_token')
     localStorage.removeItem('Zentra_refresh_token')
+    // Reset sidebar menu state on logout
+    localStorage.removeItem('zentra-sidebar-expanded')
     setState({ user: null, isAuthenticated: false, isLoading: false, error: null })
   }, [])
 

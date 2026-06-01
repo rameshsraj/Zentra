@@ -32,6 +32,7 @@ import {
   Container,
   Layers,
   MessageSquare,
+  Building2,
   type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -177,6 +178,7 @@ const navItems: NavItem[] = [
       { to: '/admin/users', label: 'Users', icon: Users },
       { to: '/admin/groups', label: 'Groups', icon: Users },
       { to: '/admin/roles', label: 'Roles', icon: Lock },
+      { to: '/admin/organizations', label: 'Organizations', icon: Building2 },
       { to: '/admin/profile', label: 'My Profile', icon: User },
     ],
   },
@@ -360,6 +362,7 @@ export default function Layout() {
     '/admin/users': 'admin.users',
     '/admin/groups': 'admin.groups',
     '/admin/roles': 'admin.roles',
+    '/admin/organizations': 'admin.organizations',
     '/admin/profile': 'admin.profile',
   }
 
@@ -417,7 +420,9 @@ export default function Layout() {
     return () => window.removeEventListener('keydown', handler)
   }, [])
 
-  // Auto-expand parent menu for current route on mount/navigation
+  // Auto-expand only the parent menu(s) that contain the current route.
+  // On navigation, we set expanded to ONLY the relevant parents (no accumulation).
+  // User manual toggles (via toggleExpand) still persist to localStorage normally.
   useEffect(() => {
     const toExpand: string[] = []
     for (const item of dynamicNav) {
@@ -438,11 +443,8 @@ export default function Layout() {
       }
     }
     if (toExpand.length > 0) {
-      setExpanded(prev => {
-        const merged = [...new Set([...prev, ...toExpand])]
-        try { localStorage.setItem('zentra-sidebar-expanded', JSON.stringify(merged)) } catch {}
-        return merged
-      })
+      setExpanded(toExpand)
+      try { localStorage.setItem('zentra-sidebar-expanded', JSON.stringify(toExpand)) } catch {}
     }
   }, [location.pathname, dynamicNav])
 

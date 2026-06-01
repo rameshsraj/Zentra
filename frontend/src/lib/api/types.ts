@@ -1107,19 +1107,19 @@ export interface ScanFinding {
   status: string; severity: string; details: string; remediation: string; evidence?: string
 }
 
-// Tenants
-export interface Tenant {
-  id: string; name: string; slug: string; plan: string; status: string; owner_email: string
-  created_at: string; trial_ends_at?: string; data_isolation: string
-  max_targets: number; max_users: number; max_dashboards: number; max_alerts: number
+// Organizations / Tenants
+export interface Organization {
+  org_id: string; name: string; slug: string; plan: string; status: string; owner_email: string
+  created_at: string; updated_at: string; trial_ends_at?: string
+  max_targets: number; max_users: number; max_dashboards: number; max_alert_rules: number
   retention_days: number; current_targets: number; current_users: number
-  features: string[]; custom_branding: boolean; sso_enabled: boolean
+  features: Record<string, any>; custom_branding: boolean; sso_enabled: boolean
   api_rate_limit: number; region: string; notes?: string
 }
+export type Tenant = Organization
 export interface TenantUsage {
-  tenant_id: string; tenant_name: string; targets_used: number; targets_limit: number
-  users_used: number; users_limit: number; metrics_per_day: number; logs_per_day: number
-  alerts_fired_30d: number; storage_gb: number; api_calls_today: number; last_active: string
+  org_id: string; org_name: string; targets_used: number; targets_limit: number
+  users_used: number; users_limit: number; alerts_fired_30d: number
 }
 
 // HA
