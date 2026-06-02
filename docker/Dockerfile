@@ -142,9 +142,9 @@ RUN rm -f /etc/nginx/conf.d/default.conf && \
     '}' > /etc/nginx/nginx.conf
 
 # Create log directories and SSH directory
-RUN mkdir -p /opt/zentra/logs /var/log/supervisor /root/.ssh \
-    && chmod 700 /root/.ssh \
-    && chown zentra:zentra /opt/zentra/logs
+RUN mkdir -p /opt/zentra/.ssh /opt/zentra/logs /var/log/supervisor /root/.ssh \
+    && chmod 700 /opt/zentra/.ssh /root/.ssh \
+    && chown zentra:zentra /opt/zentra/.ssh /opt/zentra/logs
 
 # ---------------------------------------------------------------------------
 # D02: Build metadata (written at image build time)

@@ -263,6 +263,16 @@ EOFSCRIPT
 fi
 
 # ---------------------------------------------------------------------------
+# Ensure zentra user (non-root runtime) has a writable ~/.ssh directory
+# ---------------------------------------------------------------------------
+if [ ! -d /opt/zentra/.ssh ]; then
+    mkdir -p /opt/zentra/.ssh
+    chown zentra:zentra /opt/zentra/.ssh
+    chmod 700 /opt/zentra/.ssh
+    echo "[entrypoint] Created /opt/zentra/.ssh for zentra user"
+fi
+
+# ---------------------------------------------------------------------------
 # Generate SSH keys if not present (for monitoring remote servers)
 # ---------------------------------------------------------------------------
 if [ ! -f /root/.ssh/id_rsa ]; then
