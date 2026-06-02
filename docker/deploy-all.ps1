@@ -147,14 +147,18 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # Generate SSH keys if missing (or regenerate if passphrase-protected)
-docker exec zentra test -f /root/.ssh/id_rsa >$null 2>$null
+# NOTE: zentra-server runs as the 'zentra' user, so keys must live under
+# /opt/zentra/.ssh so the app can find and use them.
+$ZENTRA_SSH_DIR = "/opt/zentra/.ssh"
+$ZENTRA_KEY = "$ZENTRA_SSH_DIR/id_rsa"
+docker exec zentra test -f $ZENTRA_KEY >$null 2>$null
 $keyExists = ($LASTEXITCODE -eq 0)
 if ($keyExists) {
     # Verify key has no passphrase (can be loaded without TTY)
-    docker exec zentra ssh-keygen -y -f /root/.ssh/id_rsa -P "" >$null 2>$null
+    docker exec zentra ssh-keygen -y -f $ZENTRA_KEY -P "" >$null 2>$null
     if ($LASTEXITCODE -ne 0) {
         Write-Warn "Existing SSH key has a passphrase - regenerating..."
-        docker exec zentra rm -f /root/.ssh/id_rsa /root/.ssh/id_rsa.pub >$null 2>$null
+        docker exec zentra rm -f $ZENTRA_KEY "$ZENTRA_KEY.pub" >$null 2>$null
         $keyExists = $false
     } else {
         Write-Ok "SSH key pair already exists (no passphrase)"
@@ -162,18 +166,20 @@ if ($keyExists) {
 }
 
 if (-not $keyExists) {
-    Write-Info "Generating SSH key pair in Zentra container..."
-    docker exec zentra mkdir -p /root/.ssh
-    docker exec zentra chmod 700 /root/.ssh
-    docker exec zentra ssh-keygen -t rsa -b 4096 -f /root/.ssh/id_rsa -N "" -q
-    docker exec zentra sh -c "echo 'Host *' > /root/.ssh/config"
-    docker exec zentra sh -c "echo '    StrictHostKeyChecking no' >> /root/.ssh/config"
-    docker exec zentra sh -c "echo '    UserKnownHostsFile /dev/null' >> /root/.ssh/config"
-    docker exec zentra sh -c "echo '    LogLevel ERROR' >> /root/.ssh/config"
-    docker exec zentra sh -c "echo '    GSSAPIAuthentication no' >> /root/.ssh/config"
-    docker exec zentra chmod 600 /root/.ssh/config
+    Write-Info "Generating SSH key pair for zentra user..."
+    docker exec zentra mkdir -p $ZENTRA_SSH_DIR
+    docker exec zentra chmod 700 $ZENTRA_SSH_DIR
+    docker exec zentra ssh-keygen -t rsa -b 4096 -f $ZENTRA_KEY -N "" -q
+    docker exec zentra chown -R zentra:zentra $ZENTRA_SSH_DIR
+    docker exec zentra sh -c "echo 'Host *' > $ZENTRA_SSH_DIR/config"
+    docker exec zentra sh -c "echo '    StrictHostKeyChecking no' >> $ZENTRA_SSH_DIR/config"
+    docker exec zentra sh -c "echo '    UserKnownHostsFile /dev/null' >> $ZENTRA_SSH_DIR/config"
+    docker exec zentra sh -c "echo '    LogLevel ERROR' >> $ZENTRA_SSH_DIR/config"
+    docker exec zentra sh -c "echo '    GSSAPIAuthentication no' >> $ZENTRA_SSH_DIR/config"
+    docker exec zentra chmod 600 $ZENTRA_SSH_DIR/config
+    docker exec zentra chown -R zentra:zentra $ZENTRA_SSH_DIR
     if ($LASTEXITCODE -eq 0) {
-        Write-Ok "SSH key pair generated"
+        Write-Ok "SSH key pair generated at $ZENTRA_KEY"
     } else {
         Write-Warn "Failed to generate SSH key pair"
     }
@@ -244,7 +250,7 @@ foreach ($target in $sshTargets) {
     $ipFmt = '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
     $targetIp = docker inspect --format $ipFmt $target 2>$null
     if ($targetIp -and $targetIp -match '^\d+\.\d+\.\d+\.\d+$') {
-        docker exec zentra sshpass -p "zentra123" ssh-copy-id -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no root@$targetIp >$null 2>$null
+        docker exec zentra sshpass -p "zentra123" ssh-copy-id -i $ZENTRA_KEY.pub -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no root@$targetIp >$null 2>$null
         if ($LASTEXITCODE -eq 0) {
             $keyCount++
         }
@@ -262,7 +268,7 @@ if ($keyCount -gt 0) {
 Write-Info "Verifying passwordless SSH..."
 $prevEAP2 = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-$sshResult = docker exec zentra ssh -o BatchMode=yes -o ConnectTimeout=5 -o GSSAPIAuthentication=no root@10.100.0.11 hostname 2>$null
+$sshResult = docker exec zentra ssh -i $ZENTRA_KEY -o BatchMode=yes -o ConnectTimeout=5 -o GSSAPIAuthentication=no root@10.100.0.11 hostname 2>$null
 $ErrorActionPreference = $prevEAP2
 if ($LASTEXITCODE -eq 0) {
     Write-Ok "Passwordless SSH verified (srv-linux-01: $sshResult)"

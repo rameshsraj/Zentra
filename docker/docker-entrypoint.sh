@@ -273,19 +273,34 @@ if [ ! -d /opt/zentra/.ssh ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Generate SSH keys if not present (for monitoring remote servers)
+# Generate SSH keys for BOTH root (docker exec fallback) and zentra user
+# zentra-server runs as the 'zentra' user, so it needs keys under /opt/zentra/.ssh
 # ---------------------------------------------------------------------------
+
+# Root keys (used by docker exec and deploy-all.ps1 fallback)
 if [ ! -f /root/.ssh/id_rsa ]; then
-    echo "[entrypoint] Generating SSH key pair for server monitoring..."
+    echo "[entrypoint] Generating SSH key pair for root..."
     ssh-keygen -t rsa -b 4096 -f /root/.ssh/id_rsa -N "" -C "zentra@$(hostname)" >/dev/null 2>&1
     chmod 600 /root/.ssh/id_rsa
     chmod 644 /root/.ssh/id_rsa.pub
-    echo "[entrypoint] SSH key pair generated at /root/.ssh/id_rsa"
+    echo "[entrypoint] Root SSH key pair generated at /root/.ssh/id_rsa"
 else
-    echo "[entrypoint] SSH key pair already exists — skipping generation."
+    echo "[entrypoint] Root SSH key pair already exists — skipping generation."
 fi
 
-# Ensure SSH config allows key-based auth without strict host checking for monitoring
+# zentra user keys (used by zentra-server process running as non-root)
+if [ ! -f /opt/zentra/.ssh/id_rsa ]; then
+    echo "[entrypoint] Generating SSH key pair for zentra user..."
+    ssh-keygen -t rsa -b 4096 -f /opt/zentra/.ssh/id_rsa -N "" -C "zentra@$(hostname)" >/dev/null 2>&1
+    chown zentra:zentra /opt/zentra/.ssh/id_rsa /opt/zentra/.ssh/id_rsa.pub
+    chmod 600 /opt/zentra/.ssh/id_rsa
+    chmod 644 /opt/zentra/.ssh/id_rsa.pub
+    echo "[entrypoint] zentra user SSH key pair generated at /opt/zentra/.ssh/id_rsa"
+else
+    echo "[entrypoint] zentra user SSH key pair already exists — skipping generation."
+fi
+
+# Ensure SSH config for root
 if [ ! -f /root/.ssh/config ]; then
     cat > /root/.ssh/config <<'EOFSSH'
 Host *
@@ -295,6 +310,19 @@ Host *
     ConnectTimeout 10
 EOFSSH
     chmod 600 /root/.ssh/config
+fi
+
+# Ensure SSH config for zentra user
+if [ ! -f /opt/zentra/.ssh/config ]; then
+    cat > /opt/zentra/.ssh/config <<'EOFSSH'
+Host *
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    LogLevel ERROR
+    ConnectTimeout 10
+EOFSSH
+    chown zentra:zentra /opt/zentra/.ssh/config
+    chmod 600 /opt/zentra/.ssh/config
 fi
 
 # ---------------------------------------------------------------------------
