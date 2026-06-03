@@ -220,11 +220,16 @@ if (-not $simNetwork) {
 
     # Verify connectivity
     Write-Info "Verifying connectivity from Zentra to simulation nodes..."
-    docker exec zentra ping -c 1 -W 2 10.100.0.11 >$null 2>$null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Ok "Zentra can reach simulation nodes (ping 10.100.0.11 OK)"
+    $firstSimIp = Get-SimIp -Name "srv-linux-01"
+    if ($firstSimIp -ne "N/A") {
+        docker exec zentra ping -c 1 -W 2 $firstSimIp >$null 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Ok "Zentra can reach simulation nodes (ping $firstSimIp OK)"
+        } else {
+            Write-Warn "Ping to $firstSimIp failed from Zentra container"
+        }
     } else {
-        Write-Warn "Ping to 10.100.0.11 failed from Zentra container"
+        Write-Warn "Could not get IP for srv-linux-01 - skipping ping verification"
     }
 }
 
@@ -266,14 +271,19 @@ if ($keyCount -gt 0) {
 
 # Verify SSH works without password
 Write-Info "Verifying passwordless SSH..."
-$prevEAP2 = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
-$sshResult = docker exec zentra ssh -i $ZENTRA_KEY -o BatchMode=yes -o ConnectTimeout=5 -o GSSAPIAuthentication=no root@10.100.0.11 hostname 2>$null
-$ErrorActionPreference = $prevEAP2
-if ($LASTEXITCODE -eq 0) {
-    Write-Ok "Passwordless SSH verified (srv-linux-01: $sshResult)"
+$firstSimIp = Get-SimIp -Name "srv-linux-01"
+if ($firstSimIp -ne "N/A") {
+    $prevEAP2 = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $sshResult = docker exec zentra ssh -i $ZENTRA_KEY -o BatchMode=yes -o ConnectTimeout=5 -o GSSAPIAuthentication=no root@$firstSimIp hostname 2>$null
+    $ErrorActionPreference = $prevEAP2
+    if ($LASTEXITCODE -eq 0) {
+        Write-Ok "Passwordless SSH verified (srv-linux-01: $sshResult)"
+    } else {
+        Write-Warn "Passwordless SSH verification failed - try manually: docker exec zentra sshpass -p zentra123 ssh-copy-id root@$firstSimIp"
+    }
 } else {
-    Write-Warn "Passwordless SSH verification failed - try manually: docker exec zentra sshpass -p zentra123 ssh-copy-id root@10.100.0.11"
+    Write-Warn "Could not get IP for srv-linux-01 - skipping SSH verification"
 }
 
 # ---------------------------------------------------------------------------
