@@ -380,11 +380,11 @@ foreach ($target in $sshTargets) {
     if ($targetIp -ne "N/A") {
         $copyOk = $false
         for ($attempt = 1; $attempt -le 3; $attempt++) {
-            # Push public key directly via sshpass+ssh (more reliable than ssh-copy-id in Docker)
-            docker exec zentra sh -c "sshpass -p 'zentra123' ssh -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=5 root@${targetIp} 'mkdir -p /root/.ssh && chmod 700 /root/.ssh && cat >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys' < ${ROOT_KEY}.pub" >$null 2>$null
+            # Use timeout to prevent ssh-copy-id from hanging on unresponsive nodes
+            docker exec zentra timeout 10 sshpass -p "zentra123" ssh-copy-id -i "${ROOT_KEY}.pub" -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=5 "root@${targetIp}" >$null 2>$null
             if ($LASTEXITCODE -eq 0) {
                 # Verify key was actually installed
-                docker exec zentra ssh -i $ROOT_KEY -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no "root@${targetIp}" "echo ok" >$null 2>$null
+                docker exec zentra timeout 5 ssh -i $ROOT_KEY -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no "root@${targetIp}" "echo ok" >$null 2>$null
                 if ($LASTEXITCODE -eq 0) {
                     $copyOk = $true
                     break

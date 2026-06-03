@@ -310,10 +310,10 @@ for target in ${SSH_TARGETS}; do
     if [ -n "${TARGET_IP}" ]; then
         COPY_OK=false
         for attempt in 1 2 3; do
-            # Push public key directly via sshpass+ssh (more reliable than ssh-copy-id in Docker)
-            if docker exec zentra sh -c "sshpass -p 'zentra123' ssh -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=5 root@${TARGET_IP} 'mkdir -p /root/.ssh && chmod 700 /root/.ssh && cat >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys' < /root/.ssh/id_rsa.pub" >/dev/null 2>&1; then
+            # Use timeout to prevent ssh-copy-id from hanging on unresponsive nodes
+            if docker exec zentra timeout 10 sshpass -p "zentra123" ssh-copy-id -i /root/.ssh/id_rsa.pub -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=5 "root@${TARGET_IP}" >/dev/null 2>&1; then
                 # Verify key was actually installed
-                if docker exec zentra ssh -i /root/.ssh/id_rsa -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no "root@${TARGET_IP}" "echo ok" >/dev/null 2>&1; then
+                if docker exec zentra timeout 5 ssh -i /root/.ssh/id_rsa -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no "root@${TARGET_IP}" "echo ok" >/dev/null 2>&1; then
                     COPY_OK=true
                     break
                 fi
