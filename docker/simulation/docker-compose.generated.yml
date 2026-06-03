@@ -37,7 +37,7 @@ services:
     volumes:
       - ./configs/linux-server/snmpd-rocky.conf:/etc/snmp/snmpd.conf:ro
       - ./configs/linux-server/setup-linux.sh:/opt/setup.sh:ro
-    entrypoint: ["/bin/bash", "-lc", "tr -d '\\r' < /opt/setup.sh > /tmp/setup.sh && chmod +x /tmp/setup.sh && /bin/bash /tmp/setup.sh"]
+    entrypoint: ["/bin/bash", "/opt/setup.sh"]
     cap_add:
       - NET_ADMIN
 
@@ -53,7 +53,7 @@ services:
     volumes:
       - ./configs/linux-server/snmpd-ubuntu.conf:/etc/snmp/snmpd.conf:ro
       - ./configs/linux-server/setup-linux-ubuntu.sh:/opt/setup.sh:ro
-    entrypoint: ["/bin/bash", "-lc", "tr -d '\\r' < /opt/setup.sh > /tmp/setup.sh && chmod +x /tmp/setup.sh && /bin/bash /tmp/setup.sh"]
+    entrypoint: ["/bin/bash", "/opt/setup.sh"]
     cap_add:
       - NET_ADMIN
 
@@ -73,7 +73,7 @@ services:
     volumes:
       - ./configs/windows-server/snmpd-win2022.conf:/etc/snmp/snmpd.conf:ro
       - ./configs/windows-server/setup-snmpd-ssh.sh:/opt/setup.sh:ro
-    entrypoint: ["/bin/sh", "-lc", "tr -d '\\r' < /opt/setup.sh > /tmp/setup.sh && chmod +x /tmp/setup.sh && /bin/sh /tmp/setup.sh"]
+    entrypoint: ["/bin/sh", "/opt/setup.sh"]
 
   # Windows Server 02 - Windows Server 2019 (File Server role)
   srv-win-02:
@@ -87,7 +87,7 @@ services:
     volumes:
       - ./configs/windows-server/snmpd-win2019.conf:/etc/snmp/snmpd.conf:ro
       - ./configs/windows-server/setup-snmpd-ssh.sh:/opt/setup.sh:ro
-    entrypoint: ["/bin/sh", "-lc", "tr -d '\\r' < /opt/setup.sh > /tmp/setup.sh && chmod +x /tmp/setup.sh && /bin/sh /tmp/setup.sh"]
+    entrypoint: ["/bin/sh", "/opt/setup.sh"]
 
   # =========================================================================
   # NETWORK SWITCHES (SNMP simulation)
@@ -105,7 +105,7 @@ services:
     volumes:
       - ./configs/switches/snmpd-cisco-core.conf:/etc/snmp/snmpd.conf:ro
       - ./configs/windows-server/setup-snmpd-ssh.sh:/opt/setup.sh:ro
-    entrypoint: ["/bin/sh", "-lc", "tr -d '\\r' < /opt/setup.sh > /tmp/setup.sh && chmod +x /tmp/setup.sh && /bin/sh /tmp/setup.sh"]
+    entrypoint: ["/bin/sh", "/opt/setup.sh"]
 
   # Access Switch - Arista 7050X
   sw-access-01:
@@ -119,7 +119,7 @@ services:
     volumes:
       - ./configs/switches/snmpd-arista-access.conf:/etc/snmp/snmpd.conf:ro
       - ./configs/windows-server/setup-snmpd-ssh.sh:/opt/setup.sh:ro
-    entrypoint: ["/bin/sh", "-lc", "tr -d '\\r' < /opt/setup.sh > /tmp/setup.sh && chmod +x /tmp/setup.sh && /bin/sh /tmp/setup.sh"]
+    entrypoint: ["/bin/sh", "/opt/setup.sh"]
 
   # =========================================================================
   # FIREWALL (SNMP simulation)
@@ -137,7 +137,7 @@ services:
     volumes:
       - ./configs/firewall/snmpd-paloalto.conf:/etc/snmp/snmpd.conf:ro
       - ./configs/windows-server/setup-snmpd-ssh.sh:/opt/setup.sh:ro
-    entrypoint: ["/bin/sh", "-lc", "sed -i 's/\\r$//' /opt/setup.sh && /bin/sh /opt/setup.sh"]
+    entrypoint: ["/bin/sh", "/opt/setup.sh"]
 
   # =========================================================================
   # STORAGE ARRAY (SNMP simulation)
@@ -203,7 +203,7 @@ services:
       - ./configs/middleware/tomcat-users.xml:/usr/local/tomcat/conf/tomcat-users.xml:ro
       - ./configs/middleware/tomcat-context.xml:/usr/local/tomcat/webapps/manager/META-INF/context.xml:ro
       - ./configs/middleware/setup-tomcat-ssh.sh:/opt/setup.sh:ro
-    entrypoint: ["/bin/bash", "-lc", "tr -d '\\r' < /opt/setup.sh > /tmp/setup.sh && chmod +x /tmp/setup.sh && /bin/bash /tmp/setup.sh"]
+    entrypoint: ["/bin/bash", "/opt/setup.sh"]
     environment:
       - CATALINA_OPTS=-Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.port=9090 -Dcom.sun.management.jmxremote.rmi.port=9090 -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false
 

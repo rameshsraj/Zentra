@@ -1,0 +1,20 @@
+[OK]    SSH key pair generated at /opt/zentra/.ssh/id_rsa
+
+[INFO]  Connecting Zentra container to simulation network...
+[INFO]  Found simulation network: simulation_zentra-dc
+[OK]    Zentra connected to simulation network
+[INFO]  Verifying connectivity from Zentra to simulation nodes...
+[WARN]  Ping to  failed from Zentra container
+
+[INFO]  Distributing SSH keys to simulation nodes...
+[WARN]  Could not distribute SSH keys to any nodes
+[INFO]  Verifying passwordless SSH...
+Get-SimIp : The term 'Get-SimIp' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is
+correct and try again.
+At C:\GitHub\Zentra\docker\deploy-all.ps1:274 char:15
++ $firstSimIp = Get-SimIp -Name "srv-linux-01"
++               ~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (Get-SimIp:String) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\GitHub\Zentra\docker>
