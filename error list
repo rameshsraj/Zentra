@@ -1,20 +1,82 @@
-[OK]    SSH key pair generated at /opt/zentra/.ssh/id_rsa
+Tailing last 10 lines from non-running containers...
 
-[INFO]  Connecting Zentra container to simulation network...
-[INFO]  Found simulation network: simulation_zentra-dc
-[OK]    Zentra connected to simulation network
-[INFO]  Verifying connectivity from Zentra to simulation nodes...
-[WARN]  Ping to  failed from Zentra container
+--- Logs: db-oracle-01 ---
 
-[INFO]  Distributing SSH keys to simulation nodes...
-[WARN]  Could not distribute SSH keys to any nodes
-[INFO]  Verifying passwordless SSH...
-Get-SimIp : The term 'Get-SimIp' is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is
-correct and try again.
-At C:\GitHub\Zentra\docker\deploy-all.ps1:274 char:15
-+ $firstSimIp = Get-SimIp -Name "srv-linux-01"
-+               ~~~~~~~~~
-    + CategoryInfo          : ObjectNotFound: (Get-SimIp:String) [], ParentContainsErrorRecordException
-    + FullyQualifiedErrorId : CommandNotFoundException
+[oracle-ssh] Configuring SSH...
+/opt/setup-ssh.sh: line 8: $'\r': command not found
+/opt/setup-ssh.sh: line 9: $'true\r': command not found
+/opt/setup-ssh.sh: line 10: $'\r': command not found
+/opt/setup-ssh.sh: line 12: $'true\r': command not found
+/opt/setup-ssh.sh: line 13: $'chpasswd\r': command not found
+mkdir: cannot create directory '/root': Permission denied
+touch: cannot touch '/root/.ssh/authorized_keys': Permission denied
+/opt/setup-ssh.sh: line 16: $'\r': command not found
+/opt/setup-ssh.sh: line 31: syntax error: unexpected end of file
+
+
+--- Logs: mw-apache-01 ---
+
+sed: /etc/ssh/sshd_config
+[apache-ssh] Starting SSH daemon...
+: No such file or directory
+sed: /etc/ssh/sshd_config
+: No such file or directory
+/opt/entry.sh: line 18:
+: not found
+/opt/entry.sh: line 20:
+: not found
+/opt/entry.sh: line 21:
+: not found
+/opt/entry.sh: line 24:
+: not found
+/opt/entry.sh: line 27:
+: not found
+/opt/entry.sh: line 30:
+: not found
+/opt/entry.sh: exec: line 31: httpd-foreground
+: not found
+
+
+--- Logs: mw-tomcat-01 ---
+
+  run -security     Start in the current window with security manager
+  start             Start Catalina in a separate window
+  start -security   Start in a separate window with security manager
+  stop              Stop Catalina, waiting up to 5 seconds for the process to end
+  stop n            Stop Catalina, waiting up to n seconds for the process to end
+  stop -force       Stop Catalina, wait up to 5 seconds and then use kill -KILL if still running
+  stop n -force     Stop Catalina, wait up to n seconds and then use kill -KILL if still running
+  configtest        Run a basic syntax check on server.xml - check exit code for result
+  version           What version of tomcat are you running?
+Note: Waiting for the process to end and use of the -force option require that $CATALINA_PID is defined
+
+
+--- Logs: srv-linux-01 ---
+
+[srv-linux] Starting Nginx...
+/opt/setup.sh: line 26: $'\r': command not found
+/opt/setup.sh: line 27: $'\r': command not found
+/opt/setup.sh: line 29: $'\r': command not found
+/opt/setup.sh: line 30: $'\r': command not found
+/opt/setup.sh: line 33: $'\r': command not found
+/opt/setup.sh: line 40: syntax error: unexpected end of file
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+[srv-linux] Rocky Linux server ready.
+[srv-linux] SSH: port 22, SNMP: port 161
+
+
+--- Logs: srv-linux-02 ---
+
+[srv-linux] Starting SSH daemon...
+/opt/setup.sh: line 25: $'\r': command not found
+[srv-linux] Ubuntu server ready.
+[srv-linux] SSH: port 22, SNMP: port 161
+/opt/setup.sh: line 26: $'\r': command not found
+/opt/setup.sh: line 28: /usr/sbin/sshd: No such file or directory
+/opt/setup.sh: line 28: $'\r': command not found
+/opt/setup.sh: line 29: $'\r': command not found
+/opt/setup.sh: line 32: $'\r': command not found
+/opt/setup.sh: line 39: syntax error: unexpected end of file
+
 
 PS C:\GitHub\Zentra\docker>
