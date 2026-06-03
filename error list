@@ -94,3 +94,14 @@ PS C:\GitHub\Zentra\docker> docker exec zentra sshpass -p zentra123 ssh-copy-id 
 /usr/bin/ssh-copy-id: INFO: attempting to log in with the new key(s), to filter out any that are already installed
 
 
+# 1. Check if SSH daemon is running in the simulation container
+docker exec srv-linux-01 sh -c "ps aux | grep sshd"
+
+# 2. Check if port 22 is listening
+docker exec srv-linux-01 sh -c "netstat -tlnp 2>/dev/null || ss -tlnp 2>/dev/null"
+
+# 3. Try to SSH manually with verbose output to see where it hangs
+docker exec zentra ssh -vvv -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@10.100.0.11 "echo test"
+
+# 4. Check the simulation container's logs for SSH setup errors
+docker logs srv-linux-01
