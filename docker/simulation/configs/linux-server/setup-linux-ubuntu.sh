@@ -6,7 +6,7 @@ set -e
 
 echo "[srv-linux] Installing packages..."
 apt-get update -qq
-apt-get install -y -qq snmpd snmp openssh-server procps cron 2>/dev/null || true
+apt-get install -y -qq snmpd snmp openssh-server procps cron
 
 # Configure SSH
 echo "[srv-linux] Configuring SSH..."

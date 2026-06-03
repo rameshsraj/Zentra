@@ -11,10 +11,20 @@ echo "root:zentra123" | chpasswd
 mkdir -p /root/.ssh && chmod 700 /root/.ssh
 touch /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys
 
-# Enable root login and password auth — catch both commented and uncommented lines
-sed -i 's/^[#[:space:]]*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
-sed -i 's/^[#[:space:]]*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-sed -i 's/^[#[:space:]]*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+# Create sshd_config if missing (Alpine may not have it by default)
+if [ ! -f /etc/ssh/sshd_config ]; then
+    cat > /etc/ssh/sshd_config << 'EOF'
+Port 22
+PermitRootLogin yes
+PasswordAuthentication yes
+PubkeyAuthentication yes
+EOF
+else
+    # Enable root login and password auth — catch both commented and uncommented lines
+    sed -i 's/^[#[:space:]]*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+    sed -i 's/^[#[:space:]]*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+    sed -i 's/^[#[:space:]]*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+fi
 
 echo "[snmpd-ssh] Starting SSH daemon..."
 /usr/sbin/sshd -D &

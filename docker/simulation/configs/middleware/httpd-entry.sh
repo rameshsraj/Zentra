@@ -1,9 +1,9 @@
 #!/bin/sh
 # Apache HTTP entrypoint - enable server-status, SSH, and start
 
-# Install SSH server
+# Install SSH server and chpasswd
 echo "[apache-ssh] Installing SSH server..."
-apk add --no-cache openssh-server openssh-sftp-server 2>/dev/null || true
+apk add --no-cache openssh-server openssh-sftp-server whois 2>/dev/null || true
 
 echo "[apache-ssh] Configuring SSH..."
 ssh-keygen -A 2>/dev/null || true
@@ -11,10 +11,20 @@ echo "root:zentra123" | chpasswd
 mkdir -p /root/.ssh && chmod 700 /root/.ssh
 touch /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys
 
-# Enable root login and password auth — catch both commented and uncommented lines
-sed -i 's/^[#[:space:]]*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
-sed -i 's/^[#[:space:]]*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-sed -i 's/^[#[:space:]]*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+# Create sshd_config if missing (Alpine may not have it by default)
+if [ ! -f /etc/ssh/sshd_config ]; then
+    cat > /etc/ssh/sshd_config << 'EOF'
+Port 22
+PermitRootLogin yes
+PasswordAuthentication yes
+PubkeyAuthentication yes
+EOF
+else
+    # Enable root login and password auth — catch both commented and uncommented lines
+    sed -i 's/^[#[:space:]]*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+    sed -i 's/^[#[:space:]]*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+    sed -i 's/^[#[:space:]]*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+fi
 
 echo "[apache-ssh] Starting SSH daemon..."
 /usr/sbin/sshd -D &
