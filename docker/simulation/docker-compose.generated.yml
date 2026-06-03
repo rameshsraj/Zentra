@@ -217,6 +217,7 @@ services:
     container_name: db-oracle-01
     hostname: db-oracle-01
     restart: unless-stopped
+    user: root
     networks:
       zentra-dc:
         ipv4_address: 10.100.0.22
