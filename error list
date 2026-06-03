@@ -105,3 +105,725 @@ docker exec zentra ssh -vvv -o StrictHostKeyChecking=no -o ConnectTimeout=10 roo
 
 # 4. Check the simulation container's logs for SSH setup errors
 docker logs srv-linux-01
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+PS C:\GitHub\Zentra\docker> docker exec srv-linux-01 sh -c "ps aux | grep sshd"
+root       234  0.0  0.0  76656  7296 ?        S    13:36   0:00 /usr/sbin/sshd -D
+root       461  0.0  0.0  11928  2560 ?        Ss   14:06   0:00 sh -c ps aux | grep sshd
+root       468  0.0  0.0   9216  1664 ?        S    14:06   0:00 grep sshd
+PS C:\GitHub\Zentra\docker> docker exec srv-linux-01 sh -c "netstat -tlnp 2>/dev/null || ss -tlnp 2>/dev/null"
+PS C:\GitHub\Zentra\docker> docker exec zentra ssh -vvv -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@10.100.0.11 "echo test"
+OpenSSH_8.0p1, OpenSSL 1.1.1k  FIPS 25 Mar 2021
+debug1: Reading configuration data /root/.ssh/config
+debug1: /root/.ssh/config line 1: Applying options for *
+debug1: Reading configuration data /etc/ssh/ssh_config
+debug3: /etc/ssh/ssh_config line 52: Including file /etc/ssh/ssh_config.d/05-redhat.conf depth 0
+debug1: Reading configuration data /etc/ssh/ssh_config.d/05-redhat.conf
+debug2: checking match for 'final all' host 10.100.0.11 originally 10.100.0.11
+debug3: /etc/ssh/ssh_config.d/05-redhat.conf line 3: not matched 'final'
+debug2: match not found
+debug3: /etc/ssh/ssh_config.d/05-redhat.conf line 5: Including file /etc/crypto-policies/back-ends/openssh.config depth 1 (parse only)
+debug1: Reading configuration data /etc/crypto-policies/back-ends/openssh.config
+debug3: gss kex names ok: [gss-curve25519-sha256-,gss-nistp256-sha256-,gss-group14-sha256-,gss-group16-sha512-,gss-gex-sha1-,gss-group14-sha1-]
+debug3: kex names ok: [curve25519-sha256,curve25519-sha256@libssh.org,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,diffie-hellman-group-exchange-sha256,diffie-hellman-group14-sha256,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512,diffie-hellman-group-exchange-sha1,diffie-hellman-group14-sha1]
+debug1: configuration requests final Match pass
+debug2: resolve_canonicalize: hostname 10.100.0.11 is address
+debug1: re-parsing configuration
+debug1: Reading configuration data /root/.ssh/config
+debug1: /root/.ssh/config line 1: Applying options for *
+debug1: Reading configuration data /etc/ssh/ssh_config
+debug3: /etc/ssh/ssh_config line 52: Including file /etc/ssh/ssh_config.d/05-redhat.conf depth 0
+debug1: Reading configuration data /etc/ssh/ssh_config.d/05-redhat.conf
+debug2: checking match for 'final all' host 10.100.0.11 originally 10.100.0.11
+debug3: /etc/ssh/ssh_config.d/05-redhat.conf line 3: matched 'final'
+debug2: match found
+debug3: /etc/ssh/ssh_config.d/05-redhat.conf line 5: Including file /etc/crypto-policies/back-ends/openssh.config depth 1
+debug1: Reading configuration data /etc/crypto-policies/back-ends/openssh.config
+debug3: gss kex names ok: [gss-curve25519-sha256-,gss-nistp256-sha256-,gss-group14-sha256-,gss-group16-sha512-,gss-gex-sha1-,gss-group14-sha1-]
+debug3: kex names ok: [curve25519-sha256,curve25519-sha256@libssh.org,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,diffie-hellman-group-exchange-sha256,diffie-hellman-group14-sha256,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512,diffie-hellman-group-exchange-sha1,diffie-hellman-group14-sha1]
+debug2: ssh_connect_direct
+debug1: Connecting to 10.100.0.11 [10.100.0.11] port 22.
+debug2: fd 3 setting O_NONBLOCK
+debug1: fd 3 clearing O_NONBLOCK
+debug1: Connection established.
+debug3: timeout: 9987 ms remain after connect
+debug1: identity file /root/.ssh/id_rsa type 0
+debug1: identity file /root/.ssh/id_rsa-cert type -1
+debug1: identity file /root/.ssh/id_dsa type -1
+debug1: identity file /root/.ssh/id_dsa-cert type -1
+debug1: identity file /root/.ssh/id_ecdsa type -1
+debug1: identity file /root/.ssh/id_ecdsa-cert type -1
+debug1: identity file /root/.ssh/id_ed25519 type -1
+debug1: identity file /root/.ssh/id_ed25519-cert type -1
+debug1: identity file /root/.ssh/id_xmss type -1
+debug1: identity file /root/.ssh/id_xmss-cert type -1
+debug1: Local version string SSH-2.0-OpenSSH_8.0
+debug1: Remote protocol version 2.0, remote software version OpenSSH_8.0
+debug1: match: OpenSSH_8.0 pat OpenSSH* compat 0x04000000
+debug2: fd 3 setting O_NONBLOCK
+debug1: Authenticating to 10.100.0.11:22 as 'root'
+debug3: hostkeys_foreach: reading file "/dev/null"
+debug3: send packet: type 20
+debug1: SSH2_MSG_KEXINIT sent
+debug3: receive packet: type 20
+debug1: SSH2_MSG_KEXINIT received
+debug2: local client KEXINIT proposal
+debug2: KEX algorithms: curve25519-sha256,curve25519-sha256@libssh.org,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,diffie-hellman-group-exchange-sha256,diffie-hellman-group14-sha256,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512,diffie-hellman-group-exchange-sha1,diffie-hellman-group14-sha1,ext-info-c,kex-strict-c-v00@openssh.com
+debug2: host key algorithms: ecdsa-sha2-nistp256-cert-v01@openssh.com,ecdsa-sha2-nistp384-cert-v01@openssh.com,ecdsa-sha2-nistp521-cert-v01@openssh.com,ssh-ed25519-cert-v01@openssh.com,rsa-sha2-512-cert-v01@openssh.com,rsa-sha2-256-cert-v01@openssh.com,ssh-rsa-cert-v01@openssh.com,ecdsa-sha2-nistp256,ecdsa-sha2-nistp384,ecdsa-sha2-nistp521,ssh-ed25519,rsa-sha2-512,rsa-sha2-256,ssh-rsa
+debug2: ciphers ctos: aes256-gcm@openssh.com,chacha20-poly1305@openssh.com,aes256-ctr,aes256-cbc,aes128-gcm@openssh.com,aes128-ctr,aes128-cbc
+debug2: ciphers stoc: aes256-gcm@openssh.com,chacha20-poly1305@openssh.com,aes256-ctr,aes256-cbc,aes128-gcm@openssh.com,aes128-ctr,aes128-cbc
+debug2: MACs ctos: hmac-sha2-256-etm@openssh.com,hmac-sha1-etm@openssh.com,umac-128-etm@openssh.com,hmac-sha2-512-etm@openssh.com,hmac-sha2-256,hmac-sha1,umac-128@openssh.com,hmac-sha2-512
+debug2: MACs stoc: hmac-sha2-256-etm@openssh.com,hmac-sha1-etm@openssh.com,umac-128-etm@openssh.com,hmac-sha2-512-etm@openssh.com,hmac-sha2-256,hmac-sha1,umac-128@openssh.com,hmac-sha2-512
+debug2: compression ctos: none,zlib@openssh.com,zlib
+debug2: compression stoc: none,zlib@openssh.com,zlib
+debug2: languages ctos:
+debug2: languages stoc:
+debug2: first_kex_follows 0
+debug2: reserved 0
+debug2: peer server KEXINIT proposal
+debug2: KEX algorithms: curve25519-sha256,curve25519-sha256@libssh.org,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,diffie-hellman-group-exchange-sha256,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512,diffie-hellman-group14-sha256,diffie-hellman-group14-sha1,kex-strict-s-v00@openssh.com
+debug2: host key algorithms: rsa-sha2-512,rsa-sha2-256,ssh-rsa,ecdsa-sha2-nistp256,ssh-ed25519
+debug2: ciphers ctos: chacha20-poly1305@openssh.com,aes128-ctr,aes192-ctr,aes256-ctr,aes128-gcm@openssh.com,aes256-gcm@openssh.com
+debug2: ciphers stoc: chacha20-poly1305@openssh.com,aes128-ctr,aes192-ctr,aes256-ctr,aes128-gcm@openssh.com,aes256-gcm@openssh.com
+debug2: MACs ctos: umac-64-etm@openssh.com,umac-128-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,hmac-sha1-etm@openssh.com,umac-64@openssh.com,umac-128@openssh.com,hmac-sha2-256,hmac-sha2-512,hmac-sha1
+debug2: MACs stoc: umac-64-etm@openssh.com,umac-128-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,hmac-sha1-etm@openssh.com,umac-64@openssh.com,umac-128@openssh.com,hmac-sha2-256,hmac-sha2-512,hmac-sha1
+debug2: compression ctos: none,zlib@openssh.com
+debug2: compression stoc: none,zlib@openssh.com
+debug2: languages ctos:
+debug2: languages stoc:
+debug2: first_kex_follows 0
+debug2: reserved 0
+debug3: will use strict KEX ordering
+debug1: kex: algorithm: curve25519-sha256
+debug1: kex: host key algorithm: ecdsa-sha2-nistp256
+debug1: kex: server->client cipher: aes256-gcm@openssh.com MAC: <implicit> compression: none
+debug1: kex: client->server cipher: aes256-gcm@openssh.com MAC: <implicit> compression: none
+debug1: kex: curve25519-sha256 need=32 dh_need=32
+debug1: kex: curve25519-sha256 need=32 dh_need=32
+debug3: send packet: type 30
+debug1: expecting SSH2_MSG_KEX_ECDH_REPLY
+debug3: receive packet: type 31
+debug1: Server host key: ecdsa-sha2-nistp256 SHA256:9/L/z75y10uIWgvp1si4NT/0CRsy3A6r5tXm/QhnZ5I
+debug3: hostkeys_foreach: reading file "/dev/null"
+Warning: Permanently added '10.100.0.11' (ECDSA) to the list of known hosts.
+debug3: send packet: type 21
+debug1: resetting send seqnr 3
+debug2: set_newkeys: mode 1
+debug1: rekey out after 4294967296 blocks
+debug1: SSH2_MSG_NEWKEYS sent
+debug1: expecting SSH2_MSG_NEWKEYS
+debug3: receive packet: type 21
+debug1: resetting read seqnr 3
+debug1: SSH2_MSG_NEWKEYS received
+debug2: set_newkeys: mode 0
+debug1: rekey in after 4294967296 blocks
+debug1: Will attempt key: /root/.ssh/id_rsa RSA SHA256:RNQsk5YG+912x6nMB2+H/NaTEizGDXGYhAbwR+LkW5s
+debug1: Will attempt key: /root/.ssh/id_dsa
+debug1: Will attempt key: /root/.ssh/id_ecdsa
+debug1: Will attempt key: /root/.ssh/id_ed25519
+debug1: Will attempt key: /root/.ssh/id_xmss
+debug2: pubkey_prepare: done
+debug3: send packet: type 5
+debug3: receive packet: type 7
+debug1: SSH2_MSG_EXT_INFO received
+debug1: kex_input_ext_info: server-sig-algs=<ssh-ed25519,ssh-rsa,rsa-sha2-256,rsa-sha2-512,ssh-dss,ecdsa-sha2-nistp256,ecdsa-sha2-nistp384,ecdsa-sha2-nistp521>
+debug3: receive packet: type 6
+debug2: service_accept: ssh-userauth
+debug1: SSH2_MSG_SERVICE_ACCEPT received
+debug3: send packet: type 50
+debug3: receive packet: type 51
+debug1: Authentications that can continue: publickey,gssapi-keyex,gssapi-with-mic,password
+debug3: start over, passed a different list publickey,gssapi-keyex,gssapi-with-mic,password
+debug3: preferred publickey,keyboard-interactive,password
+debug3: authmethod_lookup publickey
+debug3: remaining preferred: keyboard-interactive,password
+debug3: authmethod_is_enabled publickey
+debug1: Next authentication method: publickey
+debug1: Offering public key: /root/.ssh/id_rsa RSA SHA256:RNQsk5YG+912x6nMB2+H/NaTEizGDXGYhAbwR+LkW5s
+debug3: send packet: type 50
+debug2: we sent a publickey packet, wait for reply
+debug3: receive packet: type 60
+debug1: Server accepts key: /root/.ssh/id_rsa RSA SHA256:RNQsk5YG+912x6nMB2+H/NaTEizGDXGYhAbwR+LkW5s
+debug3: sign_and_send_pubkey: RSA SHA256:RNQsk5YG+912x6nMB2+H/NaTEizGDXGYhAbwR+LkW5s
+debug3: sign_and_send_pubkey: signing using rsa-sha2-256
+debug1: read_passphrase: can't open /dev/tty: No such device or address
+debug2: no passphrase given, try next key
+debug1: Trying private key: /root/.ssh/id_dsa
+debug3: no such identity: /root/.ssh/id_dsa: No such file or directory
+debug1: Trying private key: /root/.ssh/id_ecdsa
+debug3: no such identity: /root/.ssh/id_ecdsa: No such file or directory
+debug1: Trying private key: /root/.ssh/id_ed25519
+debug3: no such identity: /root/.ssh/id_ed25519: No such file or directory
+debug1: Trying private key: /root/.ssh/id_xmss
+debug3: no such identity: /root/.ssh/id_xmss: No such file or directory
+debug2: we did not send a packet, disable method
+debug3: authmethod_lookup password
+debug3: remaining preferred: ,password
+debug3: authmethod_is_enabled password
+debug1: Next authentication method: password
+debug1: read_passphrase: can't open /dev/tty: No such device or address
+debug3: send packet: type 50
+debug2: we sent a password packet, wait for reply
+debug3: receive packet: type 51
+debug1: Authentications that can continue: publickey,gssapi-keyex,gssapi-with-mic,password
+Permission denied, please try again.
+debug1: read_passphrase: can't open /dev/tty: No such device or address
+debug3: send packet: type 50
+debug2: we sent a password packet, wait for reply
+debug3: receive packet: type 51
+debug1: Authentications that can continue: publickey,gssapi-keyex,gssapi-with-mic,password
+Permission denied, please try again.
+debug1: read_passphrase: can't open /dev/tty: No such device or address
+debug3: send packet: type 50
+debug2: we sent a password packet, wait for reply
+debug3: receive packet: type 51
+debug1: Authentications that can continue: publickey,gssapi-keyex,gssapi-with-mic,password
+debug2: we did not send a packet, disable method
+debug1: No more authentication methods to try.
+root@10.100.0.11: Permission denied (publickey,gssapi-keyex,gssapi-with-mic,password).
+PS C:\GitHub\Zentra\docker> docker logs srv-linux-01
+[srv-linux] Installing packages...
+Rocky Linux 8 - AppStream                       4.2 MB/s |  29 MB     00:06
+Rocky Linux 8 - BaseOS                          8.6 MB/s |  59 MB     00:06
+Rocky Linux 8 - Extras                           14 kB/s |  15 kB     00:01
+Dependencies resolved.
+===============================================================================================
+ Package                       Arch    Version                                 Repo        Size
+===============================================================================================
+Installing:
+ cronie                        x86_64  1.5.2-10.el8                            baseos     118 k
+ net-snmp                      x86_64  1:5.8-33.el8_10                         appstream  355 k
+ net-snmp-utils                x86_64  1:5.8-33.el8_10                         appstream  239 k
+ nginx                         x86_64  1:1.14.1-9.module+el8.4.0+542+81547229  appstream  566 k
+ openssh-server                x86_64  8.0p1-29.el8_10                         baseos     495 k
+ procps-ng                     x86_64  3.3.15-14.el8                           baseos     329 k
+Upgrading:
+ openssl-libs                  x86_64  1:1.1.1k-15.el8_10                      baseos     1.5 M
+Installing dependencies:
+ cronie-anacron                x86_64  1.5.2-10.el8                            baseos      41 k
+ crontabs                      noarch  1.11-17.20190603git.el8                 baseos      24 k
+ dejavu-fonts-common           noarch  2.35-7.el8                              baseos      73 k
+ dejavu-sans-fonts             noarch  2.35-7.el8                              baseos     1.5 M
+ fontconfig                    x86_64  2.13.1-4.el8                            baseos     273 k
+ fontpackages-filesystem       noarch  1.44-22.el8                             baseos      15 k
+ freetype                      x86_64  2.9.1-10.el8_10                         baseos     393 k
+ gd                            x86_64  2.2.5-7.el8                             appstream  143 k
+ groff-base                    x86_64  1.22.3-18.el8                           baseos     1.0 M
+ jbigkit-libs                  x86_64  2.1-14.el8                              appstream   54 k
+ libX11                        x86_64  1.6.8-9.el8_10                          appstream  611 k
+ libX11-common                 noarch  1.6.8-9.el8_10                          appstream  157 k
+ libXau                        x86_64  1.0.9-3.el8                             appstream   36 k
+ libXpm                        x86_64  3.5.12-11.el8                           appstream   58 k
+ libjpeg-turbo                 x86_64  1.5.3-14.el8_10                         appstream  156 k
+ libpng                        x86_64  2:1.6.34-10.el8_10                      baseos     126 k
+ libtiff                       x86_64  4.0.9-37.el8_10                         appstream  190 k
+ libwebp                       x86_64  1.0.0-11.el8_10                         appstream  273 k
+ libxcb                        x86_64  1.13.1-1.el8                            appstream  228 k
+ libxslt                       x86_64  1.1.32-6.3.el8_10                       baseos     249 k
+ lm_sensors-libs               x86_64  3.4.0-23.20180522git70f7e08.el8         baseos      58 k
+ mariadb-connector-c           x86_64  3.1.11-2.el8_3                          appstream  199 k
+ mariadb-connector-c-config    noarch  3.1.11-2.el8_3                          appstream   14 k
+ ncurses                       x86_64  6.1-10.20180224.el8                     baseos     386 k
+ net-snmp-agent-libs           x86_64  1:5.8-33.el8_10                         appstream  749 k
+ net-snmp-libs                 x86_64  1:5.8-33.el8_10                         baseos     827 k
+ nginx-all-modules             noarch  1:1.14.1-9.module+el8.4.0+542+81547229  appstream   22 k
+ nginx-filesystem              noarch  1:1.14.1-9.module+el8.4.0+542+81547229  appstream   23 k
+ nginx-mod-http-image-filter   x86_64  1:1.14.1-9.module+el8.4.0+542+81547229  appstream   34 k
+ nginx-mod-http-perl           x86_64  1:1.14.1-9.module+el8.4.0+542+81547229  appstream   45 k
+ nginx-mod-http-xslt-filter    x86_64  1:1.14.1-9.module+el8.4.0+542+81547229  appstream   32 k
+ nginx-mod-mail                x86_64  1:1.14.1-9.module+el8.4.0+542+81547229  appstream   63 k
+ nginx-mod-stream              x86_64  1:1.14.1-9.module+el8.4.0+542+81547229  appstream   84 k
+ openssh                       x86_64  8.0p1-29.el8_10                         baseos     527 k
+ openssl                       x86_64  1:1.1.1k-15.el8_10                      baseos     710 k
+ perl-Carp                     noarch  1.42-396.el8                            baseos      29 k
+ perl-Data-Dumper              x86_64  2.167-399.el8                           baseos      57 k
+ perl-Digest                   noarch  1.17-395.el8                            appstream   26 k
+ perl-Digest-MD5               x86_64  2.55-396.el8                            appstream   36 k
+ perl-Encode                   x86_64  4:2.97-3.el8                            baseos     1.5 M
+ perl-Errno                    x86_64  1.28-423.el8_10                         baseos      76 k
+ perl-Exporter                 noarch  5.72-396.el8                            baseos      33 k
+ perl-File-Path                noarch  2.15-2.el8                              baseos      37 k
+ perl-File-Temp                noarch  0.230.600-1.el8                         baseos      62 k
+ perl-Getopt-Long              noarch  1:2.50-4.el8                            baseos      62 k
+ perl-HTTP-Tiny                noarch  0.074-3.el8                             baseos      58 k
+ perl-IO                       x86_64  1.38-423.el8_10                         baseos     141 k
+ perl-IO-Socket-IP             noarch  0.39-5.el8                              appstream   46 k
+ perl-IO-Socket-SSL            noarch  2.066-4.module+el8.9.0+1517+e71a7a62    appstream  297 k
+ perl-MIME-Base64              x86_64  3.15-396.el8                            baseos      30 k
+ perl-Mozilla-CA               noarch  20160104-7.module+el8.9.0+1521+0101edce appstream   14 k
+ perl-Net-SSLeay               x86_64  1.88-2.module+el8.9.0+1517+e71a7a62     appstream  378 k
+ perl-PathTools                x86_64  3.74-1.el8                              baseos      89 k
+ perl-Pod-Escapes              noarch  1:1.07-395.el8                          baseos      19 k
+ perl-Pod-Perldoc              noarch  3.28-396.el8                            baseos      85 k
+ perl-Pod-Simple               noarch  1:3.35-395.el8                          baseos     212 k
+ perl-Pod-Usage                noarch  4:1.69-395.el8                          baseos      33 k
+ perl-Scalar-List-Utils        x86_64  3:1.49-2.el8                            baseos      67 k
+ perl-Socket                   x86_64  4:2.027-3.el8                           baseos      58 k
+ perl-Storable                 x86_64  1:3.11-3.el8                            baseos      97 k
+ perl-Term-ANSIColor           noarch  4.06-396.el8                            baseos      45 k
+ perl-Term-Cap                 noarch  1.17-395.el8                            baseos      22 k
+ perl-Text-ParseWords          noarch  3.30-395.el8                            baseos      17 k
+ perl-Text-Tabs+Wrap           noarch  2013.0523-395.el8                       baseos      23 k
+ perl-Time-Local               noarch  1:1.280-1.el8                           baseos      32 k
+ perl-URI                      noarch  1.73-3.el8                              appstream  115 k
+ perl-Unicode-Normalize        x86_64  1.25-396.el8                            baseos      81 k
+ perl-constant                 noarch  1.33-396.el8                            baseos      24 k
+ perl-interpreter              x86_64  4:5.26.3-423.el8_10                     baseos     6.3 M
+ perl-libnet                   noarch  3.11-3.el8                              appstream  120 k
+ perl-libs                     x86_64  4:5.26.3-423.el8_10                     baseos     1.6 M
+ perl-macros                   x86_64  4:5.26.3-423.el8_10                     baseos      72 k
+ perl-parent                   noarch  1:0.237-1.el8                           baseos      19 k
+ perl-podlators                noarch  4.11-1.el8                              baseos     117 k
+ perl-threads                  x86_64  1:2.21-2.el8                            baseos      60 k
+ perl-threads-shared           x86_64  1.58-2.el8                              baseos      47 k
+Installing weak dependencies:
+ openssl-pkcs11                x86_64  0.4.10-3.el8                            baseos      65 k
+Enabling module streams:
+ nginx                                 1.14
+ perl                                  5.26
+ perl-IO-Socket-SSL                    2.066
+ perl-libwww-perl                      6.34
+
+Transaction Summary
+===============================================================================================
+Install  83 Packages
+Upgrade   1 Package
+
+Total download size: 25 M
+Downloading Packages:
+(1/84): jbigkit-libs-2.1-14.el8.x86_64.rpm      408 kB/s |  54 kB     00:00
+(2/84): gd-2.2.5-7.el8.x86_64.rpm               714 kB/s | 143 kB     00:00
+(3/84): libX11-common-1.6.8-9.el8_10.noarch.rpm 1.8 MB/s | 157 kB     00:00
+(4/84): libXau-1.0.9-3.el8.x86_64.rpm           849 kB/s |  36 kB     00:00
+(5/84): libXpm-3.5.12-11.el8.x86_64.rpm         1.3 MB/s |  58 kB     00:00
+(6/84): libX11-1.6.8-9.el8_10.x86_64.rpm        2.1 MB/s | 611 kB     00:00
+(7/84): libjpeg-turbo-1.5.3-14.el8_10.x86_64.rp 2.4 MB/s | 156 kB     00:00
+(8/84): libtiff-4.0.9-37.el8_10.x86_64.rpm      2.5 MB/s | 190 kB     00:00
+(9/84): libxcb-1.13.1-1.el8.x86_64.rpm          2.5 MB/s | 228 kB     00:00
+(10/84): libwebp-1.0.0-11.el8_10.x86_64.rpm     2.0 MB/s | 273 kB     00:00
+(11/84): mariadb-connector-c-config-3.1.11-2.el 349 kB/s |  14 kB     00:00
+(12/84): mariadb-connector-c-3.1.11-2.el8_3.x86 1.8 MB/s | 199 kB     00:00
+(13/84): net-snmp-5.8-33.el8_10.x86_64.rpm      3.8 MB/s | 355 kB     00:00
+(14/84): net-snmp-utils-5.8-33.el8_10.x86_64.rp 2.0 MB/s | 239 kB     00:00
+(15/84): nginx-1.14.1-9.module+el8.4.0+542+8154 5.6 MB/s | 566 kB     00:00
+(16/84): nginx-all-modules-1.14.1-9.module+el8. 464 kB/s |  22 kB     00:00
+(17/84): net-snmp-agent-libs-5.8-33.el8_10.x86_ 3.7 MB/s | 749 kB     00:00
+(18/84): nginx-filesystem-1.14.1-9.module+el8.4 629 kB/s |  23 kB     00:00
+(19/84): nginx-mod-http-image-filter-1.14.1-9.m 964 kB/s |  34 kB     00:00
+(20/84): nginx-mod-http-perl-1.14.1-9.module+el 1.2 MB/s |  45 kB     00:00
+(21/84): nginx-mod-http-xslt-filter-1.14.1-9.mo 922 kB/s |  32 kB     00:00
+(22/84): nginx-mod-mail-1.14.1-9.module+el8.4.0 1.2 MB/s |  63 kB     00:00
+(23/84): nginx-mod-stream-1.14.1-9.module+el8.4 1.7 MB/s |  84 kB     00:00
+(24/84): perl-Digest-1.17-395.el8.noarch.rpm    574 kB/s |  26 kB     00:00
+(25/84): perl-Digest-MD5-2.55-396.el8.x86_64.rp 866 kB/s |  36 kB     00:00
+(26/84): perl-IO-Socket-IP-0.39-5.el8.noarch.rp 1.2 MB/s |  46 kB     00:00
+(27/84): perl-Mozilla-CA-20160104-7.module+el8. 426 kB/s |  14 kB     00:00
+(28/84): perl-IO-Socket-SSL-2.066-4.module+el8. 3.2 MB/s | 297 kB     00:00
+(29/84): perl-URI-1.73-3.el8.noarch.rpm         1.8 MB/s | 115 kB     00:00
+(30/84): perl-Net-SSLeay-1.88-2.module+el8.9.0+ 3.6 MB/s | 378 kB     00:00
+(31/84): perl-libnet-3.11-3.el8.noarch.rpm      2.2 MB/s | 120 kB     00:00
+(32/84): cronie-1.5.2-10.el8.x86_64.rpm         2.5 MB/s | 118 kB     00:00
+(33/84): cronie-anacron-1.5.2-10.el8.x86_64.rpm 1.0 MB/s |  41 kB     00:00
+(34/84): crontabs-1.11-17.20190603git.el8.noarc 762 kB/s |  24 kB     00:00
+(35/84): dejavu-fonts-common-2.35-7.el8.noarch. 1.5 MB/s |  73 kB     00:00
+(36/84): fontpackages-filesystem-1.44-22.el8.no 371 kB/s |  15 kB     00:00
+(37/84): fontconfig-2.13.1-4.el8.x86_64.rpm     3.0 MB/s | 273 kB     00:00
+(38/84): freetype-2.9.1-10.el8_10.x86_64.rpm    3.5 MB/s | 393 kB     00:00
+(39/84): libpng-1.6.34-10.el8_10.x86_64.rpm     1.7 MB/s | 126 kB     00:00
+(40/84): dejavu-sans-fonts-2.35-7.el8.noarch.rp 5.1 MB/s | 1.5 MB     00:00
+(41/84): groff-base-1.22.3-18.el8.x86_64.rpm    4.5 MB/s | 1.0 MB     00:00
+(42/84): lm_sensors-libs-3.4.0-23.20180522git70 1.1 MB/s |  58 kB     00:00
+(43/84): libxslt-1.1.32-6.3.el8_10.x86_64.rpm   2.9 MB/s | 249 kB     00:00
+(44/84): ncurses-6.1-10.20180224.el8.x86_64.rpm 3.5 MB/s | 386 kB     00:00
+(45/84): net-snmp-libs-5.8-33.el8_10.x86_64.rpm 5.3 MB/s | 827 kB     00:00
+(46/84): openssh-8.0p1-29.el8_10.x86_64.rpm     3.3 MB/s | 527 kB     00:00
+(47/84): openssh-server-8.0p1-29.el8_10.x86_64. 4.8 MB/s | 495 kB     00:00
+(48/84): openssl-pkcs11-0.4.10-3.el8.x86_64.rpm 1.5 MB/s |  65 kB     00:00
+(49/84): perl-Carp-1.42-396.el8.noarch.rpm      818 kB/s |  29 kB     00:00
+(50/84): perl-Data-Dumper-2.167-399.el8.x86_64. 1.3 MB/s |  57 kB     00:00
+(51/84): openssl-1.1.1k-15.el8_10.x86_64.rpm    5.1 MB/s | 710 kB     00:00
+(52/84): perl-Errno-1.28-423.el8_10.x86_64.rpm  1.3 MB/s |  76 kB     00:00
+(53/84): perl-Exporter-5.72-396.el8.noarch.rpm  649 kB/s |  33 kB     00:00
+(54/84): perl-File-Path-2.15-2.el8.noarch.rpm   843 kB/s |  37 kB     00:00
+(55/84): perl-File-Temp-0.230.600-1.el8.noarch. 1.4 MB/s |  62 kB     00:00
+(56/84): perl-Getopt-Long-2.50-4.el8.noarch.rpm 1.1 MB/s |  62 kB     00:00
+(57/84): perl-HTTP-Tiny-0.074-3.el8.noarch.rpm  1.1 MB/s |  58 kB     00:00
+(58/84): perl-IO-1.38-423.el8_10.x86_64.rpm     2.6 MB/s | 141 kB     00:00
+(59/84): perl-MIME-Base64-3.15-396.el8.x86_64.r 849 kB/s |  30 kB     00:00
+(60/84): perl-Encode-2.97-3.el8.x86_64.rpm      5.2 MB/s | 1.5 MB     00:00
+(61/84): perl-Pod-Escapes-1.07-395.el8.noarch.r 476 kB/s |  19 kB     00:00
+(62/84): perl-PathTools-3.74-1.el8.x86_64.rpm   1.4 MB/s |  89 kB     00:00
+(63/84): perl-Pod-Perldoc-3.28-396.el8.noarch.r 2.3 MB/s |  85 kB     00:00
+(64/84): perl-Pod-Usage-1.69-395.el8.noarch.rpm 894 kB/s |  33 kB     00:00
+(65/84): perl-Pod-Simple-3.35-395.el8.noarch.rp 2.5 MB/s | 212 kB     00:00
+(66/84): perl-Scalar-List-Utils-1.49-2.el8.x86_ 1.1 MB/s |  67 kB     00:00
+(67/84): perl-Socket-2.027-3.el8.x86_64.rpm     935 kB/s |  58 kB     00:00
+(68/84): perl-Storable-3.11-3.el8.x86_64.rpm    1.8 MB/s |  97 kB     00:00
+(69/84): perl-Term-ANSIColor-4.06-396.el8.noarc 784 kB/s |  45 kB     00:00
+(70/84): perl-Term-Cap-1.17-395.el8.noarch.rpm  423 kB/s |  22 kB     00:00
+(71/84): perl-Text-ParseWords-3.30-395.el8.noar 478 kB/s |  17 kB     00:00
+(72/84): perl-Text-Tabs+Wrap-2013.0523-395.el8. 658 kB/s |  23 kB     00:00
+(73/84): perl-Time-Local-1.280-1.el8.noarch.rpm 935 kB/s |  32 kB     00:00
+(74/84): perl-Unicode-Normalize-1.25-396.el8.x8 1.8 MB/s |  81 kB     00:00
+(75/84): perl-constant-1.33-396.el8.noarch.rpm  548 kB/s |  24 kB     00:00
+(76/84): perl-macros-5.26.3-423.el8_10.x86_64.r 685 kB/s |  72 kB     00:00
+(77/84): perl-parent-0.237-1.el8.noarch.rpm     472 kB/s |  19 kB     00:00
+(78/84): perl-libs-5.26.3-423.el8_10.x86_64.rpm 4.5 MB/s | 1.6 MB     00:00
+(79/84): perl-podlators-4.11-1.el8.noarch.rpm   582 kB/s | 117 kB     00:00
+(80/84): perl-threads-2.21-2.el8.x86_64.rpm     1.2 MB/s |  60 kB     00:00
+(81/84): perl-threads-shared-1.58-2.el8.x86_64. 944 kB/s |  47 kB     00:00
+(82/84): procps-ng-3.3.15-14.el8.x86_64.rpm     3.0 MB/s | 329 kB     00:00
+(83/84): openssl-libs-1.1.1k-15.el8_10.x86_64.r 6.1 MB/s | 1.5 MB     00:00
+(84/84): perl-interpreter-5.26.3-423.el8_10.x86 6.4 MB/s | 6.3 MB     00:00
+--------------------------------------------------------------------------------
+Total                                           6.0 MB/s |  25 MB     00:04
+Rocky Linux 8 - AppStream                       1.6 MB/s | 1.6 kB     00:00
+Key imported successfully
+Running transaction check
+Transaction check succeeded.
+Running transaction test
+Transaction test succeeded.
+Running transaction
+  Preparing        :                                                        1/1
+  Upgrading        : openssl-libs-1:1.1.1k-15.el8_10.x86_64                1/85
+  Running scriptlet: openssl-libs-1:1.1.1k-15.el8_10.x86_64                1/85
+  Installing       : openssl-1:1.1.1k-15.el8_10.x86_64                     2/85
+  Installing       : openssl-pkcs11-0.4.10-3.el8.x86_64                    3/85
+  Installing       : net-snmp-libs-1:5.8-33.el8_10.x86_64                  4/85
+  Installing       : cronie-anacron-1.5.2-10.el8.x86_64                    5/85
+  Running scriptlet: cronie-anacron-1.5.2-10.el8.x86_64                    5/85
+  Installing       : cronie-1.5.2-10.el8.x86_64                            6/85
+  Running scriptlet: cronie-1.5.2-10.el8.x86_64                            6/85
+  Installing       : crontabs-1.11-17.20190603git.el8.noarch               7/85
+  Installing       : lm_sensors-libs-3.4.0-23.20180522git70f7e08.el8.x8    8/85
+  Running scriptlet: lm_sensors-libs-3.4.0-23.20180522git70f7e08.el8.x8    8/85
+  Installing       : libpng-2:1.6.34-10.el8_10.x86_64                      9/85
+  Installing       : freetype-2.9.1-10.el8_10.x86_64                      10/85
+  Installing       : fontpackages-filesystem-1.44-22.el8.noarch           11/85
+  Installing       : libjpeg-turbo-1.5.3-14.el8_10.x86_64                 12/85
+  Installing       : dejavu-fonts-common-2.35-7.el8.noarch                13/85
+  Installing       : dejavu-sans-fonts-2.35-7.el8.noarch                  14/85
+  Installing       : fontconfig-2.13.1-4.el8.x86_64                       15/85
+  Running scriptlet: fontconfig-2.13.1-4.el8.x86_64                       15/85
+  Running scriptlet: openssh-8.0p1-29.el8_10.x86_64                       16/85
+  Installing       : openssh-8.0p1-29.el8_10.x86_64                       16/85
+  Installing       : ncurses-6.1-10.20180224.el8.x86_64                   17/85
+  Installing       : libxslt-1.1.32-6.3.el8_10.x86_64                     18/85
+  Installing       : groff-base-1.22.3-18.el8.x86_64                      19/85
+  Installing       : perl-Digest-1.17-395.el8.noarch                      20/85
+  Installing       : perl-Digest-MD5-2.55-396.el8.x86_64                  21/85
+  Installing       : perl-Data-Dumper-2.167-399.el8.x86_64                22/85
+  Installing       : perl-libnet-3.11-3.el8.noarch                        23/85
+  Installing       : perl-URI-1.73-3.el8.noarch                           24/85
+  Installing       : perl-Pod-Escapes-1:1.07-395.el8.noarch               25/85
+  Installing       : perl-Net-SSLeay-1.88-2.module+el8.9.0+1517+e71a7a6   26/85
+  Installing       : perl-Mozilla-CA-20160104-7.module+el8.9.0+1521+010   27/85
+  Installing       : perl-IO-Socket-IP-0.39-5.el8.noarch                  28/85
+  Installing       : perl-Time-Local-1:1.280-1.el8.noarch                 29/85
+  Installing       : perl-IO-Socket-SSL-2.066-4.module+el8.9.0+1517+e71   30/85
+  Installing       : perl-Term-ANSIColor-4.06-396.el8.noarch              31/85
+  Installing       : perl-Term-Cap-1.17-395.el8.noarch                    32/85
+  Installing       : perl-File-Temp-0.230.600-1.el8.noarch                33/85
+  Installing       : perl-Pod-Simple-1:3.35-395.el8.noarch                34/85
+  Installing       : perl-HTTP-Tiny-0.074-3.el8.noarch                    35/85
+  Installing       : perl-podlators-4.11-1.el8.noarch                     36/85
+  Installing       : perl-Pod-Perldoc-3.28-396.el8.noarch                 37/85
+  Installing       : perl-Text-ParseWords-3.30-395.el8.noarch             38/85
+  Installing       : perl-Pod-Usage-4:1.69-395.el8.noarch                 39/85
+  Installing       : perl-MIME-Base64-3.15-396.el8.x86_64                 40/85
+  Installing       : perl-Storable-1:3.11-3.el8.x86_64                    41/85
+  Installing       : perl-Getopt-Long-1:2.50-4.el8.noarch                 42/85
+  Installing       : perl-Errno-1.28-423.el8_10.x86_64                    43/85
+  Installing       : perl-Socket-4:2.027-3.el8.x86_64                     44/85
+  Installing       : perl-Encode-4:2.97-3.el8.x86_64                      45/85
+  Installing       : perl-Carp-1.42-396.el8.noarch                        46/85
+  Installing       : perl-Exporter-5.72-396.el8.noarch                    47/85
+  Installing       : perl-libs-4:5.26.3-423.el8_10.x86_64                 48/85
+  Installing       : perl-Scalar-List-Utils-3:1.49-2.el8.x86_64           49/85
+  Installing       : perl-parent-1:0.237-1.el8.noarch                     50/85
+  Installing       : perl-macros-4:5.26.3-423.el8_10.x86_64               51/85
+  Installing       : perl-Text-Tabs+Wrap-2013.0523-395.el8.noarch         52/85
+  Installing       : perl-Unicode-Normalize-1.25-396.el8.x86_64           53/85
+  Installing       : perl-File-Path-2.15-2.el8.noarch                     54/85
+  Installing       : perl-IO-1.38-423.el8_10.x86_64                       55/85
+  Installing       : perl-PathTools-3.74-1.el8.x86_64                     56/85
+  Installing       : perl-constant-1.33-396.el8.noarch                    57/85
+  Installing       : perl-threads-1:2.21-2.el8.x86_64                     58/85
+  Installing       : perl-threads-shared-1.58-2.el8.x86_64                59/85
+  Installing       : perl-interpreter-4:5.26.3-423.el8_10.x86_64          60/85
+  Running scriptlet: nginx-filesystem-1:1.14.1-9.module+el8.4.0+542+815   61/85
+  Installing       : nginx-filesystem-1:1.14.1-9.module+el8.4.0+542+815   61/85
+  Installing       : mariadb-connector-c-config-3.1.11-2.el8_3.noarch     62/85
+  Installing       : mariadb-connector-c-3.1.11-2.el8_3.x86_64            63/85
+  Installing       : net-snmp-agent-libs-1:5.8-33.el8_10.x86_64           64/85
+  Installing       : libwebp-1.0.0-11.el8_10.x86_64                       65/85
+  Installing       : libXau-1.0.9-3.el8.x86_64                            66/85
+  Installing       : libxcb-1.13.1-1.el8.x86_64                           67/85
+  Installing       : libX11-common-1.6.8-9.el8_10.noarch                  68/85
+  Installing       : libX11-1.6.8-9.el8_10.x86_64                         69/85
+  Installing       : libXpm-3.5.12-11.el8.x86_64                          70/85
+  Installing       : jbigkit-libs-2.1-14.el8.x86_64                       71/85
+  Running scriptlet: jbigkit-libs-2.1-14.el8.x86_64                       71/85
+  Installing       : libtiff-4.0.9-37.el8_10.x86_64                       72/85
+  Installing       : gd-2.2.5-7.el8.x86_64                                73/85
+  Running scriptlet: gd-2.2.5-7.el8.x86_64                                73/85
+  Installing       : nginx-mod-http-perl-1:1.14.1-9.module+el8.4.0+542+   74/85
+  Running scriptlet: nginx-mod-http-perl-1:1.14.1-9.module+el8.4.0+542+   74/85
+  Installing       : nginx-mod-http-xslt-filter-1:1.14.1-9.module+el8.4   75/85
+  Running scriptlet: nginx-mod-http-xslt-filter-1:1.14.1-9.module+el8.4   75/85
+  Installing       : nginx-mod-mail-1:1.14.1-9.module+el8.4.0+542+81547   76/85
+  Running scriptlet: nginx-mod-mail-1:1.14.1-9.module+el8.4.0+542+81547   76/85
+  Installing       : nginx-mod-stream-1:1.14.1-9.module+el8.4.0+542+815   77/85
+  Running scriptlet: nginx-mod-stream-1:1.14.1-9.module+el8.4.0+542+815   77/85
+  Installing       : nginx-1:1.14.1-9.module+el8.4.0+542+81547229.x86_6   78/85
+  Running scriptlet: nginx-1:1.14.1-9.module+el8.4.0+542+81547229.x86_6   78/85
+  Installing       : nginx-mod-http-image-filter-1:1.14.1-9.module+el8.   79/85
+  Running scriptlet: nginx-mod-http-image-filter-1:1.14.1-9.module+el8.   79/85
+  Installing       : nginx-all-modules-1:1.14.1-9.module+el8.4.0+542+81   80/85
+  Installing       : net-snmp-1:5.8-33.el8_10.x86_64                      81/85
+warning: /etc/snmp/snmpd.conf created as /etc/snmp/snmpd.conf.rpmnew
+
+  Running scriptlet: net-snmp-1:5.8-33.el8_10.x86_64                      81/85
+  Running scriptlet: openssh-server-8.0p1-29.el8_10.x86_64                82/85
+  Installing       : openssh-server-8.0p1-29.el8_10.x86_64                82/85
+  Running scriptlet: openssh-server-8.0p1-29.el8_10.x86_64                82/85
+  Installing       : net-snmp-utils-1:5.8-33.el8_10.x86_64                83/85
+  Installing       : procps-ng-3.3.15-14.el8.x86_64                       84/85
+  Cleanup          : openssl-libs-1:1.1.1k-9.el8_7.x86_64                 85/85
+  Running scriptlet: openssl-libs-1:1.1.1k-9.el8_7.x86_64                 85/85
+  Running scriptlet: fontconfig-2.13.1-4.el8.x86_64                       85/85
+  Verifying        : gd-2.2.5-7.el8.x86_64                                 1/85
+  Verifying        : jbigkit-libs-2.1-14.el8.x86_64                        2/85
+  Verifying        : libX11-1.6.8-9.el8_10.x86_64                          3/85
+  Verifying        : libX11-common-1.6.8-9.el8_10.noarch                   4/85
+  Verifying        : libXau-1.0.9-3.el8.x86_64                             5/85
+  Verifying        : libXpm-3.5.12-11.el8.x86_64                           6/85
+  Verifying        : libjpeg-turbo-1.5.3-14.el8_10.x86_64                  7/85
+  Verifying        : libtiff-4.0.9-37.el8_10.x86_64                        8/85
+  Verifying        : libwebp-1.0.0-11.el8_10.x86_64                        9/85
+  Verifying        : libxcb-1.13.1-1.el8.x86_64                           10/85
+  Verifying        : mariadb-connector-c-3.1.11-2.el8_3.x86_64            11/85
+  Verifying        : mariadb-connector-c-config-3.1.11-2.el8_3.noarch     12/85
+  Verifying        : net-snmp-1:5.8-33.el8_10.x86_64                      13/85
+  Verifying        : net-snmp-agent-libs-1:5.8-33.el8_10.x86_64           14/85
+  Verifying        : net-snmp-utils-1:5.8-33.el8_10.x86_64                15/85
+  Verifying        : nginx-1:1.14.1-9.module+el8.4.0+542+81547229.x86_6   16/85
+  Verifying        : nginx-all-modules-1:1.14.1-9.module+el8.4.0+542+81   17/85
+  Verifying        : nginx-filesystem-1:1.14.1-9.module+el8.4.0+542+815   18/85
+  Verifying        : nginx-mod-http-image-filter-1:1.14.1-9.module+el8.   19/85
+  Verifying        : nginx-mod-http-perl-1:1.14.1-9.module+el8.4.0+542+   20/85
+  Verifying        : nginx-mod-http-xslt-filter-1:1.14.1-9.module+el8.4   21/85
+  Verifying        : nginx-mod-mail-1:1.14.1-9.module+el8.4.0+542+81547   22/85
+  Verifying        : nginx-mod-stream-1:1.14.1-9.module+el8.4.0+542+815   23/85
+  Verifying        : perl-Digest-1.17-395.el8.noarch                      24/85
+  Verifying        : perl-Digest-MD5-2.55-396.el8.x86_64                  25/85
+  Verifying        : perl-IO-Socket-IP-0.39-5.el8.noarch                  26/85
+  Verifying        : perl-IO-Socket-SSL-2.066-4.module+el8.9.0+1517+e71   27/85
+  Verifying        : perl-Mozilla-CA-20160104-7.module+el8.9.0+1521+010   28/85
+  Verifying        : perl-Net-SSLeay-1.88-2.module+el8.9.0+1517+e71a7a6   29/85
+  Verifying        : perl-URI-1.73-3.el8.noarch                           30/85
+  Verifying        : perl-libnet-3.11-3.el8.noarch                        31/85
+  Verifying        : cronie-1.5.2-10.el8.x86_64                           32/85
+  Verifying        : cronie-anacron-1.5.2-10.el8.x86_64                   33/85
+  Verifying        : crontabs-1.11-17.20190603git.el8.noarch              34/85
+  Verifying        : dejavu-fonts-common-2.35-7.el8.noarch                35/85
+  Verifying        : dejavu-sans-fonts-2.35-7.el8.noarch                  36/85
+  Verifying        : fontconfig-2.13.1-4.el8.x86_64                       37/85
+  Verifying        : fontpackages-filesystem-1.44-22.el8.noarch           38/85
+  Verifying        : freetype-2.9.1-10.el8_10.x86_64                      39/85
+  Verifying        : groff-base-1.22.3-18.el8.x86_64                      40/85
+  Verifying        : libpng-2:1.6.34-10.el8_10.x86_64                     41/85
+  Verifying        : libxslt-1.1.32-6.3.el8_10.x86_64                     42/85
+  Verifying        : lm_sensors-libs-3.4.0-23.20180522git70f7e08.el8.x8   43/85
+  Verifying        : ncurses-6.1-10.20180224.el8.x86_64                   44/85
+  Verifying        : net-snmp-libs-1:5.8-33.el8_10.x86_64                 45/85
+  Verifying        : openssh-8.0p1-29.el8_10.x86_64                       46/85
+  Verifying        : openssh-server-8.0p1-29.el8_10.x86_64                47/85
+  Verifying        : openssl-1:1.1.1k-15.el8_10.x86_64                    48/85
+  Verifying        : openssl-pkcs11-0.4.10-3.el8.x86_64                   49/85
+  Verifying        : perl-Carp-1.42-396.el8.noarch                        50/85
+  Verifying        : perl-Data-Dumper-2.167-399.el8.x86_64                51/85
+  Verifying        : perl-Encode-4:2.97-3.el8.x86_64                      52/85
+  Verifying        : perl-Errno-1.28-423.el8_10.x86_64                    53/85
+  Verifying        : perl-Exporter-5.72-396.el8.noarch                    54/85
+  Verifying        : perl-File-Path-2.15-2.el8.noarch                     55/85
+  Verifying        : perl-File-Temp-0.230.600-1.el8.noarch                56/85
+  Verifying        : perl-Getopt-Long-1:2.50-4.el8.noarch                 57/85
+  Verifying        : perl-HTTP-Tiny-0.074-3.el8.noarch                    58/85
+  Verifying        : perl-IO-1.38-423.el8_10.x86_64                       59/85
+  Verifying        : perl-MIME-Base64-3.15-396.el8.x86_64                 60/85
+  Verifying        : perl-PathTools-3.74-1.el8.x86_64                     61/85
+  Verifying        : perl-Pod-Escapes-1:1.07-395.el8.noarch               62/85
+  Verifying        : perl-Pod-Perldoc-3.28-396.el8.noarch                 63/85
+  Verifying        : perl-Pod-Simple-1:3.35-395.el8.noarch                64/85
+  Verifying        : perl-Pod-Usage-4:1.69-395.el8.noarch                 65/85
+  Verifying        : perl-Scalar-List-Utils-3:1.49-2.el8.x86_64           66/85
+  Verifying        : perl-Socket-4:2.027-3.el8.x86_64                     67/85
+  Verifying        : perl-Storable-1:3.11-3.el8.x86_64                    68/85
+  Verifying        : perl-Term-ANSIColor-4.06-396.el8.noarch              69/85
+  Verifying        : perl-Term-Cap-1.17-395.el8.noarch                    70/85
+  Verifying        : perl-Text-ParseWords-3.30-395.el8.noarch             71/85
+  Verifying        : perl-Text-Tabs+Wrap-2013.0523-395.el8.noarch         72/85
+  Verifying        : perl-Time-Local-1:1.280-1.el8.noarch                 73/85
+  Verifying        : perl-Unicode-Normalize-1.25-396.el8.x86_64           74/85
+  Verifying        : perl-constant-1.33-396.el8.noarch                    75/85
+  Verifying        : perl-interpreter-4:5.26.3-423.el8_10.x86_64          76/85
+  Verifying        : perl-libs-4:5.26.3-423.el8_10.x86_64                 77/85
+  Verifying        : perl-macros-4:5.26.3-423.el8_10.x86_64               78/85
+  Verifying        : perl-parent-1:0.237-1.el8.noarch                     79/85
+  Verifying        : perl-podlators-4.11-1.el8.noarch                     80/85
+  Verifying        : perl-threads-1:2.21-2.el8.x86_64                     81/85
+  Verifying        : perl-threads-shared-1.58-2.el8.x86_64                82/85
+  Verifying        : procps-ng-3.3.15-14.el8.x86_64                       83/85
+  Verifying        : openssl-libs-1:1.1.1k-15.el8_10.x86_64               84/85
+  Verifying        : openssl-libs-1:1.1.1k-9.el8_7.x86_64                 85/85
+
+Upgraded:
+  openssl-libs-1:1.1.1k-15.el8_10.x86_64
+Installed:
+  cronie-1.5.2-10.el8.x86_64
+  cronie-anacron-1.5.2-10.el8.x86_64
+  crontabs-1.11-17.20190603git.el8.noarch
+  dejavu-fonts-common-2.35-7.el8.noarch
+  dejavu-sans-fonts-2.35-7.el8.noarch
+  fontconfig-2.13.1-4.el8.x86_64
+  fontpackages-filesystem-1.44-22.el8.noarch
+  freetype-2.9.1-10.el8_10.x86_64
+  gd-2.2.5-7.el8.x86_64
+  groff-base-1.22.3-18.el8.x86_64
+  jbigkit-libs-2.1-14.el8.x86_64
+  libX11-1.6.8-9.el8_10.x86_64
+  libX11-common-1.6.8-9.el8_10.noarch
+  libXau-1.0.9-3.el8.x86_64
+  libXpm-3.5.12-11.el8.x86_64
+  libjpeg-turbo-1.5.3-14.el8_10.x86_64
+  libpng-2:1.6.34-10.el8_10.x86_64
+  libtiff-4.0.9-37.el8_10.x86_64
+  libwebp-1.0.0-11.el8_10.x86_64
+  libxcb-1.13.1-1.el8.x86_64
+  libxslt-1.1.32-6.3.el8_10.x86_64
+  lm_sensors-libs-3.4.0-23.20180522git70f7e08.el8.x86_64
+  mariadb-connector-c-3.1.11-2.el8_3.x86_64
+  mariadb-connector-c-config-3.1.11-2.el8_3.noarch
+  ncurses-6.1-10.20180224.el8.x86_64
+  net-snmp-1:5.8-33.el8_10.x86_64
+  net-snmp-agent-libs-1:5.8-33.el8_10.x86_64
+  net-snmp-libs-1:5.8-33.el8_10.x86_64
+  net-snmp-utils-1:5.8-33.el8_10.x86_64
+  nginx-1:1.14.1-9.module+el8.4.0+542+81547229.x86_64
+  nginx-all-modules-1:1.14.1-9.module+el8.4.0+542+81547229.noarch
+  nginx-filesystem-1:1.14.1-9.module+el8.4.0+542+81547229.noarch
+  nginx-mod-http-image-filter-1:1.14.1-9.module+el8.4.0+542+81547229.x86_64
+  nginx-mod-http-perl-1:1.14.1-9.module+el8.4.0+542+81547229.x86_64
+  nginx-mod-http-xslt-filter-1:1.14.1-9.module+el8.4.0+542+81547229.x86_64
+  nginx-mod-mail-1:1.14.1-9.module+el8.4.0+542+81547229.x86_64
+  nginx-mod-stream-1:1.14.1-9.module+el8.4.0+542+81547229.x86_64
+  openssh-8.0p1-29.el8_10.x86_64
+  openssh-server-8.0p1-29.el8_10.x86_64
+  openssl-1:1.1.1k-15.el8_10.x86_64
+  openssl-pkcs11-0.4.10-3.el8.x86_64
+  perl-Carp-1.42-396.el8.noarch
+  perl-Data-Dumper-2.167-399.el8.x86_64
+  perl-Digest-1.17-395.el8.noarch
+  perl-Digest-MD5-2.55-396.el8.x86_64
+  perl-Encode-4:2.97-3.el8.x86_64
+  perl-Errno-1.28-423.el8_10.x86_64
+  perl-Exporter-5.72-396.el8.noarch
+  perl-File-Path-2.15-2.el8.noarch
+  perl-File-Temp-0.230.600-1.el8.noarch
+  perl-Getopt-Long-1:2.50-4.el8.noarch
+  perl-HTTP-Tiny-0.074-3.el8.noarch
+  perl-IO-1.38-423.el8_10.x86_64
+  perl-IO-Socket-IP-0.39-5.el8.noarch
+  perl-IO-Socket-SSL-2.066-4.module+el8.9.0+1517+e71a7a62.noarch
+  perl-MIME-Base64-3.15-396.el8.x86_64
+  perl-Mozilla-CA-20160104-7.module+el8.9.0+1521+0101edce.noarch
+  perl-Net-SSLeay-1.88-2.module+el8.9.0+1517+e71a7a62.x86_64
+  perl-PathTools-3.74-1.el8.x86_64
+  perl-Pod-Escapes-1:1.07-395.el8.noarch
+  perl-Pod-Perldoc-3.28-396.el8.noarch
+  perl-Pod-Simple-1:3.35-395.el8.noarch
+  perl-Pod-Usage-4:1.69-395.el8.noarch
+  perl-Scalar-List-Utils-3:1.49-2.el8.x86_64
+  perl-Socket-4:2.027-3.el8.x86_64
+  perl-Storable-1:3.11-3.el8.x86_64
+  perl-Term-ANSIColor-4.06-396.el8.noarch
+  perl-Term-Cap-1.17-395.el8.noarch
+  perl-Text-ParseWords-3.30-395.el8.noarch
+  perl-Text-Tabs+Wrap-2013.0523-395.el8.noarch
+  perl-Time-Local-1:1.280-1.el8.noarch
+  perl-URI-1.73-3.el8.noarch
+  perl-Unicode-Normalize-1.25-396.el8.x86_64
+  perl-constant-1.33-396.el8.noarch
+  perl-interpreter-4:5.26.3-423.el8_10.x86_64
+  perl-libnet-3.11-3.el8.noarch
+  perl-libs-4:5.26.3-423.el8_10.x86_64
+  perl-macros-4:5.26.3-423.el8_10.x86_64
+  perl-parent-1:0.237-1.el8.noarch
+  perl-podlators-4.11-1.el8.noarch
+  perl-threads-1:2.21-2.el8.x86_64
+  perl-threads-shared-1.58-2.el8.x86_64
+  procps-ng-3.3.15-14.el8.x86_64
+
+Complete!
+[srv-linux] Configuring SSH...
+ssh-keygen: generating new host keys: RSA DSA ECDSA ED25519
+[srv-linux] Starting SNMP daemon...
+[srv-linux] Starting SSH daemon...
+[srv-linux] Starting Nginx...
+[srv-linux] Rocky Linux server ready.
+[srv-linux] SSH: port 22, SNMP: port 161
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+NET-SNMP version 5.8
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
+
+What's next:
+    View and search logs for all containers in one place
+    with Docker Desktop's Logs view. docker-desktop://dashboard/logs
+PS C:\GitHub\Zentra\docker>
