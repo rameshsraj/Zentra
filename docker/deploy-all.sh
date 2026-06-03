@@ -65,7 +65,30 @@ fi
 ok "Docker is ready"
 
 # ---------------------------------------------------------------------------
-# Step 2: Run Zentra Application Installer
+# Step 2: Clean up existing containers
+# ---------------------------------------------------------------------------
+echo ""
+info "Stopping and removing existing containers..."
+
+ALL_CONTAINERS="zentra srv-linux-01 srv-linux-02 srv-win-01 srv-win-02 sw-core-01 sw-access-01 fw-01 stor-01 mw-nginx-01 mw-apache-01 mw-tomcat-01 db-oracle-01"
+
+REMOVED_COUNT=0
+for ctr in ${ALL_CONTAINERS}; do
+    if docker ps -aq -f "name=^${ctr}$" 2>/dev/null | grep -q .; then
+        docker stop "${ctr}" >/dev/null 2>&1 || true
+        docker rm -f "${ctr}" >/dev/null 2>&1 || true
+        REMOVED_COUNT=$((REMOVED_COUNT + 1))
+    fi
+done
+
+if [ "${REMOVED_COUNT}" -gt 0 ]; then
+    ok "Removed ${REMOVED_COUNT} existing container(s)"
+else
+    ok "No existing containers to clean up"
+fi
+
+# ---------------------------------------------------------------------------
+# Step 3: Run Zentra Application Installer
 # ---------------------------------------------------------------------------
 echo ""
 echo "======================================================"
@@ -91,7 +114,7 @@ fi
 sleep 3
 
 # ---------------------------------------------------------------------------
-# Step 3: Run Datacenter Simulation Setup
+# Step 4: Run Datacenter Simulation Setup
 # ---------------------------------------------------------------------------
 echo ""
 echo "======================================================"
@@ -115,7 +138,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 4: Ensure SSH tools are available in the Zentra container
+# Step 5: Ensure SSH tools are available in the Zentra container
 # ---------------------------------------------------------------------------
 echo ""
 info "Checking SSH tools in Zentra container..."
@@ -150,7 +173,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 5: Connect Zentra to the simulation network
+# Step 6: Connect Zentra to the simulation network
 # ---------------------------------------------------------------------------
 echo ""
 info "Connecting Zentra container to simulation network..."
@@ -240,7 +263,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 6: Wait for SSH readiness on simulation nodes
+# Step 7: Wait for SSH readiness on simulation nodes
 # ---------------------------------------------------------------------------
 echo ""
 info "Waiting for SSH daemons to start on simulation nodes..."
@@ -272,7 +295,7 @@ fi
 sleep 5
 
 # ---------------------------------------------------------------------------
-# Step 7: Distribute SSH keys to simulation nodes
+# Step 8: Distribute SSH keys to simulation nodes
 # ---------------------------------------------------------------------------
 echo ""
 info "Distributing SSH keys to simulation nodes..."
@@ -287,9 +310,13 @@ for target in ${SSH_TARGETS}; do
     if [ -n "${TARGET_IP}" ]; then
         COPY_OK=false
         for attempt in 1 2 3; do
-            if docker exec zentra sshpass -p "zentra123" ssh-copy-id -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=5 "root@${TARGET_IP}" >/dev/null 2>&1; then
-                COPY_OK=true
-                break
+            # Push public key directly via sshpass+ssh (more reliable than ssh-copy-id in Docker)
+            if docker exec zentra sh -c "sshpass -p 'zentra123' ssh -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=5 root@${TARGET_IP} 'mkdir -p /root/.ssh && chmod 700 /root/.ssh && cat >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys' < /root/.ssh/id_rsa.pub" >/dev/null 2>&1; then
+                # Verify key was actually installed
+                if docker exec zentra ssh -i /root/.ssh/id_rsa -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no "root@${TARGET_IP}" "echo ok" >/dev/null 2>&1; then
+                    COPY_OK=true
+                    break
+                fi
             fi
             sleep 2
         done
@@ -338,7 +365,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 8: Combined Summary
+# Step 9: Combined Summary
 # ---------------------------------------------------------------------------
 END_TIME=$(date +%s)
 ELAPSED=$(( END_TIME - START_TIME ))

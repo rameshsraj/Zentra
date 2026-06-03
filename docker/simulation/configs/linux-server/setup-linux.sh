@@ -14,19 +14,16 @@ echo "root:zentra123" | chpasswd
 mkdir -p /root/.ssh && chmod 700 /root/.ssh
 touch /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys
 
-# Ensure sshd_config exists and enable root login + password auth
-if [ -f /etc/ssh/sshd_config ]; then
-    sed -i 's/^[#[:space:]]*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
-    sed -i 's/^[#[:space:]]*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-    sed -i 's/^[#[:space:]]*PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
-else
-    cat > /etc/ssh/sshd_config << 'EOF'
+# Create a complete sshd_config (overwrite to avoid misconfiguration)
+cat > /etc/ssh/sshd_config << 'EOF'
 Port 22
 PermitRootLogin yes
 PasswordAuthentication yes
 PubkeyAuthentication yes
+AuthorizedKeysFile .ssh/authorized_keys
+UsePAM no
+Subsystem sftp /usr/libexec/openssh/sftp-server
 EOF
-fi
 
 # Start services
 echo "[srv-linux] Starting SNMP daemon..."

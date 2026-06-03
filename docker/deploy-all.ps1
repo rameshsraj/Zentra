@@ -71,7 +71,36 @@ try {
 Write-Ok "Docker is ready"
 
 # ---------------------------------------------------------------------------
-# Step 2: Run Zentra Application Installer
+# Step 2: Clean up existing containers
+# ---------------------------------------------------------------------------
+Write-Host ""
+Write-Info "Stopping and removing existing containers..."
+
+$allContainers = @(
+    "zentra",
+    "srv-linux-01", "srv-linux-02", "srv-win-01", "srv-win-02",
+    "sw-core-01", "sw-access-01", "fw-01", "stor-01",
+    "mw-nginx-01", "mw-apache-01", "mw-tomcat-01", "db-oracle-01"
+)
+
+$removedCount = 0
+foreach ($ctr in $allContainers) {
+    $exists = docker ps -aq -f "name=^${ctr}$" 2>$null
+    if ($exists) {
+        docker stop $ctr >$null 2>$null
+        docker rm -f $ctr >$null 2>$null
+        $removedCount++
+    }
+}
+
+if ($removedCount -gt 0) {
+    Write-Ok "Removed $removedCount existing container(s)"
+} else {
+    Write-Ok "No existing containers to clean up"
+}
+
+# ---------------------------------------------------------------------------
+# Step 3: Run Zentra Application Installer
 # ---------------------------------------------------------------------------
 Write-Host ""
 Write-Host "======================================================" -ForegroundColor Cyan
@@ -106,7 +135,7 @@ if ($installSuccess) {
 Start-Sleep -Seconds 3
 
 # ---------------------------------------------------------------------------
-# Step 3: Run Datacenter Simulation Setup
+# Step 4: Run Datacenter Simulation Setup
 # ---------------------------------------------------------------------------
 Write-Host ""
 Write-Host "======================================================" -ForegroundColor Cyan
@@ -139,7 +168,7 @@ if ($simSuccess) {
 }
 
 # ---------------------------------------------------------------------------
-# Step 4: Ensure SSH tools are available in the Zentra container
+# Step 5: Ensure SSH tools are available in the Zentra container
 # ---------------------------------------------------------------------------
 Write-Host ""
 Write-Info "Checking SSH tools in Zentra container..."
@@ -184,7 +213,7 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 # ---------------------------------------------------------------------------
-# Step 5: Connect Zentra to the simulation network
+# Step 6: Connect Zentra to the simulation network
 # ---------------------------------------------------------------------------
 Write-Host ""
 Write-Info "Connecting Zentra container to simulation network..."
@@ -300,7 +329,7 @@ if (-not $simNetwork) {
 $ErrorActionPreference = $prevEAP
 
 # ---------------------------------------------------------------------------
-# Step 6: Wait for SSH readiness on simulation nodes
+# Step 7: Wait for SSH readiness on simulation nodes
 # ---------------------------------------------------------------------------
 Write-Host ""
 Write-Info "Waiting for SSH daemons to start on simulation nodes..."
@@ -337,7 +366,7 @@ if ($sshReady) {
 Start-Sleep -Seconds 5
 
 # ---------------------------------------------------------------------------
-# Step 7: Distribute SSH keys to simulation nodes
+# Step 8: Distribute SSH keys to simulation nodes
 # ---------------------------------------------------------------------------
 Write-Host ""
 Write-Info "Distributing SSH keys to simulation nodes..."
@@ -351,10 +380,15 @@ foreach ($target in $sshTargets) {
     if ($targetIp -ne "N/A") {
         $copyOk = $false
         for ($attempt = 1; $attempt -le 3; $attempt++) {
-            docker exec zentra sshpass -p "zentra123" ssh-copy-id -i "${ROOT_KEY}.pub" -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=5 "root@${targetIp}" >$null 2>$null
+            # Push public key directly via sshpass+ssh (more reliable than ssh-copy-id in Docker)
+            docker exec zentra sh -c "sshpass -p 'zentra123' ssh -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=5 root@${targetIp} 'mkdir -p /root/.ssh && chmod 700 /root/.ssh && cat >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys' < ${ROOT_KEY}.pub" >$null 2>$null
             if ($LASTEXITCODE -eq 0) {
-                $copyOk = $true
-                break
+                # Verify key was actually installed
+                docker exec zentra ssh -i $ROOT_KEY -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no "root@${targetIp}" "echo ok" >$null 2>$null
+                if ($LASTEXITCODE -eq 0) {
+                    $copyOk = $true
+                    break
+                }
             }
             Start-Sleep -Seconds 2
         }
@@ -407,7 +441,7 @@ if ($firstSimIp -ne "N/A") {
 }
 
 # ---------------------------------------------------------------------------
-# Step 8: Combined Summary
+# Step 9: Combined Summary
 # ---------------------------------------------------------------------------
 $elapsed = (Get-Date) - $startTime
 $elapsedStr = "{0:mm\:ss}" -f $elapsed
