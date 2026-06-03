@@ -315,18 +315,22 @@ info "Verifying passwordless SSH..."
 FIRST_SIM_IP=$(get_sim_ip srv-linux-01)
 if [ -n "${FIRST_SIM_IP}" ]; then
     VERIFY_OK=false
+    LAST_ERROR=""
     for attempt in 1 2 3; do
-        SSH_RESULT=$(docker exec zentra ssh -o BatchMode=yes -o ConnectTimeout=5 -o GSSAPIAuthentication=no "root@${FIRST_SIM_IP}" hostname 2>/dev/null)
+        SSH_RESULT=$(docker exec zentra ssh -i /root/.ssh/id_rsa -o BatchMode=yes -o ConnectTimeout=5 -o GSSAPIAuthentication=no -o StrictHostKeyChecking=no "root@${FIRST_SIM_IP}" hostname 2>&1)
+        LAST_ERROR="${SSH_RESULT}"
         if [ $? -eq 0 ]; then
             VERIFY_OK=true
             break
         fi
+        info "  SSH attempt ${attempt}/3 failed, retrying..."
         sleep 2
     done
     if [ "${VERIFY_OK}" = true ]; then
         ok "Passwordless SSH verified (srv-linux-01: ${SSH_RESULT})"
     else
         warn "Passwordless SSH verification failed"
+        warn "  Last error: ${LAST_ERROR}"
         warn "  Manual fix: docker exec zentra sshpass -p zentra123 ssh-copy-id -o StrictHostKeyChecking=no root@${FIRST_SIM_IP}"
     fi
 else

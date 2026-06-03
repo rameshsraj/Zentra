@@ -383,12 +383,15 @@ if ($firstSimIp -ne "N/A") {
     $prevEAP2 = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     $verifyOk = $false
+    $lastError = ""
     for ($attempt = 1; $attempt -le 3; $attempt++) {
-        $sshResult = docker exec zentra ssh -i $ROOT_KEY -o BatchMode=yes -o ConnectTimeout=5 -o GSSAPIAuthentication=no "root@${firstSimIp}" hostname 2>$null
+        $sshResult = docker exec zentra ssh -i $ROOT_KEY -o BatchMode=yes -o ConnectTimeout=5 -o GSSAPIAuthentication=no -o StrictHostKeyChecking=no "root@${firstSimIp}" hostname 2>&1
+        $lastError = $sshResult
         if ($LASTEXITCODE -eq 0) {
             $verifyOk = $true
             break
         }
+        Write-Info "  SSH attempt $attempt/3 failed, retrying..."
         Start-Sleep -Seconds 2
     }
     $ErrorActionPreference = $prevEAP2
@@ -396,6 +399,7 @@ if ($firstSimIp -ne "N/A") {
         Write-Ok "Passwordless SSH verified (srv-linux-01: $sshResult)"
     } else {
         Write-Warn "Passwordless SSH verification failed"
+        Write-Warn "  Last error: $lastError"
         Write-Warn "  Manual fix: docker exec zentra sshpass -p zentra123 ssh-copy-id -o StrictHostKeyChecking=no root@$firstSimIp"
     }
 } else {
