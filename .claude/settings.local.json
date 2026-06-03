@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(xargs grep -l \"prost\\\\|tonic\")",
-      "Bash(xargs grep -l \"fetch\\\\|axios\\\\|http\")"
-    ]
-  }
-}
