@@ -163,39 +163,24 @@ if ($LASTEXITCODE -ne 0) {
     Write-Ok "SSH tools already available"
 }
 
-# Generate SSH keys for root user
+# Generate SSH keys for root user (force regenerate to ensure no passphrase)
 $ROOT_SSH_DIR = "/root/.ssh"
 $ROOT_KEY = "$ROOT_SSH_DIR/id_rsa"
-docker exec zentra test -f $ROOT_KEY >$null 2>$null
-$keyExists = ($LASTEXITCODE -eq 0)
-if ($keyExists) {
-    # Verify key has no passphrase (can be loaded without TTY)
-    docker exec zentra ssh-keygen -y -f $ROOT_KEY -P "" >$null 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warn "Existing SSH key has a passphrase - regenerating..."
-        docker exec zentra rm -f $ROOT_KEY "$ROOT_KEY.pub" >$null 2>$null
-        $keyExists = $false
-    } else {
-        Write-Ok "SSH key pair already exists (no passphrase)"
-    }
-}
-
-if (-not $keyExists) {
-    Write-Info "Generating SSH key pair for root..."
-    docker exec zentra mkdir -p $ROOT_SSH_DIR
-    docker exec zentra chmod 700 $ROOT_SSH_DIR
-    docker exec zentra ssh-keygen -t rsa -b 4096 -f $ROOT_KEY -N "" -q
-    docker exec zentra sh -c "echo 'Host *' > $ROOT_SSH_DIR/config"
-    docker exec zentra sh -c "echo '    StrictHostKeyChecking no' >> $ROOT_SSH_DIR/config"
-    docker exec zentra sh -c "echo '    UserKnownHostsFile /dev/null' >> $ROOT_SSH_DIR/config"
-    docker exec zentra sh -c "echo '    LogLevel ERROR' >> $ROOT_SSH_DIR/config"
-    docker exec zentra sh -c "echo '    GSSAPIAuthentication no' >> $ROOT_SSH_DIR/config"
-    docker exec zentra chmod 600 $ROOT_SSH_DIR/config
-    if ($LASTEXITCODE -eq 0) {
-        Write-Ok "SSH key pair generated at $ROOT_KEY"
-    } else {
-        Write-Warn "Failed to generate SSH key pair"
-    }
+Write-Info "Regenerating SSH key pair for root (ensuring no passphrase)..."
+docker exec zentra rm -f $ROOT_KEY "$ROOT_KEY.pub" >$null 2>$null
+docker exec zentra mkdir -p $ROOT_SSH_DIR
+docker exec zentra chmod 700 $ROOT_SSH_DIR
+docker exec zentra ssh-keygen -t rsa -b 4096 -f $ROOT_KEY -N "" -q
+docker exec zentra sh -c "echo 'Host *' > $ROOT_SSH_DIR/config"
+docker exec zentra sh -c "echo '    StrictHostKeyChecking no' >> $ROOT_SSH_DIR/config"
+docker exec zentra sh -c "echo '    UserKnownHostsFile /dev/null' >> $ROOT_SSH_DIR/config"
+docker exec zentra sh -c "echo '    LogLevel ERROR' >> $ROOT_SSH_DIR/config"
+docker exec zentra sh -c "echo '    GSSAPIAuthentication no' >> $ROOT_SSH_DIR/config"
+docker exec zentra chmod 600 $ROOT_SSH_DIR/config
+if ($LASTEXITCODE -eq 0) {
+    Write-Ok "SSH key pair generated at $ROOT_KEY"
+} else {
+    Write-Warn "Failed to generate SSH key pair"
 }
 
 # ---------------------------------------------------------------------------

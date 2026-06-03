@@ -131,35 +131,22 @@ else
     fi
 fi
 
-# Generate SSH keys if missing (or regenerate if passphrase-protected)
-KEY_EXISTS=false
-if docker exec zentra test -f /root/.ssh/id_rsa 2>/dev/null; then
-    # Verify key has no passphrase
-    if docker exec zentra ssh-keygen -y -f /root/.ssh/id_rsa -P "" >/dev/null 2>&1; then
-        ok "SSH key pair already exists (no passphrase)"
-        KEY_EXISTS=true
-    else
-        warn "Existing SSH key has a passphrase - regenerating..."
-        docker exec zentra rm -f /root/.ssh/id_rsa /root/.ssh/id_rsa.pub 2>/dev/null
-    fi
-fi
-
-if [ "${KEY_EXISTS}" = false ]; then
-    info "Generating SSH key pair in Zentra container..."
-    docker exec zentra mkdir -p /root/.ssh
-    docker exec zentra chmod 700 /root/.ssh
-    docker exec zentra ssh-keygen -t rsa -b 4096 -f /root/.ssh/id_rsa -N "" -q
-    docker exec zentra sh -c "echo 'Host *' > /root/.ssh/config"
-    docker exec zentra sh -c "echo '    StrictHostKeyChecking no' >> /root/.ssh/config"
-    docker exec zentra sh -c "echo '    UserKnownHostsFile /dev/null' >> /root/.ssh/config"
-    docker exec zentra sh -c "echo '    LogLevel ERROR' >> /root/.ssh/config"
-    docker exec zentra sh -c "echo '    GSSAPIAuthentication no' >> /root/.ssh/config"
-    docker exec zentra chmod 600 /root/.ssh/config
-    if [ $? -eq 0 ]; then
-        ok "SSH key pair generated"
-    else
-        warn "Failed to generate SSH key pair"
-    fi
+# Generate SSH keys (force regenerate to ensure no passphrase)
+info "Regenerating SSH key pair for root (ensuring no passphrase)..."
+docker exec zentra rm -f /root/.ssh/id_rsa /root/.ssh/id_rsa.pub 2>/dev/null
+docker exec zentra mkdir -p /root/.ssh
+docker exec zentra chmod 700 /root/.ssh
+docker exec zentra ssh-keygen -t rsa -b 4096 -f /root/.ssh/id_rsa -N "" -q
+docker exec zentra sh -c "echo 'Host *' > /root/.ssh/config"
+docker exec zentra sh -c "echo '    StrictHostKeyChecking no' >> /root/.ssh/config"
+docker exec zentra sh -c "echo '    UserKnownHostsFile /dev/null' >> /root/.ssh/config"
+docker exec zentra sh -c "echo '    LogLevel ERROR' >> /root/.ssh/config"
+docker exec zentra sh -c "echo '    GSSAPIAuthentication no' >> /root/.ssh/config"
+docker exec zentra chmod 600 /root/.ssh/config
+if [ $? -eq 0 ]; then
+    ok "SSH key pair generated"
+else
+    warn "Failed to generate SSH key pair"
 fi
 
 # ---------------------------------------------------------------------------
