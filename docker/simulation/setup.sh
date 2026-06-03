@@ -208,8 +208,11 @@ done
 
 sleep 2
 
-# Remove the macvlan/bridge network
+# Remove both the bare name and any compose-prefixed name (e.g. simulation_zentra-dc)
 docker network rm zentra-dc 2>/dev/null || true
+for old_net in $(docker network ls --format '{{.Name}}' 2>/dev/null | grep "zentra-dc"); do
+    docker network rm "${old_net}" 2>/dev/null || true
+done
 
 sleep 3
 ok "Old volumes and networks removed"

@@ -184,7 +184,12 @@ foreach ($c in $SimContainers) {
 
 Start-Sleep -Seconds 2
 
+# Remove both the bare name and any compose-prefixed name (e.g. simulation_zentra-dc)
 try { docker network rm zentra-dc 2>&1 | Out-Null } catch {}
+$oldNets = docker network ls --format '{{.Name}}' 2>$null | Where-Object { $_ -match "zentra-dc" }
+foreach ($net in $oldNets) {
+    try { docker network rm $net 2>&1 | Out-Null } catch {}
+}
 
 Start-Sleep -Seconds 3
 Write-Ok "Old volumes and networks removed"

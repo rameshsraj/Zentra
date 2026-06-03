@@ -217,6 +217,9 @@ if ($netList) {
     }
 }
 
+# Fixed IP for Zentra on the simulation network
+$zentraSimFixedIp = "10.100.0.2"
+
 if (-not $simNetwork) {
     Write-Warn "Simulation network not found. Is the simulation running?"
 } else {
@@ -232,31 +235,52 @@ if (-not $simNetwork) {
     } catch {}
 
     if ($alreadyConnected) {
-        Write-Ok "Zentra is already connected to $simNetwork"
-    } else {
-        # Connect with retry
+        Write-Ok "Zentra is already on $simNetwork - verifying connectivity..."
+        # Quick ping test to check if the existing connection actually works
+        $firstSimIp = Get-SimIp -Name "srv-linux-01"
+        if ($firstSimIp -ne "N/A") {
+            docker exec zentra ping -c 1 -W 3 $firstSimIp >$null 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warn "Existing connection not working - reconnecting with fixed IP..."
+                docker network disconnect $simNetwork zentra 2>$null
+                $alreadyConnected = $false
+            }
+        }
+    }
+
+    if (-not $alreadyConnected) {
+        # Connect with a fixed IP so Zentra is guaranteed to be in the 10.100.0.x subnet
         $connectOk = $false
         for ($attempt = 1; $attempt -le 3; $attempt++) {
-            docker network connect $simNetwork zentra >$null 2>$null
+            $connectErr = docker network connect --ip $zentraSimFixedIp $simNetwork zentra 2>&1
             if ($LASTEXITCODE -eq 0) {
                 $connectOk = $true
                 break
             }
-            Write-Info "  Network connect attempt $attempt/3 failed, retrying in 3s..."
+            Write-Warn "  Network connect attempt $attempt/3 failed: $connectErr"
+            # If the IP is already taken, try without fixed IP
+            if ($connectErr -match "already") {
+                docker network disconnect $simNetwork zentra 2>$null
+                Start-Sleep -Seconds 2
+            }
             Start-Sleep -Seconds 3
         }
         if ($connectOk) {
             Write-Ok "Zentra connected to simulation network ($simNetwork)"
         } else {
             Write-Warn "Could not connect Zentra to simulation network after 3 attempts"
+            Write-Warn "  Try manually: docker network connect --ip $zentraSimFixedIp $simNetwork zentra"
         }
     }
 
     # Show Zentra's IP on the simulation network
+    Start-Sleep -Seconds 2
     try {
         $zentraSimIp = docker inspect zentra --format "{{with index .NetworkSettings.Networks `"$simNetwork`"}}{{.IPAddress}}{{end}}" 2>$null
         if ($zentraSimIp) {
             Write-Ok "Zentra IP on simulation network: $zentraSimIp"
+        } else {
+            Write-Warn "Could not determine Zentra's IP on the simulation network"
         }
     } catch {}
 
@@ -277,8 +301,10 @@ if (-not $simNetwork) {
             Write-Ok "Zentra can reach simulation nodes (ping $firstSimIp OK)"
         } else {
             Write-Warn "Ping to $firstSimIp failed from Zentra container"
-            Write-Warn "  Zentra and simulation may be on different subnets"
-            Write-Warn "  Debug: docker exec zentra ip addr | docker inspect zentra --format '{{json .NetworkSettings.Networks}}'"
+            Write-Warn "  Zentra networks: $zentraNetworks"
+            Write-Warn "  Target: $firstSimIp on $simNetwork"
+            Write-Warn "  Debug: docker exec zentra ip addr"
+            Write-Warn "  Debug: docker inspect zentra --format '{{json .NetworkSettings.Networks}}'"
         }
     } else {
         Write-Warn "Could not get IP for srv-linux-01 - skipping ping verification"

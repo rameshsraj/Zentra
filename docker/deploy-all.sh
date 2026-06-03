@@ -171,6 +171,9 @@ info "Connecting Zentra container to simulation network..."
 # Detect the simulation network name dynamically
 SIM_NETWORK=$(docker network ls --format '{{.Name}}' 2>/dev/null | grep "zentra-dc" | head -1)
 
+# Fixed IP for Zentra on the simulation network
+ZENTRA_SIM_FIXED_IP="10.100.0.2"
+
 if [ -z "${SIM_NETWORK}" ]; then
     warn "Simulation network not found. Is the simulation running?"
 else
@@ -180,29 +183,50 @@ else
     ALREADY_CONNECTED=$(docker inspect zentra --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null | grep -c "${SIM_NETWORK}" || true)
 
     if [ "${ALREADY_CONNECTED}" -gt 0 ]; then
-        ok "Zentra is already connected to ${SIM_NETWORK}"
-    else
-        # Connect with retry
+        ok "Zentra is already on ${SIM_NETWORK} - verifying connectivity..."
+        # Quick ping test to check if the existing connection actually works
+        FIRST_SIM_IP=$(get_sim_ip srv-linux-01)
+        if [ -n "${FIRST_SIM_IP}" ]; then
+            if ! docker exec zentra ping -c 1 -W 3 "${FIRST_SIM_IP}" >/dev/null 2>&1; then
+                warn "Existing connection not working - reconnecting with fixed IP..."
+                docker network disconnect "${SIM_NETWORK}" zentra 2>/dev/null || true
+                ALREADY_CONNECTED=0
+            fi
+        fi
+    fi
+
+    if [ "${ALREADY_CONNECTED}" -eq 0 ]; then
+        # Connect with a fixed IP so Zentra is guaranteed to be in the 10.100.0.x subnet
         CONNECT_OK=false
         for attempt in 1 2 3; do
-            if docker network connect "${SIM_NETWORK}" zentra 2>/dev/null; then
+            CONNECT_ERR=$(docker network connect --ip "${ZENTRA_SIM_FIXED_IP}" "${SIM_NETWORK}" zentra 2>&1)
+            if [ $? -eq 0 ]; then
                 CONNECT_OK=true
                 break
             fi
-            info "  Network connect attempt ${attempt}/3 failed, retrying in 3s..."
+            warn "  Network connect attempt ${attempt}/3 failed: ${CONNECT_ERR}"
+            # If already connected or IP conflict, disconnect first
+            if echo "${CONNECT_ERR}" | grep -qi "already"; then
+                docker network disconnect "${SIM_NETWORK}" zentra 2>/dev/null || true
+                sleep 2
+            fi
             sleep 3
         done
         if [ "${CONNECT_OK}" = true ]; then
             ok "Zentra connected to simulation network (${SIM_NETWORK})"
         else
             warn "Could not connect Zentra to simulation network after 3 attempts"
+            warn "  Try manually: docker network connect --ip ${ZENTRA_SIM_FIXED_IP} ${SIM_NETWORK} zentra"
         fi
     fi
 
     # Show Zentra's IP on the simulation network
+    sleep 2
     ZENTRA_SIM_IP=$(docker inspect zentra --format "{{with index .NetworkSettings.Networks \"${SIM_NETWORK}\"}}{{.IPAddress}}{{end}}" 2>/dev/null || true)
     if [ -n "${ZENTRA_SIM_IP}" ]; then
         ok "Zentra IP on simulation network: ${ZENTRA_SIM_IP}"
+    else
+        warn "Could not determine Zentra's IP on the simulation network"
     fi
 
     # Verify connectivity with retry
@@ -221,7 +245,8 @@ else
             ok "Zentra can reach simulation nodes (ping ${FIRST_SIM_IP} OK)"
         else
             warn "Ping to ${FIRST_SIM_IP} failed from Zentra container"
-            warn "  Zentra and simulation may be on different subnets"
+            warn "  Zentra networks: $(docker inspect zentra --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}({{$v.IPAddress}}) {{end}}' 2>/dev/null)"
+            warn "  Target: ${FIRST_SIM_IP} on ${SIM_NETWORK}"
             warn "  Debug: docker exec zentra ip addr"
         fi
     fi
