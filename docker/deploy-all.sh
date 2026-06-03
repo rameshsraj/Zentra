@@ -219,11 +219,16 @@ fi
 
 # Verify SSH works without password
 info "Verifying passwordless SSH..."
-SSH_RESULT=$(docker exec zentra ssh -o BatchMode=yes -o ConnectTimeout=5 -o GSSAPIAuthentication=no root@10.100.0.11 hostname 2>/dev/null)
-if [ $? -eq 0 ]; then
-    ok "Passwordless SSH verified (srv-linux-01: ${SSH_RESULT})"
+FIRST_SIM_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' srv-linux-01 2>/dev/null)
+if [ -n "${FIRST_SIM_IP}" ]; then
+    SSH_RESULT=$(docker exec zentra ssh -o BatchMode=yes -o ConnectTimeout=5 -o GSSAPIAuthentication=no "root@${FIRST_SIM_IP}" hostname 2>/dev/null)
+    if [ $? -eq 0 ]; then
+        ok "Passwordless SSH verified (srv-linux-01: ${SSH_RESULT})"
+    else
+        warn "Passwordless SSH verification failed - try manually: docker exec zentra sshpass -p zentra123 ssh-copy-id root@${FIRST_SIM_IP}"
+    fi
 else
-    warn "Passwordless SSH verification failed - try manually: docker exec zentra sshpass -p zentra123 ssh-copy-id root@10.100.0.11"
+    warn "Could not get IP for srv-linux-01 - skipping SSH verification"
 fi
 
 # ---------------------------------------------------------------------------
