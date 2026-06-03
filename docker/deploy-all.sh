@@ -175,69 +175,154 @@ if [ -z "${SIM_NETWORK}" ]; then
     warn "Simulation network not found. Is the simulation running?"
 else
     info "Found simulation network: ${SIM_NETWORK}"
-    if docker inspect zentra --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null | grep -q "${SIM_NETWORK}"; then
+
+    # Check if already connected
+    ALREADY_CONNECTED=$(docker inspect zentra --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null | grep -c "${SIM_NETWORK}" || true)
+
+    if [ "${ALREADY_CONNECTED}" -gt 0 ]; then
         ok "Zentra is already connected to ${SIM_NETWORK}"
     else
-        if docker network connect "${SIM_NETWORK}" zentra 2>/dev/null; then
+        # Connect with retry
+        CONNECT_OK=false
+        for attempt in 1 2 3; do
+            if docker network connect "${SIM_NETWORK}" zentra 2>/dev/null; then
+                CONNECT_OK=true
+                break
+            fi
+            info "  Network connect attempt ${attempt}/3 failed, retrying in 3s..."
+            sleep 3
+        done
+        if [ "${CONNECT_OK}" = true ]; then
             ok "Zentra connected to simulation network (${SIM_NETWORK})"
-            info "Zentra can now reach all simulation nodes directly"
         else
-            warn "Could not connect Zentra to simulation network"
+            warn "Could not connect Zentra to simulation network after 3 attempts"
         fi
     fi
 
-    # Verify connectivity
+    # Show Zentra's IP on the simulation network
+    ZENTRA_SIM_IP=$(docker inspect zentra --format "{{with index .NetworkSettings.Networks \"${SIM_NETWORK}\"}}{{.IPAddress}}{{end}}" 2>/dev/null || true)
+    if [ -n "${ZENTRA_SIM_IP}" ]; then
+        ok "Zentra IP on simulation network: ${ZENTRA_SIM_IP}"
+    fi
+
+    # Verify connectivity with retry
     info "Verifying connectivity from Zentra to simulation nodes..."
     FIRST_SIM_IP=$(get_sim_ip srv-linux-01)
     if [ -n "${FIRST_SIM_IP}" ]; then
-        if docker exec zentra ping -c 1 -W 2 "${FIRST_SIM_IP}" >/dev/null 2>&1; then
+        PING_OK=false
+        for attempt in 1 2 3 4 5; do
+            if docker exec zentra ping -c 1 -W 2 "${FIRST_SIM_IP}" >/dev/null 2>&1; then
+                PING_OK=true
+                break
+            fi
+            sleep 2
+        done
+        if [ "${PING_OK}" = true ]; then
             ok "Zentra can reach simulation nodes (ping ${FIRST_SIM_IP} OK)"
         else
             warn "Ping to ${FIRST_SIM_IP} failed from Zentra container"
+            warn "  Zentra and simulation may be on different subnets"
+            warn "  Debug: docker exec zentra ip addr"
         fi
     fi
 fi
 
 # ---------------------------------------------------------------------------
-# Step 6: Distribute SSH keys to simulation nodes
+# Step 6: Wait for SSH readiness on simulation nodes
+# ---------------------------------------------------------------------------
+echo ""
+info "Waiting for SSH daemons to start on simulation nodes..."
+
+SSH_TARGETS="srv-linux-01 srv-linux-02 srv-win-01 srv-win-02 sw-core-01 sw-access-01 fw-01 stor-01 mw-nginx-01 mw-apache-01 mw-tomcat-01 db-oracle-01"
+
+# Wait up to 30 seconds for SSH to come up on at least the first node
+SSH_READY=false
+for wait_i in $(seq 1 10); do
+    FIRST_SIM_IP=$(get_sim_ip srv-linux-01)
+    if [ -n "${FIRST_SIM_IP}" ]; then
+        if docker exec zentra sh -c "echo > /dev/tcp/${FIRST_SIM_IP}/22" >/dev/null 2>&1; then
+            SSH_READY=true
+            break
+        fi
+    fi
+    printf "."
+    sleep 3
+done
+echo ""
+
+if [ "${SSH_READY}" = true ]; then
+    ok "SSH is ready on simulation nodes"
+else
+    warn "SSH may not be ready on all nodes yet - will attempt key distribution anyway"
+fi
+
+# Extra wait for all containers to stabilize
+sleep 5
+
+# ---------------------------------------------------------------------------
+# Step 7: Distribute SSH keys to simulation nodes
 # ---------------------------------------------------------------------------
 echo ""
 info "Distributing SSH keys to simulation nodes..."
 
-SSH_TARGETS="srv-linux-01 srv-linux-02 srv-win-01 srv-win-02 sw-core-01 sw-access-01 fw-01 stor-01 mw-nginx-01 mw-apache-01 mw-tomcat-01 db-oracle-01"
 KEY_COUNT=0
+FAILED_NODES=""
+TOTAL_TARGETS=0
 
 for target in ${SSH_TARGETS}; do
+    TOTAL_TARGETS=$((TOTAL_TARGETS + 1))
     TARGET_IP=$(get_sim_ip "${target}")
     if [ -n "${TARGET_IP}" ]; then
-        if docker exec zentra sshpass -p "zentra123" ssh-copy-id -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no "root@${TARGET_IP}" >/dev/null 2>&1; then
+        COPY_OK=false
+        for attempt in 1 2 3; do
+            if docker exec zentra sshpass -p "zentra123" ssh-copy-id -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=5 "root@${TARGET_IP}" >/dev/null 2>&1; then
+                COPY_OK=true
+                break
+            fi
+            sleep 2
+        done
+        if [ "${COPY_OK}" = true ]; then
             KEY_COUNT=$((KEY_COUNT + 1))
+        else
+            FAILED_NODES="${FAILED_NODES} ${target}(${TARGET_IP})"
         fi
+    else
+        FAILED_NODES="${FAILED_NODES} ${target}(no-ip)"
     fi
 done
 
 if [ "${KEY_COUNT}" -gt 0 ]; then
-    ok "SSH keys distributed to ${KEY_COUNT} nodes"
-else
-    warn "Could not distribute SSH keys to any nodes"
+    ok "SSH keys distributed to ${KEY_COUNT}/${TOTAL_TARGETS} nodes"
+fi
+if [ -n "${FAILED_NODES}" ]; then
+    warn "Failed nodes:${FAILED_NODES}"
 fi
 
 # Verify SSH works without password
 info "Verifying passwordless SSH..."
 FIRST_SIM_IP=$(get_sim_ip srv-linux-01)
 if [ -n "${FIRST_SIM_IP}" ]; then
-    SSH_RESULT=$(docker exec zentra ssh -o BatchMode=yes -o ConnectTimeout=5 -o GSSAPIAuthentication=no "root@${FIRST_SIM_IP}" hostname 2>/dev/null)
-    if [ $? -eq 0 ]; then
+    VERIFY_OK=false
+    for attempt in 1 2 3; do
+        SSH_RESULT=$(docker exec zentra ssh -o BatchMode=yes -o ConnectTimeout=5 -o GSSAPIAuthentication=no "root@${FIRST_SIM_IP}" hostname 2>/dev/null)
+        if [ $? -eq 0 ]; then
+            VERIFY_OK=true
+            break
+        fi
+        sleep 2
+    done
+    if [ "${VERIFY_OK}" = true ]; then
         ok "Passwordless SSH verified (srv-linux-01: ${SSH_RESULT})"
     else
-        warn "Passwordless SSH verification failed - try manually: docker exec zentra sshpass -p zentra123 ssh-copy-id root@${FIRST_SIM_IP}"
+        warn "Passwordless SSH verification failed"
+        warn "  Manual fix: docker exec zentra sshpass -p zentra123 ssh-copy-id -o StrictHostKeyChecking=no root@${FIRST_SIM_IP}"
     fi
 else
     warn "Could not get IP for srv-linux-01 - skipping SSH verification"
 fi
 
 # ---------------------------------------------------------------------------
-# Step 7: Combined Summary
+# Step 8: Combined Summary
 # ---------------------------------------------------------------------------
 END_TIME=$(date +%s)
 ELAPSED=$(( END_TIME - START_TIME ))
