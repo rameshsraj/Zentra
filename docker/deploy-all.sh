@@ -33,6 +33,11 @@ ok()    { echo -e "${GREEN}[OK]${NC}    $1"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC}  $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+# Get the first valid IP for a container (handles multiple networks safely)
+get_sim_ip() {
+    docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "$1" 2>/dev/null | awk '{print $1}'
+}
+
 START_TIME=$(date +%s)
 
 echo ""
@@ -183,7 +188,7 @@ else
 
     # Verify connectivity
     info "Verifying connectivity from Zentra to simulation nodes..."
-    FIRST_SIM_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' srv-linux-01 2>/dev/null)
+    FIRST_SIM_IP=$(get_sim_ip srv-linux-01)
     if [ -n "${FIRST_SIM_IP}" ]; then
         if docker exec zentra ping -c 1 -W 2 "${FIRST_SIM_IP}" >/dev/null 2>&1; then
             ok "Zentra can reach simulation nodes (ping ${FIRST_SIM_IP} OK)"
@@ -203,7 +208,7 @@ SSH_TARGETS="srv-linux-01 srv-linux-02 srv-win-01 srv-win-02 sw-core-01 sw-acces
 KEY_COUNT=0
 
 for target in ${SSH_TARGETS}; do
-    TARGET_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${target}" 2>/dev/null)
+    TARGET_IP=$(get_sim_ip "${target}")
     if [ -n "${TARGET_IP}" ]; then
         if docker exec zentra sshpass -p "zentra123" ssh-copy-id -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no "root@${TARGET_IP}" >/dev/null 2>&1; then
             KEY_COUNT=$((KEY_COUNT + 1))
@@ -219,7 +224,7 @@ fi
 
 # Verify SSH works without password
 info "Verifying passwordless SSH..."
-FIRST_SIM_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' srv-linux-01 2>/dev/null)
+FIRST_SIM_IP=$(get_sim_ip srv-linux-01)
 if [ -n "${FIRST_SIM_IP}" ]; then
     SSH_RESULT=$(docker exec zentra ssh -o BatchMode=yes -o ConnectTimeout=5 -o GSSAPIAuthentication=no "root@${FIRST_SIM_IP}" hostname 2>/dev/null)
     if [ $? -eq 0 ]; then
@@ -243,10 +248,6 @@ ELAPSED_STR=$(printf "%02d:%02d" ${ELAPSED_MIN} ${ELAPSED_SEC})
 SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
 [ -z "${SERVER_IP}" ] && SERVER_IP="localhost"
 
-# Get simulation container IP
-get_sim_ip() {
-    docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$1" 2>/dev/null || echo "N/A"
-}
 
 # Get container status
 get_status() {

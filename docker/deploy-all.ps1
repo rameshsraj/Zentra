@@ -26,6 +26,23 @@ function Write-Ok    { Write-Host "[OK]    $args" -ForegroundColor Green }
 function Write-Warn  { Write-Host "[WARN]  $args" -ForegroundColor Yellow }
 function Write-Err   { Write-Host "[ERROR] $args" -ForegroundColor Red }
 
+# Get simulation container IP by container name
+# Uses JSON output to correctly handle containers on multiple networks
+function Get-SimIp {
+    param([string]$Name)
+    try {
+        $json = docker inspect $Name 2>$null | ConvertFrom-Json
+        if ($LASTEXITCODE -eq 0 -and $json) {
+            $networks = $json[0].NetworkSettings.Networks
+            foreach ($net in $networks.PSObject.Properties) {
+                $ip = $net.Value.IPAddress
+                if ($ip -match '^\d+\.\d+\.\d+\.\d+$') { return $ip }
+            }
+        }
+    } catch {}
+    return "N/A"
+}
+
 $startTime = Get-Date
 
 Write-Host ""
@@ -146,19 +163,17 @@ if ($LASTEXITCODE -ne 0) {
     Write-Ok "SSH tools already available"
 }
 
-# Generate SSH keys if missing (or regenerate if passphrase-protected)
-# NOTE: zentra-server runs as the 'zentra' user, so keys must live under
-# /opt/zentra/.ssh so the app can find and use them.
-$ZENTRA_SSH_DIR = "/opt/zentra/.ssh"
-$ZENTRA_KEY = "$ZENTRA_SSH_DIR/id_rsa"
-docker exec zentra test -f $ZENTRA_KEY >$null 2>$null
+# Generate SSH keys for root user
+$ROOT_SSH_DIR = "/root/.ssh"
+$ROOT_KEY = "$ROOT_SSH_DIR/id_rsa"
+docker exec zentra test -f $ROOT_KEY >$null 2>$null
 $keyExists = ($LASTEXITCODE -eq 0)
 if ($keyExists) {
     # Verify key has no passphrase (can be loaded without TTY)
-    docker exec zentra ssh-keygen -y -f $ZENTRA_KEY -P "" >$null 2>$null
+    docker exec zentra ssh-keygen -y -f $ROOT_KEY -P "" >$null 2>$null
     if ($LASTEXITCODE -ne 0) {
         Write-Warn "Existing SSH key has a passphrase - regenerating..."
-        docker exec zentra rm -f $ZENTRA_KEY "$ZENTRA_KEY.pub" >$null 2>$null
+        docker exec zentra rm -f $ROOT_KEY "$ROOT_KEY.pub" >$null 2>$null
         $keyExists = $false
     } else {
         Write-Ok "SSH key pair already exists (no passphrase)"
@@ -166,20 +181,18 @@ if ($keyExists) {
 }
 
 if (-not $keyExists) {
-    Write-Info "Generating SSH key pair for zentra user..."
-    docker exec zentra mkdir -p $ZENTRA_SSH_DIR
-    docker exec zentra chmod 700 $ZENTRA_SSH_DIR
-    docker exec zentra ssh-keygen -t rsa -b 4096 -f $ZENTRA_KEY -N "" -q
-    docker exec zentra chown -R zentra:zentra $ZENTRA_SSH_DIR
-    docker exec zentra sh -c "echo 'Host *' > $ZENTRA_SSH_DIR/config"
-    docker exec zentra sh -c "echo '    StrictHostKeyChecking no' >> $ZENTRA_SSH_DIR/config"
-    docker exec zentra sh -c "echo '    UserKnownHostsFile /dev/null' >> $ZENTRA_SSH_DIR/config"
-    docker exec zentra sh -c "echo '    LogLevel ERROR' >> $ZENTRA_SSH_DIR/config"
-    docker exec zentra sh -c "echo '    GSSAPIAuthentication no' >> $ZENTRA_SSH_DIR/config"
-    docker exec zentra chmod 600 $ZENTRA_SSH_DIR/config
-    docker exec zentra chown -R zentra:zentra $ZENTRA_SSH_DIR
+    Write-Info "Generating SSH key pair for root..."
+    docker exec zentra mkdir -p $ROOT_SSH_DIR
+    docker exec zentra chmod 700 $ROOT_SSH_DIR
+    docker exec zentra ssh-keygen -t rsa -b 4096 -f $ROOT_KEY -N "" -q
+    docker exec zentra sh -c "echo 'Host *' > $ROOT_SSH_DIR/config"
+    docker exec zentra sh -c "echo '    StrictHostKeyChecking no' >> $ROOT_SSH_DIR/config"
+    docker exec zentra sh -c "echo '    UserKnownHostsFile /dev/null' >> $ROOT_SSH_DIR/config"
+    docker exec zentra sh -c "echo '    LogLevel ERROR' >> $ROOT_SSH_DIR/config"
+    docker exec zentra sh -c "echo '    GSSAPIAuthentication no' >> $ROOT_SSH_DIR/config"
+    docker exec zentra chmod 600 $ROOT_SSH_DIR/config
     if ($LASTEXITCODE -eq 0) {
-        Write-Ok "SSH key pair generated at $ZENTRA_KEY"
+        Write-Ok "SSH key pair generated at $ROOT_KEY"
     } else {
         Write-Warn "Failed to generate SSH key pair"
     }
@@ -252,10 +265,9 @@ $keyCount = 0
 $prevEAP = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 foreach ($target in $sshTargets) {
-    $ipFmt = '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
-    $targetIp = docker inspect --format $ipFmt $target 2>$null
-    if ($targetIp -and $targetIp -match '^\d+\.\d+\.\d+\.\d+$') {
-        docker exec zentra sshpass -p "zentra123" ssh-copy-id -i $ZENTRA_KEY.pub -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no root@$targetIp >$null 2>$null
+    $targetIp = Get-SimIp -Name $target
+    if ($targetIp -ne "N/A") {
+        docker exec zentra sshpass -p "zentra123" ssh-copy-id -i $ROOT_KEY.pub -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no root@$targetIp >$null 2>$null
         if ($LASTEXITCODE -eq 0) {
             $keyCount++
         }
@@ -275,7 +287,7 @@ $firstSimIp = Get-SimIp -Name "srv-linux-01"
 if ($firstSimIp -ne "N/A") {
     $prevEAP2 = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
-    $sshResult = docker exec zentra ssh -i $ZENTRA_KEY -o BatchMode=yes -o ConnectTimeout=5 -o GSSAPIAuthentication=no root@$firstSimIp hostname 2>$null
+    $sshResult = docker exec zentra ssh -i $ROOT_KEY -o BatchMode=yes -o ConnectTimeout=5 -o GSSAPIAuthentication=no root@$firstSimIp hostname 2>$null
     $ErrorActionPreference = $prevEAP2
     if ($LASTEXITCODE -eq 0) {
         Write-Ok "Passwordless SSH verified (srv-linux-01: $sshResult)"
@@ -300,16 +312,6 @@ try {
 } catch { $serverIP = "localhost" }
 if (-not $serverIP) { $serverIP = "localhost" }
 
-# Get simulation container IPs
-function Get-SimIp {
-    param([string]$Name)
-    try {
-        $fmt = '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
-        $ip = docker inspect --format $fmt $Name 2>$null
-        if ($LASTEXITCODE -eq 0 -and $ip -match '^\d+\.\d+\.\d+\.\d+$') { return $ip }
-    } catch {}
-    return "N/A"
-}
 
 Write-Host ""
 Write-Host ""
