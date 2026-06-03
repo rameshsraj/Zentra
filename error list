@@ -46,3 +46,7 @@ PS C:\GitHub\Zentra\docker> docker exec zentra sshpass -p zentra123 ssh-copy-id 
 /usr/bin/ssh-copy-id: ERROR: ssh: connect to host 10.100.0.11 port 22: Connection timed out
 
 PS C:\GitHub\Zentra\docker>
+
+
+docker network connect --ip 10.100.0.2 simulation_zentra-dc zentra
+docker exec zentra ping -c 1 10.100.0.11
