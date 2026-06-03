@@ -1,229 +1,36 @@
-Summary: Total=13, Running=9, NotRunning=4
+  Status:       Running
+  Web UI:       http://172.18.96.1:5010
+  Login:        admin@Zentra.local / changeme
 
-Tailing last 50 lines from non-running containers...
-
---- Logs: db-oracle-01 ---
-
-[oracle-ssh] Installing SSH server...
-Nothing to do.
-[oracle-ssh] Configuring SSH...
-[oracle-ssh] Installing SSH server...
-Nothing to do.
-[oracle-ssh] Configuring SSH...
-[oracle-ssh] Installing SSH server...
-Nothing to do.
-[oracle-ssh] Configuring SSH...
-[oracle-ssh] Installing SSH server...
-Nothing to do.
-[oracle-ssh] Configuring SSH...
-/opt/setup-ssh.sh: line 16: $'\r': command not found
-/opt/setup-ssh.sh: line 31: syntax error: unexpected end of file
-/opt/setup-ssh.sh: line 5: $'\r': command not found
-/opt/setup-ssh.sh: line 8: $'\r': command not found
-/opt/setup-ssh.sh: line 9: $'true\r': command not found
-/opt/setup-ssh.sh: line 10: $'\r': command not found
-/opt/setup-ssh.sh: line 13: $'chpasswd\r': command not found
-chmod: cannot access '/root/.ssh'$'\r': No such file or directory
-chmod: cannot access '/root/.ssh/authorized_keys'$'\r': No such file or directory
-/opt/setup-ssh.sh: line 16: $'\r': command not found
-/opt/setup-ssh.sh: line 31: syntax error: unexpected end of file
-/opt/setup-ssh.sh: line 5: $'\r': command not found
-/opt/setup-ssh.sh: line 8: $'\r': command not found
-/opt/setup-ssh.sh: line 9: $'true\r': command not found
-/opt/setup-ssh.sh: line 10: $'\r': command not found
-/opt/setup-ssh.sh: line 13: $'chpasswd\r': command not found
-chmod: cannot access '/root/.ssh'$'\r': No such file or directory
-chmod: cannot access '/root/.ssh/authorized_keys'$'\r': No such file or directory
-/opt/setup-ssh.sh: line 16: $'\r': command not found
-/opt/setup-ssh.sh: line 31: syntax error: unexpected end of file
-/opt/setup-ssh.sh: line 5: $'\r': command not found
-/opt/setup-ssh.sh: line 8: $'\r': command not found
-/opt/setup-ssh.sh: line 9: $'true\r': command not found
-/opt/setup-ssh.sh: line 10: $'\r': command not found
-/opt/setup-ssh.sh: line 13: $'chpasswd\r': command not found
-chmod: cannot access '/root/.ssh'$'\r': No such file or directory
-chmod: cannot access '/root/.ssh/authorized_keys'$'\r': No such file or directory
-/opt/setup-ssh.sh: line 16: $'\r': command not found
-/opt/setup-ssh.sh: line 31: syntax error: unexpected end of file
-/opt/setup-ssh.sh: line 5: $'\r': command not found
-/opt/setup-ssh.sh: line 8: $'\r': command not found
-/opt/setup-ssh.sh: line 9: $'true\r': command not found
-/opt/setup-ssh.sh: line 10: $'\r': command not found
-/opt/setup-ssh.sh: line 13: $'chpasswd\r': command not found
-chmod: cannot access '/root/.ssh'$'\r': No such file or directory
-chmod: cannot access '/root/.ssh/authorized_keys'$'\r': No such file or directory
-/opt/setup-ssh.sh: line 16: $'\r': command not found
-/opt/setup-ssh.sh: line 31: syntax error: unexpected end of file
+[WARN]  Passwordless SSH verification failed - try manually: docker exec zentra sshpass -p zentra123 ssh-copy-id root@10.100.0.11
 
 
---- Logs: mw-tomcat-01 ---
+======================================================================
+  Zentra Full Deployment - Summary                   [04:15]
+======================================================================
 
-  jpda start        Start Catalina under JPDA debugger
-/opt/setup.sh: line 4: $'\r': command not found
-  run               Start Catalina in the current window
-  run -security     Start in the current window with security manager
-  start             Start Catalina in a separate window
-  start -security   Start in a separate window with security manager
-  stop              Stop Catalina, waiting up to 5 seconds for the process to end
-  stop n            Stop Catalina, waiting up to n seconds for the process to end
-  stop -force       Stop Catalina, wait up to 5 seconds and then use kill -KILL if still running
-  stop n -force     Stop Catalina, wait up to n seconds and then use kill -KILL if still running
-  configtest        Run a basic syntax check on server.xml - check exit code for result
-  version           What version of tomcat are you running?
-Note: Waiting for the process to end and use of the -force option require that $CATALINA_PID is defined
-[tomcat-ssh] Installing SSH server...
-[tomcat-ssh] Configuring SSH...
-E: Command line option '
-   ' [from -qq
-   ] is not understood in combination with the other options.
-/opt/setup.sh: line 7: $'true\r': command not found
-/opt/setup.sh: line 8: $'\r': command not found
-/opt/setup.sh: line 11: $'true\r': command not found
-/opt/setup.sh: line 12: $'chpasswd\r': command not found
-chmod: cannot access '/root/.ssh'$'\r': No such file or directory
-chmod: cannot access '/root/.ssh/authorized_keys'$'\r': No such file or directory
-/opt/setup.sh: line 15: $'\r': command not found
-sed: can't read /etc/ssh/sshd_config
-: No such file or directory
-sed: can't read /etc/ssh/sshd_config
-: No such file or directory
-sed: can't read /etc/ssh/sshd_config
-: No such file or directory
-/opt/setup.sh: line 20: $'\r': command not found
-[tomcat-ssh] Starting SSH daemon...
-/opt/setup.sh: line 22: /usr/sbin/sshd: No such file or directory
-/opt/setup.sh: line 22: $'\r': command not found
-/opt/setup.sh: line 23: $'\r': command not found
-[tomcat-ssh] Starting Tomcat...
-Usage: catalina.sh ( commands ... )
-commands:
-  debug             Start Catalina in a debugger
-  debug -security   Debug Catalina with a security manager
-  jpda start        Start Catalina under JPDA debugger
-  run               Start Catalina in the current window
-  run -security     Start in the current window with security manager
-  start             Start Catalina in a separate window
-  start -security   Start in a separate window with security manager
-  stop              Stop Catalina, waiting up to 5 seconds for the process to end
-  stop n            Stop Catalina, waiting up to n seconds for the process to end
-  stop -force       Stop Catalina, wait up to 5 seconds and then use kill -KILL if still running
-  stop n -force     Stop Catalina, wait up to n seconds and then use kill -KILL if still running
-  configtest        Run a basic syntax check on server.xml - check exit code for result
-  version           What version of tomcat are you running?
-Note: Waiting for the process to end and use of the -force option require that $CATALINA_PID is defined
+  ZENTRA APPLICATION
+  ------------------
+  Status:       Running
+  Web UI:       http://172.18.96.1:5010
+  Login:        admin@Zentra.local / changeme
 
+  DATACENTER SIMULATION (12 Nodes)
+  ---------------------------------
 
---- Logs: srv-linux-01 ---
+  COMPONENT        IP ADDRESS       PORT(S)    STATUS   DESCRIPTION
+  ----------------- ---------------- ---------- -------- ----------------------------
+  srv-linux-01     10.100.0.11      22,161     UP       Rocky Linux 8 (Web Server)
+  srv-linux-02     10.100.0.12      22,161     UP       Ubuntu 22.04 (App Server)
+  srv-win-01       10.100.0.13      22,161     UP       Windows Server 2022 (AD/DNS)
+  srv-win-02       10.100.0.14      22,161     UP       Windows Server 2019 (Files)
+  sw-core-01       10.100.0.15      22,161     UP       Cisco Catalyst 9300 (Core)
+  sw-access-01     10.100.0.16      22,161     UP       Arista 7050X (Access)
+  fw-01            10.100.0.17      22,161     UP       Palo Alto PA-3260 (Firewall)
+  stor-01          10.100.0.18      22,161     UP       Dell PowerStore 500T (SAN)
+  mw-nginx-01      10.100.0.19      22,80,8080 UP       Nginx (Reverse Proxy)
+  mw-apache-01     10.100.0.20      22,80,8080 UP       Apache HTTP Server
+  mw-tomcat-01     10.100.0.21      22,8080    UP       Apache Tomcat 9
+  db-oracle-01     10.100.0.22      22,1521    UP       Oracle 21c XE (ZENTRADB)
 
-[srv-linux] Starting SSH daemon...
-/opt/setup.sh: line 24: $'\r': command not found
-/opt/setup.sh: line 26: $'\r': command not found
-/opt/setup.sh: line 27: $'\r': command not found
-/opt/setup.sh: line 29: $'\r': command not found
-/opt/setup.sh: line 30: $'\r': command not found
-/opt/setup.sh: line 33: $'\r': command not found
-/opt/setup.sh: line 40: syntax error: unexpected end of file
-/opt/setup.sh: line 4: $'\r': command not found
-/opt/setup.sh: line 5: set: -
-: invalid option
-set: usage: set [-abefhkmnptuvxBCHP] [-o option-name] [--] [arg ...]
-/opt/setup.sh: line 6: $'\r': command not found
-/opt/setup.sh: line 9: $'\r': command not found
-/opt/setup.sh: line 13: $'chpasswd\r': command not found
-chmod: cannot access '/root/.ssh'$'\r': No such file or directory
-chmod: cannot access '/root/.ssh/authorized_keys'$'\r': No such file or directory
-sed: can't read /etc/ssh/sshd_config
-: No such file or directory
-[srv-linux] Starting Nginx...
-systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
-[srv-linux] Rocky Linux server ready.
-[srv-linux] SSH: port 22, SNMP: port 161
-[srv-linux] Installing packages...
-Last metadata expiration check: 0:47:50 ago on Wed Jun  3 09:32:51 2026.
-Package net-snmp-1:5.8-33.el8_10.x86_64 is already installed.
-Package net-snmp-utils-1:5.8-33.el8_10.x86_64 is already installed.
-Package openssh-server-8.0p1-29.el8_10.x86_64 is already installed.
-Package procps-ng-3.3.15-14.el8.x86_64 is already installed.
-Package cronie-1.5.2-10.el8.x86_64 is already installed.
-Package nginx-1:1.14.1-9.module+el8.4.0+542+81547229.x86_64 is already installed.
-Dependencies resolved.
-Nothing to do.
-Complete!
-[srv-linux] Configuring SSH...
-sed: can't read /etc/ssh/sshd_config
-: No such file or directory
-[srv-linux] Starting SNMP daemon...
-sed: can't read /etc/ssh/sshd_config
-: No such file or directory
-/opt/setup.sh: line 20: $'\r': command not found
-[srv-linux] Starting SSH daemon...
-[srv-linux] Starting Nginx...
-/opt/setup.sh: line 23: $'\r': command not found
-/opt/setup.sh: line 24: $'\r': command not found
-/opt/setup.sh: line 26: $'\r': command not found
-/opt/setup.sh: line 27: $'\r': command not found
-/opt/setup.sh: line 29: $'\r': command not found
-/opt/setup.sh: line 30: $'\r': command not found
-systemstats_linux: unexpected header length in /proc/net/snmp. 237 != 224
-/opt/setup.sh: line 33: $'\r': command not found
-/opt/setup.sh: line 40: syntax error: unexpected end of file
-[srv-linux] Rocky Linux server ready.
-[srv-linux] SSH: port 22, SNMP: port 161
-
-
---- Logs: srv-linux-02 ---
-
-Setting up snmpd (5.9.1+dfsg-1ubuntu2.9) ...
-E: Sub-process /usr/bin/dpkg returned an error code (1)
-
-Configuration file '/etc/snmp/snmpd.conf'
- ==> File on system created by you or by a script.
- ==> File also in package provided by package maintainer.
-   What would you like to do about it ?  Your options are:
-    Y or I  : install the package maintainer's version
-    N or O  : keep your currently-installed version
-      D     : show the differences between the versions
-      Z     : start a shell to examine the situation
- The default action is to keep your current version.
-*** snmpd.conf (Y/I/N/O/D/Z) [default=N] ? dpkg: error processing package snmpd (--configure):
- end of file on stdin at conffile prompt
-Errors were encountered while processing:
- snmpd
-[srv-linux] Installing packages...
-Setting up snmpd (5.9.1+dfsg-1ubuntu2.9) ...
-
-Configuration file '/etc/snmp/snmpd.conf'
- ==> File on system created by you or by a script.
- ==> File also in package provided by package maintainer.
-   What would you like to do about it ?  Your options are:
-    Y or I  : install the package maintainer's version
-    N or O  : keep your currently-installed version
-      D     : show the differences between the versions
-      Z     : start a shell to examine the situation
- The default action is to keep your current version.
-*** snmpd.conf (Y/I/N/O/D/Z) [default=N] ? dpkg: error processing package snmpd (--configure):
- end of file on stdin at conffile prompt
-Errors were encountered while processing:
- snmpd
-E: Sub-process /usr/bin/dpkg returned an error code (1)
-[srv-linux] Installing packages...
-Setting up snmpd (5.9.1+dfsg-1ubuntu2.9) ...
-
-Configuration file '/etc/snmp/snmpd.conf'
- ==> File on system created by you or by a script.
- ==> File also in package provided by package maintainer.
-   What would you like to do about it ?  Your options are:
-    Y or I  : install the package maintainer's version
-    N or O  : keep your currently-installed version
-      D     : show the differences between the versions
-      Z     : start a shell to examine the situation
- The default action is to keep your current version.
-*** snmpd.conf (Y/I/N/O/D/Z) [default=N] ? dpkg: error processing package snmpd (--configure):
- end of file on stdin at conffile prompt
-Errors were encountered while processing:
- snmpd
-E: Sub-process /usr/bin/dpkg returned an error code (1)
-
-
-
-PS C:\GitHub\Zentra\docker>
+  
