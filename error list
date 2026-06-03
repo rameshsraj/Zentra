@@ -1,52 +1,48 @@
-======================================================
-  Zentra - Installation Complete!
-======================================================
+[INFO]  Checking SSH tools in Zentra container...
+[INFO]  Installing openssh-clients and sshpass in Zentra container...
+[OK]    SSH tools installed successfully
+[INFO]  Regenerating SSH key pair for root (ensuring no passphrase)...
+Generating public/private rsa key pair.
+Your identification has been saved in /root/.ssh/id_rsa.
+Your public key has been saved in /root/.ssh/id_rsa.pub.
+The key fingerprint is:
+SHA256:/jjWPXogrFycJZ5+oH1KUG53jhjUi84kU9ZSpDwwpvA root@eff1b24364b4
+The key's randomart image is:
++---[RSA 4096]----+
+|  .   +  .o      |
+|   o o + =       |
+|    E   X o      |
+|       *.+..     |
+|      ++S=o .    |
+|       XX+.+     |
+|     . **+.o.    |
+|      +.=o+ +    |
+|       .o=oo .   |
++----[SHA256]-----+
+[OK]    SSH key pair generated at /root/.ssh/id_rsa
 
-  Web UI:     http://172.18.96.1:5010
-  Login:      admin@Zentra.local / changeme
+[INFO]  Connecting Zentra container to simulation network...
+[INFO]  Found simulation network: simulation_zentra-dc
+[OK]    Zentra connected to simulation network (simulation_zentra-dc)
+[WARN]  Could not determine Zentra's IP on the simulation network
+[INFO]  Verifying connectivity from Zentra to simulation nodes...
+[OK]    Zentra can reach simulation nodes (ping 10.100.0.11 OK)
 
-  Container:  docker ps
-  Logs:       docker logs -f zentra
-  Stop:       docker stop zentra
-  Start:      docker start zentra
-  Shell:      docker exec -it zentra bash
+[INFO]  Waiting for SSH daemons to start on simulation nodes...
 
-  IMPORTANT: Change the default admin password after first login!
-======================================================
+[OK]    SSH is ready on simulation nodes
 
-[OK]    Zentra application deployment complete
-
-======================================================
-  Phase 2/2: Datacenter Simulation
-======================================================
+[INFO]  Distributing SSH keys to simulation nodes...
+[OK]    SSH keys distributed to 11/12 nodes
+[WARN]  Failed nodes: db-oracle-01 (10.100.0.22)
+[INFO]  Verifying passwordless SSH...
+[WARN]  Passwordless SSH verification failed
+[WARN]    Manual fix: docker exec zentra sshpass -p zentra123 ssh-copy-id -o StrictHostKeyChecking=no root@10.100.0.11
 
 
-======================================================
-  Zentra Datacenter Simulation - Setup (Windows)
-======================================================
-
-[INFO]  Checking prerequisites...
-[OK]    Docker and docker compose are available
-[INFO]  Configuring Docker bridge network for simulation...
-[OK]    Docker Subnet: 10.100.0.0/24
-[OK]    Gateway:       10.100.0.1
-[OK]    Host IP:       192.168.1.10 (for Zentra Web UI)
-[INFO]  Assigning IPs from 10.100.0.10+...
-[OK]    IP assignments ready
-[INFO]  Phase 1/5: Stopping any running simulation containers...
-[INFO]  Stopping compose services...
-[OK]    All simulation containers stopped
-[INFO]  Phase 2/5: Removing old containers...
-[OK]    Old containers removed
-[INFO]  Phase 2/5: Removing old volumes and networks...
-PS C:\GitHub\Zentra\docker> docker exec zentra sshpass -p zentra123 ssh-copy-id root@10.100.0.11
-/usr/bin/ssh-copy-id: INFO: Source of key(s) to be installed: "/root/.ssh/id_rsa.pub"
-/usr/bin/ssh-copy-id: INFO: attempting to log in with the new key(s), to filter out any that are already installed
-
-/usr/bin/ssh-copy-id: ERROR: ssh: connect to host 10.100.0.11 port 22: Connection timed out
-
-PS C:\GitHub\Zentra\docker>
-
+======================================================================
+  Zentra Full Deployment - Summary                   [03:56]
+======================================================================
 
   ZENTRA APPLICATION
   ------------------
@@ -80,28 +76,4 @@ PS C:\GitHub\Zentra\docker>
 
 Press Enter to close:
 
-PS C:\GitHub\Zentra\docker> docker network connect --ip 10.100.0.2 simulation_zentra-dc zentra
-Error response from daemon: endpoint with name zentra already exists in network simulation_zentra-dc
-PS C:\GitHub\Zentra\docker> docker exec zentra ping -c 1 10.100.0.11
-PING 10.100.0.11 (10.100.0.11) 56(84) bytes of data.
-64 bytes from 10.100.0.11: icmp_seq=1 ttl=64 time=0.204 ms
-
---- 10.100.0.11 ping statistics ---
-1 packets transmitted, 1 received, 0% packet loss, time 0ms
-rtt min/avg/max/mdev = 0.204/0.204/0.204/0.000 ms
-PS C:\GitHub\Zentra\docker> docker exec zentra sshpass -p zentra123 ssh-copy-id root@10.100.0.11
-/usr/bin/ssh-copy-id: INFO: Source of key(s) to be installed: "/root/.ssh/id_rsa.pub"
-/usr/bin/ssh-copy-id: INFO: attempting to log in with the new key(s), to filter out any that are already installed
-
-
-# 1. Check if SSH daemon is running in the simulation container
-docker exec srv-linux-01 sh -c "ps aux | grep sshd"
-
-# 2. Check if port 22 is listening
-docker exec srv-linux-01 sh -c "netstat -tlnp 2>/dev/null || ss -tlnp 2>/dev/null"
-
-# 3. Try to SSH manually with verbose output to see where it hangs
-docker exec zentra ssh -vvv -o StrictHostKeyChecking=no -o ConnectTimeout=10 root@10.100.0.11 "echo test"
-
-# 4. Check the simulation container's logs for SSH setup errors
-docker logs srv-linux-01
+PS C:\GitHub\Zentra\docker>
