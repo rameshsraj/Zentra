@@ -213,9 +213,9 @@ info "Starting Zentra container..."
 
 docker run -d \
     --name "${CONTAINER_NAME}" \
+    --network host \
     --restart unless-stopped \
     --env-file "${ENV_FILE}" \
-    -p "${WEB_PORT}:5010" \
     -v "${VOLUME_NAME}:/var/lib/postgresql/data" \
     -v "${LOG_DIR}:/opt/zentra/logs" \
     "${IMAGE_NAME}" >/dev/null
