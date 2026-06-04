@@ -149,3 +149,15 @@ The key's randomart image is:
 [OK]    SSH is ready on simulation nodes
 
 [INFO]  Distributing SSH keys to simulation nodes...
+
+
+
+PS C:\GitHub\Zentra\docker> powershell -ExecutionPolicy Bypass -File deploy-all.ps1
+At C:\GitHub\Zentra\docker\deploy-all.ps1:352 char:193
++ ...  'mkdir -p /root/.ssh && cat >> /root/.ssh/authorized_keys' < /root/. ...
++                                                                 ~
+The '<' operator is reserved for future use.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : RedirectionNotSupported
+
+PS C:\GitHub\Zentra\docker>
