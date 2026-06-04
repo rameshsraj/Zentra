@@ -296,7 +296,8 @@ foreach ($target in $sshTargets) {
         $copyOk = $false
         for ($attempt = 1; $attempt -le 3; $attempt++) {
             # Direct key push (ssh-copy-id is unreliable in non-interactive Docker)
-            docker exec zentra sh -c "sshpass -p 'zentra123' ssh -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=5 root@${targetIp} 'mkdir -p /root/.ssh && chmod 700 /root/.ssh && cat >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys' < ${ROOT_KEY}.pub" >$null 2>$null
+            $shCmd = "sshpass -p zentra123 ssh -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=5 root@${targetIp} 'mkdir -p /root/.ssh && chmod 700 /root/.ssh && cat >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys' < ${ROOT_KEY}.pub"
+            docker exec zentra sh -c "$shCmd" >$null 2>$null
             if ($LASTEXITCODE -eq 0) {
                 # Verify key was actually installed
                 docker exec zentra timeout 5 ssh -i $ROOT_KEY -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no "root@${targetIp}" "echo ok" >$null 2>$null
@@ -349,7 +350,7 @@ if ($firstSimIp -ne "N/A") {
     } else {
         Write-Warn "Passwordless SSH verification failed"
         Write-Warn "  Last error: $lastError"
-        Write-Warn "  Manual fix: docker exec zentra sh -c \"sshpass -p 'zentra123' ssh -o StrictHostKeyChecking=no root@$firstSimIp 'mkdir -p /root/.ssh && cat >> /root/.ssh/authorized_keys' < /root/.ssh/id_rsa.pub\""
+        Write-Warn "  Manual fix: docker exec zentra sh -c `"sshpass -p zentra123 ssh -o StrictHostKeyChecking=no root@$firstSimIp 'cat >> /root/.ssh/authorized_keys' `< /root/.ssh/id_rsa.pub`""
     }
 } else {
     Write-Warn "Could not get IP for srv-linux-01 - skipping SSH verification"
