@@ -254,7 +254,9 @@ fi
 # ---------------------------------------------------------------------------
 # Step 8: Print summary
 # ---------------------------------------------------------------------------
-SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
+# Exclude Docker/virtual adapter IPs (172.16-31.x.x, 10.x.x.x, 169.254.x.x)
+SERVER_IP=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -vE '^(172\.(1[6-9]|2[0-9]|3[01])\.|10\.|169\.254\.|127\.)' | head -1)
+[ -z "${SERVER_IP}" ] && SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
 
 echo ""
 echo "======================================================"

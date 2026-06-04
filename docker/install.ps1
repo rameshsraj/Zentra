@@ -294,7 +294,14 @@ if ($healthy) {
 # Step 8: Print summary
 # ---------------------------------------------------------------------------
 try {
-    $serverIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -ne "127.0.0.1" -and $_.PrefixOrigin -ne "WellKnown" } | Select-Object -First 1).IPAddress
+    # Exclude loopback, Docker/WSL virtual adapters (172.16-31.x.x, 10.x.x.x), and APIPA
+    $serverIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
+        $_.IPAddress -ne "127.0.0.1" -and
+        $_.PrefixOrigin -ne "WellKnown" -and
+        $_.IPAddress -notmatch '^172\.(1[6-9]|2[0-9]|3[01])\.' -and
+        $_.IPAddress -notmatch '^10\.' -and
+        $_.IPAddress -notmatch '^169\.254\.'
+    } | Select-Object -First 1).IPAddress
 } catch {
     $serverIP = "localhost"
 }

@@ -295,8 +295,8 @@ foreach ($target in $sshTargets) {
     if ($targetIp -ne "N/A") {
         $copyOk = $false
         for ($attempt = 1; $attempt -le 3; $attempt++) {
-            # Use timeout to prevent ssh-copy-id from hanging on unresponsive nodes
-            docker exec zentra timeout 10 sshpass -p "zentra123" ssh-copy-id -i "${ROOT_KEY}.pub" -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=5 "root@${targetIp}" >$null 2>$null
+            # Direct key push (ssh-copy-id is unreliable in non-interactive Docker)
+            docker exec zentra sh -c "sshpass -p 'zentra123' ssh -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=5 root@${targetIp} 'mkdir -p /root/.ssh && chmod 700 /root/.ssh && cat >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys' < ${ROOT_KEY}.pub" >$null 2>$null
             if ($LASTEXITCODE -eq 0) {
                 # Verify key was actually installed
                 docker exec zentra timeout 5 ssh -i $ROOT_KEY -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no "root@${targetIp}" "echo ok" >$null 2>$null
@@ -349,7 +349,7 @@ if ($firstSimIp -ne "N/A") {
     } else {
         Write-Warn "Passwordless SSH verification failed"
         Write-Warn "  Last error: $lastError"
-        Write-Warn "  Manual fix: docker exec zentra sshpass -p zentra123 ssh-copy-id -o StrictHostKeyChecking=no root@$firstSimIp"
+        Write-Warn "  Manual fix: docker exec zentra sh -c \"sshpass -p 'zentra123' ssh -o StrictHostKeyChecking=no root@$firstSimIp 'mkdir -p /root/.ssh && cat >> /root/.ssh/authorized_keys' < /root/.ssh/id_rsa.pub\""
     }
 } else {
     Write-Warn "Could not get IP for srv-linux-01 - skipping SSH verification"
@@ -361,11 +361,15 @@ if ($firstSimIp -ne "N/A") {
 $elapsed = (Get-Date) - $startTime
 $elapsedStr = "{0:mm\:ss}" -f $elapsed
 
-# Detect IPs
+# Detect IPs — exclude Docker/WSL virtual adapters (172.16-31.x.x, 10.x.x.x) and APIPA
 try {
-    $serverIP = (Get-NetIPAddress -AddressFamily IPv4 |
-        Where-Object { $_.IPAddress -ne "127.0.0.1" -and $_.PrefixOrigin -ne "WellKnown" } |
-        Select-Object -First 1).IPAddress
+    $serverIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
+        $_.IPAddress -ne "127.0.0.1" -and
+        $_.PrefixOrigin -ne "WellKnown" -and
+        $_.IPAddress -notmatch '^172\.(1[6-9]|2[0-9]|3[01])\.' -and
+        $_.IPAddress -notmatch '^10\.' -and
+        $_.IPAddress -notmatch '^169\.254\.'
+    } | Select-Object -First 1).IPAddress
 } catch { $serverIP = "localhost" }
 if (-not $serverIP) { $serverIP = "localhost" }
 

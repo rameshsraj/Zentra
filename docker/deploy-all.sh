@@ -247,8 +247,8 @@ for target in ${SSH_TARGETS}; do
     if [ -n "${TARGET_IP}" ]; then
         COPY_OK=false
         for attempt in 1 2 3; do
-            # Use timeout to prevent ssh-copy-id from hanging on unresponsive nodes
-            if docker exec zentra timeout 10 sshpass -p "zentra123" ssh-copy-id -i /root/.ssh/id_rsa.pub -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=5 "root@${TARGET_IP}" >/dev/null 2>&1; then
+            # Direct key push (ssh-copy-id is unreliable in non-interactive Docker)
+            if docker exec zentra sh -c "sshpass -p 'zentra123' ssh -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=5 root@${TARGET_IP} 'mkdir -p /root/.ssh && chmod 700 /root/.ssh && cat >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys' < /root/.ssh/id_rsa.pub" >/dev/null 2>&1; then
                 # Verify key was actually installed
                 if docker exec zentra timeout 5 ssh -i /root/.ssh/id_rsa -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no "root@${TARGET_IP}" "echo ok" >/dev/null 2>&1; then
                     COPY_OK=true
@@ -295,7 +295,7 @@ if [ -n "${FIRST_SIM_IP}" ]; then
     else
         warn "Passwordless SSH verification failed"
         warn "  Last error: ${LAST_ERROR}"
-        warn "  Manual fix: docker exec zentra sshpass -p zentra123 ssh-copy-id -o StrictHostKeyChecking=no root@${FIRST_SIM_IP}"
+        warn "  Manual fix: docker exec zentra sh -c \"sshpass -p 'zentra123' ssh -o StrictHostKeyChecking=no root@${FIRST_SIM_IP} 'mkdir -p /root/.ssh && cat >> /root/.ssh/authorized_keys' < /root/.ssh/id_rsa.pub\""
     fi
 else
     warn "Could not get IP for srv-linux-01 - skipping SSH verification"
@@ -310,7 +310,9 @@ ELAPSED_MIN=$(( ELAPSED / 60 ))
 ELAPSED_SEC=$(( ELAPSED % 60 ))
 ELAPSED_STR=$(printf "%02d:%02d" ${ELAPSED_MIN} ${ELAPSED_SEC})
 
-SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
+# Exclude Docker/virtual adapter IPs (172.16-31.x.x, 10.x.x.x, 169.254.x.x)
+SERVER_IP=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -vE '^(172\.(1[6-9]|2[0-9]|3[01])\.|10\.|169\.254\.|127\.)' | head -1)
+[ -z "${SERVER_IP}" ] && SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
 [ -z "${SERVER_IP}" ] && SERVER_IP="localhost"
 
 
