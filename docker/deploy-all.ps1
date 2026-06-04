@@ -213,12 +213,20 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 # ---------------------------------------------------------------------------
-# Step 6: Verify connectivity to simulation nodes (host network)
+# Step 6: Connect Zentra container to simulation network
 # ---------------------------------------------------------------------------
 Write-Host ""
-Write-Info "Verifying connectivity from Zentra to simulation nodes..."
-Write-Info "Zentra uses host network - can reach simulation containers directly"
+Write-Info "Connecting Zentra container to simulation network..."
 
+# Attach zentra to the simulation bridge so it can reach 10.100.0.x nodes
+docker network connect simulation_zentra-dc zentra >$null 2>$null
+if ($LASTEXITCODE -eq 0) {
+    Write-Ok "Zentra connected to simulation network (simulation_zentra-dc)"
+} else {
+    Write-Warn "Could not connect Zentra to simulation network (may already be connected)"
+}
+
+# Verify connectivity
 $firstSimIp = Get-SimIp -Name "srv-linux-01"
 if ($firstSimIp -ne "N/A") {
     $pingOk = $false
@@ -295,9 +303,8 @@ foreach ($target in $sshTargets) {
     if ($targetIp -ne "N/A") {
         $copyOk = $false
         for ($attempt = 1; $attempt -le 3; $attempt++) {
-            # Direct key push (ssh-copy-id is unreliable in non-interactive Docker)
-            $shCmd = "sshpass -p zentra123 ssh -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=5 root@${targetIp} 'mkdir -p /root/.ssh && chmod 700 /root/.ssh && cat >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys' < ${ROOT_KEY}.pub"
-            docker exec zentra sh -c "$shCmd" >$null 2>$null
+            # Direct key push via cat|pipe (avoids < redirect which breaks in PowerShell)
+            docker exec zentra sh -c "cat ${ROOT_KEY}.pub | sshpass -p zentra123 ssh -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=5 root@${targetIp} 'mkdir -p /root/.ssh && chmod 700 /root/.ssh && cat >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys'" >$null 2>$null
             if ($LASTEXITCODE -eq 0) {
                 # Verify key was actually installed
                 docker exec zentra timeout 5 ssh -i $ROOT_KEY -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no "root@${targetIp}" "echo ok" >$null 2>$null
@@ -350,7 +357,7 @@ if ($firstSimIp -ne "N/A") {
     } else {
         Write-Warn "Passwordless SSH verification failed"
         Write-Warn "  Last error: $lastError"
-        Write-Warn "  Manual fix: docker exec zentra sh -c `"sshpass -p zentra123 ssh -o StrictHostKeyChecking=no root@$firstSimIp 'cat >> /root/.ssh/authorized_keys' `< /root/.ssh/id_rsa.pub`""
+        Write-Warn "  Manual fix: docker exec zentra sh -c `"cat /root/.ssh/id_rsa.pub | sshpass -p zentra123 ssh -o StrictHostKeyChecking=no root@$firstSimIp 'cat >> /root/.ssh/authorized_keys'`""
     }
 } else {
     Write-Warn "Could not get IP for srv-linux-01 - skipping SSH verification"

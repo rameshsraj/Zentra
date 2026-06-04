@@ -173,12 +173,19 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 6: Verify connectivity to simulation nodes (host network)
+# Step 6: Connect Zentra container to simulation network
 # ---------------------------------------------------------------------------
 echo ""
-info "Verifying connectivity from Zentra to simulation nodes..."
-info "Zentra uses host network - can reach simulation containers directly"
+info "Connecting Zentra container to simulation network..."
 
+# Attach zentra to the simulation bridge so it can reach 10.100.0.x nodes
+if docker network connect simulation_zentra-dc zentra >/dev/null 2>&1; then
+    ok "Zentra connected to simulation network (simulation_zentra-dc)"
+else
+    warn "Could not connect Zentra to simulation network (may already be connected)"
+fi
+
+# Verify connectivity
 FIRST_SIM_IP=$(get_sim_ip srv-linux-01)
 if [ -n "${FIRST_SIM_IP}" ]; then
     PING_OK=false
@@ -247,8 +254,8 @@ for target in ${SSH_TARGETS}; do
     if [ -n "${TARGET_IP}" ]; then
         COPY_OK=false
         for attempt in 1 2 3; do
-            # Direct key push (ssh-copy-id is unreliable in non-interactive Docker)
-            if docker exec zentra sh -c "sshpass -p 'zentra123' ssh -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=5 root@${TARGET_IP} 'mkdir -p /root/.ssh && chmod 700 /root/.ssh && cat >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys' < /root/.ssh/id_rsa.pub" >/dev/null 2>&1; then
+            # Direct key push via cat|pipe (consistent with PS1 version)
+            if docker exec zentra sh -c "cat /root/.ssh/id_rsa.pub | sshpass -p zentra123 ssh -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=5 root@${TARGET_IP} 'mkdir -p /root/.ssh && chmod 700 /root/.ssh && cat >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys'" >/dev/null 2>&1; then
                 # Verify key was actually installed
                 if docker exec zentra timeout 5 ssh -i /root/.ssh/id_rsa -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no "root@${TARGET_IP}" "echo ok" >/dev/null 2>&1; then
                     COPY_OK=true
@@ -295,7 +302,7 @@ if [ -n "${FIRST_SIM_IP}" ]; then
     else
         warn "Passwordless SSH verification failed"
         warn "  Last error: ${LAST_ERROR}"
-        warn "  Manual fix: docker exec zentra sh -c \"sshpass -p 'zentra123' ssh -o StrictHostKeyChecking=no root@${FIRST_SIM_IP} 'mkdir -p /root/.ssh && cat >> /root/.ssh/authorized_keys' < /root/.ssh/id_rsa.pub\""
+        warn "  Manual fix: docker exec zentra sh -c \"cat /root/.ssh/id_rsa.pub | sshpass -p zentra123 ssh -o StrictHostKeyChecking=no root@${FIRST_SIM_IP} 'mkdir -p /root/.ssh && cat >> /root/.ssh/authorized_keys'\""
     fi
 else
     warn "Could not get IP for srv-linux-01 - skipping SSH verification"

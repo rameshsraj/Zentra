@@ -249,7 +249,7 @@ Write-Info "Starting Zentra container..."
 
 docker run -d `
     --name $ContainerName `
-    --network host `
+    -p "${WebPort}:5010" `
     --restart unless-stopped `
     --env-file $EnvFile `
     -v "${VolumeName}:/var/lib/postgresql/data" `
