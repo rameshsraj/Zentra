@@ -161,3 +161,186 @@ The '<' operator is reserved for future use.
     + FullyQualifiedErrorId : RedirectionNotSupported
 
 PS C:\GitHub\Zentra\docker>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[WARN]  Health check not yet passing - services may still be starting.
+[WARN]  Check logs with: docker logs zentra
+
+======================================================
+  Zentra - Installation Complete!
+======================================================
+
+  Web UI:     http://192.168.1.10:5010
+  Login:      admin@Zentra.local / changeme
+
+  Container:  docker ps
+  Logs:       docker logs -f zentra
+  Stop:       docker stop zentra
+  Start:      docker start zentra
+  Shell:      docker exec -it zentra bash
+
+  IMPORTANT: Change the default admin password after first login!
+======================================================
+
+[OK]    Zentra application deployment complete
+
+======================================================
+  Phase 2/2: Datacenter Simulation
+======================================================
+
+
+======================================================
+  Zentra Datacenter Simulation - Setup (Windows)
+======================================================
+
+[INFO]  Checking prerequisites...
+[OK]    Docker and docker compose are available
+[INFO]  Configuring Docker bridge network for simulation...
+[OK]    Docker Subnet: 10.100.0.0/24
+[OK]    Gateway:       10.100.0.1
+[OK]    Host IP:       192.168.1.10 (for Zentra Web UI)
+[INFO]  Assigning IPs from 10.100.0.10+...
+[OK]    IP assignments ready
+[INFO]  Phase 1/5: Stopping any running simulation containers...
+[INFO]  Stopping compose services...
+[OK]    All simulation containers stopped
+[INFO]  Phase 2/5: Removing old containers...
+[OK]    Old containers removed
+[INFO]  Phase 2/5: Removing old volumes and networks...
+[OK]    Old volumes and networks removed
+[OK]    Full cleanup complete
+[INFO]  Phase 3/5: Generating docker-compose configuration...
+[OK]    Generated: C:\GitHub\Zentra\docker\simulation\docker-compose.generated.yml
+[INFO]  Phase 4/5: Pulling required Docker images...
+[+] pull 7/7
+ ✔ Image httpd:2.4-alpine         Pulled                                                                                                                                                                     3.3s
+ ✔ Image nginx:1.25-alpine        Pulled                                                                                                                                                                     3.3s
+ ✔ Image tomcat:9-jdk17           Pulled                                                                                                                                                                     3.3s
+ ✔ Image rockylinux:8             Pulled                                                                                                                                                                     3.2s
+ ✔ Image ubuntu:22.04             Pulled                                                                                                                                                                     3.1s
+ ✔ Image polinux/snmpd:alpine     Pulled                                                                                                                                                                     1.6s
+ ✔ Image gvenzl/oracle-xe:21-slim Pulled                                                                                                                                                                     1.5s
+[OK]    All images pulled
+[INFO]  Phase 5/5: Starting all simulation nodes...
+[+] up 14/14
+ ✔ Network simulation_zentra-dc  Created                                                                                                                                                                     0.0s
+ ✔ Volume simulation_oracle-data Created                                                                                                                                                                     0.0s
+ ✔ Container srv-linux-02        Started                                                                                                                                                                     2.6s
+ ✔ Container srv-win-01          Started                                                                                                                                                                     2.4s
+ ✔ Container mw-apache-01        Started                                                                                                                                                                     2.1s
+ ✔ Container sw-access-01        Started                                                                                                                                                                     2.1s
+ ✔ Container srv-linux-01        Started                                                                                                                                                                     1.7s
+ ✔ Container sw-core-01          Started                                                                                                                                                                     1.9s
+ ✔ Container srv-win-02          Started                                                                                                                                                                     1.6s
+ ✔ Container db-oracle-01        Started                                                                                                                                                                     1.7s
+ ✔ Container mw-tomcat-01        Started                                                                                                                                                                     2.7s
+ ✔ Container fw-01               Started                                                                                                                                                                     1.6s
+ ✔ Container stor-01             Started                                                                                                                                                                     1.8s
+ ✔ Container mw-nginx-01         Started                                                                                                                                                                     2.4s
+[OK]    All containers started
+[INFO]  Waiting for services to fully initialize...
+
+[OK]    All 12 of 12 simulation nodes are running
+
+======================================================
+  Zentra Datacenter Simulation - Node Summary
+======================================================
+
+  Network: Docker bridge (10.100.0.0/24)
+  NOTE: These IPs are reachable from the Zentra container.
+        Use these IPs when adding targets in Zentra.
+
+COMPONENT            IP ADDRESS         PORT(S)    DESCRIPTION
+==================== ================== ========== ==============================
+srv-linux-01         10.100.0.11        22,161     Rocky Linux 8 (Web Server)
+srv-linux-02         10.100.0.12        22,161     Ubuntu 22.04 (App Server)
+srv-win-01           10.100.0.13        22,161     Windows Server 2022 (AD/DNS)
+srv-win-02           10.100.0.14        22,161     Windows Server 2019 (Files)
+sw-core-01           10.100.0.15        22,161     Cisco Catalyst 9300 (Core)
+sw-access-01         10.100.0.16        22,161     Arista 7050X (Access)
+fw-01                10.100.0.17        22,161     Palo Alto PA-3260 (Firewall)
+stor-01              10.100.0.18        22,161     Dell PowerStore 500T (SAN)
+mw-nginx-01          10.100.0.19        22,80,8080 Nginx (Reverse Proxy)
+mw-apache-01         10.100.0.20        22,80,8080 Apache HTTP Server
+mw-tomcat-01         10.100.0.21        22,8080    Apache Tomcat 9
+db-oracle-01         10.100.0.22        22,1521    Oracle 21c XE (ZENTRADB)
+
+------------------------------------------------------
+  SNMP Community:    public
+  SSH Credentials:   root / zentra123 (all containers)
+  Tomcat Manager:    zentra / zentra123
+  Nginx Status:      http://<nginx-ip>:8080/nginx_status
+  Apache Status:     http://<apache-ip>:8080/server-status
+  Oracle:            SYS/zentra123 or zentra_mon/zentra123
+                     SID: XE  |  Service: ZENTRADB
+------------------------------------------------------
+
+  To add these nodes in Zentra, go to:
+    Infrastructure > Servers  (for servers)
+    Infrastructure > Network  (for switches/firewall)
+    Infrastructure > Storage  (for storage arrays)
+    Middleware > [Nginx/Apache/Tomcat]
+    Database > Oracle
+
+  To stop the simulation:
+    docker compose -f C:\GitHub\Zentra\docker\simulation\docker-compose.generated.yml down
+
+======================================================
+
+[OK]    Datacenter simulation deployment complete
+
+[INFO]  Checking SSH tools in Zentra container...
+[INFO]  Installing openssh-clients and sshpass in Zentra container...
+[OK]    SSH tools installed successfully
+[INFO]  Regenerating SSH key pair for root (ensuring no passphrase)...
+Generating public/private rsa key pair.
+Your identification has been saved in /root/.ssh/id_rsa.
+Your public key has been saved in /root/.ssh/id_rsa.pub.
+The key fingerprint is:
+SHA256:SogJ1phT+DNJXwZ4t+51eOHHn6thBB5TJJDTJujqM04 root@docker-desktop
+The key's randomart image is:
++---[RSA 4096]----+
+|  ..... ..+..o   |
+| .=o . = + oo    |
+|.=o.+ = . ++     |
+|...B o o  ..+    |
+|  o + + S o.o.   |
+|     o o o +.o   |
+|    .Eo . o .o. .|
+|    .+ .    . .o |
+|    ..o      ....|
++----[SHA256]-----+
+[OK]    SSH key pair generated at /root/.ssh/id_rsa
+
+[INFO]  Verifying connectivity from Zentra to simulation nodes...
+[INFO]  Zentra uses host network - can reach simulation containers directly
+[OK]    Zentra can reach simulation nodes (ping 10.100.0.11 OK)
+
+[INFO]  Waiting for SSH daemons to start on simulation nodes...
+
+[OK]    SSH is ready on simulation nodes
+
+[INFO]  Distributing SSH keys to simulation nodes...
+
+
+
