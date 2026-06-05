@@ -102,14 +102,13 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-start justify-center pt-[15vh]" onClick={onClose}>
+    <div className="fixed inset-0 z-[100] flex items-start justify-center pt-[15vh]">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div
         role="dialog"
         aria-label="Command palette"
         aria-modal="true"
         className="relative w-full max-w-xl bg-slate-900 border border-white/10 rounded-2xl shadow-2xl overflow-hidden"
-        onClick={e => e.stopPropagation()}
         onKeyDown={handleKeyDown}
       >
         {/* Search input */}

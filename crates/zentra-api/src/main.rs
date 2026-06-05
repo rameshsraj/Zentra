@@ -110,10 +110,6 @@ async fn main() {
     let event_bus = EventBus::new();
     let state = AppState::new(pool, tsdb_pool, event_bus, config.org_id, jwt_secret.clone());
 
-    // Sync global demo-mode flag with AppState (backward-compat for handlers without State)
-    zentra_api::handlers::config::sync_global_demo_mode(state.is_demo_mode());
-    info!(demo = state.is_demo_mode(), "Demo mode initialized");
-
     // ============================================================
     // Start Background Jobs (Automation)
     // ============================================================
@@ -236,6 +232,7 @@ async fn main() {
     // ============================================================
     let app = build_router(state.clone())
         // outer → inner
+        .layer(middleware::from_fn(security_headers_middleware))
         .layer(middleware::from_fn(request_id_middleware))
         .layer(middleware::from_fn(zentra_api::observability::track_request))
         .layer(middleware::from_fn(zentra_api::otel_middleware::otel_trace_middleware))
@@ -269,6 +266,27 @@ async fn main() {
     .with_graceful_shutdown(shutdown_signal())
     .await
     .expect("Server error");
+}
+
+/// Security response headers — defence-in-depth on all API responses.
+/// These supplement Nginx's headers for any path that reaches the backend directly.
+async fn security_headers_middleware(
+    req: axum::extract::Request,
+    next: Next,
+) -> Response {
+    let mut resp = next.run(req).await;
+    let h = resp.headers_mut();
+    h.entry("cache-control").or_insert(HeaderValue::from_static("no-store"));
+    h.entry("x-content-type-options").or_insert(HeaderValue::from_static("nosniff"));
+    h.entry("x-frame-options").or_insert(HeaderValue::from_static("DENY"));
+    h.entry("referrer-policy").or_insert(HeaderValue::from_static("strict-origin-when-cross-origin"));
+    h.entry("x-xss-protection").or_insert(HeaderValue::from_static("0"));
+    h.entry("permissions-policy").or_insert(HeaderValue::from_static("camera=(), microphone=(), geolocation=()"));
+    h.entry("cross-origin-opener-policy").or_insert(HeaderValue::from_static("same-origin"));
+    // Strip server identity headers that upstream libraries might add
+    h.remove("server");
+    h.remove("x-powered-by");
+    resp
 }
 
 /// Inject `x-request-id` (uuid v7-ish via uuid::new_v4) for any request that doesn't have one.

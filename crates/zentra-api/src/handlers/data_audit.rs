@@ -1,5 +1,5 @@
 //! Data Audit Handler (V5 Prompt 19)
-//! Provides mock-data elimination status for all modules
+//! Provides data source audit status for all modules
 
 use axum::extract::State;
 use axum::Json;
@@ -39,8 +39,11 @@ pub async fn data_source_audit(State(_s): State<AppState>) -> Json<Value> {
         audit_entry("LLM Overview", "/api/llm/overview", "live", "DB-backed (llm_requests) — real model count from DB"),
         audit_entry("LLM Security", "/api/llm-security/overview", "live", "In-memory scan results — starts empty"),
         // Infrastructure
-        audit_entry("Network: Overview", "/api/network/overview", "live", "Real network data from collection"),
+        audit_entry("Network: Overview", "/api/network/overview", "live", "Live SSH-based /proc/net/* collection"),
+        audit_entry("Network: Deep Analysis", "/api/network/deep/snapshot", "live", "Live SSH-based /proc/net/* — connections, protocols, bandwidth"),
         audit_entry("Network: Topology", "/api/network/topology", "live", "In-memory graph — built from discovered devices"),
+        audit_entry("Network: Devices", "/api/network/devices", "live", "DB-backed targets with live SNMP polling"),
+        audit_entry("Network: Subnet Scan", "/api/network/scan", "live", "Live SSH-based fping/ping sweep"),
         audit_entry("Servers", "/api/servers", "live", "Discovered hosts from DB targets"),
         audit_entry("Storage", "/api/storage/overview", "live", "In-memory storage metrics — populated by collection"),
         // Core
@@ -107,7 +110,7 @@ pub async fn mock_data_check(State(_s): State<AppState>) -> Json<Value> {
         "mock_patterns_found": 0,
         "partial_modules": 0,
         "details": [],
-        "note": "All M01-M10 mock data elimination tasks complete. No frontend mock/hardcoded data remains. All pages use React Query with live API calls. Empty DB shows empty states. File scan verdict reports honestly as 'unscanned'. Seed target row removed by migration 000073. Sparklines use flat live values.",
+        "note": "All M01-M10 mock data elimination tasks complete. Network handlers (M11) rewritten from hardcoded mock to live SSH-based /proc/net/* collection. Demo mode infrastructure fully removed from backend (AppState) and frontend (AppModeContext, DemoModeBadge). No mock/hardcoded data remains anywhere. All pages use React Query with live API calls.",
         "non_persistent_stores": [
             "healthchecks (in-memory, create via API)",
             "monitoring_templates (in-memory, built-in defaults + API)",

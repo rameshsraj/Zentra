@@ -48,8 +48,8 @@ export default function LogAlertsPage() {
       </div>
 
       {showCreate && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowCreate(false)}>
-          <div className="bg-gray-800 rounded-lg p-6 w-[500px] border border-gray-700" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-gray-800 rounded-lg p-6 w-[500px] border border-gray-700">
             <h2 className="text-lg font-bold text-white mb-4">Create Log Alert</h2>
             <form onSubmit={e => { e.preventDefault(); const fd = new FormData(e.currentTarget); createMut.mutate({ name: fd.get('name'), query: fd.get('query'), threshold: parseFloat(fd.get('threshold') as string) || 10, comparison: fd.get('comparison'), severity: fd.get('severity') }) }} className="space-y-3">
               <input name="name" placeholder="Alert name" required className="w-full bg-gray-700 text-white rounded px-3 py-2 text-sm border border-gray-600" />

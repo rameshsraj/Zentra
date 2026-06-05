@@ -20,11 +20,11 @@ use validator::Validate;
 // Constants
 // ═══════════════════════════════════════════════════════════════════════════
 
-const JWT_EXPIRY_HOURS: i64 = 24;
-const REFRESH_EXPIRY_DAYS: i64 = 30;
-const MAX_LOGIN_ATTEMPTS: i64 = 20;
-const LOCKOUT_WINDOW_MINUTES: i64 = 5;
-const LOCKOUT_DURATION_MINUTES: i64 = 15;
+const JWT_EXPIRY_HOURS: i64 = 8;
+const REFRESH_EXPIRY_DAYS: i64 = 7;
+const MAX_LOGIN_ATTEMPTS: i64 = 5;
+const LOCKOUT_WINDOW_MINUTES: i64 = 15;
+const LOCKOUT_DURATION_MINUTES: i64 = 30;
 
 fn hash_token(token: &str) -> String {
     let mut hasher = Sha256::new();

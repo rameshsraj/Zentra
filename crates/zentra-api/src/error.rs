@@ -49,9 +49,13 @@ impl IntoResponse for ApiError {
             Self::Forbidden(m) => (StatusCode::FORBIDDEN, m.clone()),
             Self::Internal(m) => {
                 tracing::error!(error = %m, "internal error");
-                (StatusCode::INTERNAL_SERVER_ERROR, m.clone())
+                // Never leak internal details to the client
+                (StatusCode::INTERNAL_SERVER_ERROR, "An internal error occurred".to_string())
             }
-            Self::ServiceUnavailable(m) => (StatusCode::SERVICE_UNAVAILABLE, m.clone()),
+            Self::ServiceUnavailable(m) => {
+                tracing::warn!(error = %m, "service unavailable");
+                (StatusCode::SERVICE_UNAVAILABLE, "Service temporarily unavailable".to_string())
+            }
         };
         (status, Json(json!({ "error": message }))).into_response()
     }

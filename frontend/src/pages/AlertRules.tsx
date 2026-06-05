@@ -222,8 +222,8 @@ export default function AlertRulesPage() {
 
       {/* Create Rule Modal */}
       {showCreate && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setShowCreate(false)}>
-          <div className="bg-[#0f1724] border border-white/10 rounded-2xl w-full max-w-lg p-6 space-y-4" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-[#0f1724] border border-white/10 rounded-2xl w-full max-w-lg p-6 space-y-4">
             <h2 className="text-lg font-semibold text-white">Create Alert Rule</h2>
             <div className="space-y-3">
               <div>

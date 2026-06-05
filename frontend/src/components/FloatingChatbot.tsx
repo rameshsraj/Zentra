@@ -107,12 +107,19 @@ export default function FloatingChatbot() {
 
   const clearChat = () => setMessages([messages[0]])
 
-  const renderMarkdown = (text: string) =>
-    text
+  const renderMarkdown = (text: string) => {
+    // Sanitize HTML entities first to prevent XSS injection
+    const escaped = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+    return escaped
       .replace(/\*\*(.*?)\*\*/g, '<strong class="text-white">$1</strong>')
       .replace(/`([^`]+)`/g, '<code class="bg-white/10 px-1 py-0.5 rounded text-brand-400 text-xs font-mono">$1</code>')
       .replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre class="bg-black/30 rounded-lg p-3 mt-2 mb-2 overflow-x-auto text-xs font-mono text-slate-300"><code>$2</code></pre>')
       .replace(/^- (.*)/gm, '<span class="flex items-start gap-1.5"><span class="text-brand-400 mt-0.5">•</span><span>$1</span></span>')
+  }
 
   // Grouped tools by category
   const toolsByCategory = tools.reduce<Record<string, McpToolDef[]>>((acc, t) => {

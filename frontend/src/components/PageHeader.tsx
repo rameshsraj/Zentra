@@ -10,7 +10,6 @@ import {
   Plus,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { useAppMode } from '@/contexts/AppModeContext'
 
 const breadcrumbMap: Record<string, string> = {
   dashboard: 'Command Center',
@@ -69,7 +68,6 @@ export default function PageHeader({
   const [autoRefresh, setAutoRefresh] = useState(0) // 0 = off, seconds otherwise
   const [isRefreshing, setIsRefreshing] = useState(false)
 
-  const { isDemo } = useAppMode()
   const segments = location.pathname.split('/').filter(Boolean)
 
   const handleRefresh = useCallback(() => {
@@ -126,7 +124,7 @@ export default function PageHeader({
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           {children}
-          {showAddTarget && !isDemo && (
+          {showAddTarget && (
             <button
               onClick={onAddTarget}
               className="flex items-center gap-2 px-4 py-2.5 bg-brand-600 hover:bg-brand-700 rounded-xl text-sm font-medium transition-colors shadow-lg shadow-brand-600/20"

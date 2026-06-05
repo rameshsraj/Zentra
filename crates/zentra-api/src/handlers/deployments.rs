@@ -36,53 +36,7 @@ fn store() -> &'static RwLock<DeployStore> {
 }
 
 fn init_store() -> DeployStore {
-    let now = Utc::now();
-    let deployments = vec![
-        Deployment {
-            id: "deploy-001".into(), name: "API v2.1.0 Release".into(), version: "2.1.0".into(), environment: "production".into(),
-            deployed_by: "admin".into(), status: "success".into(), started_at: (now - Duration::hours(6)).to_rfc3339(), completed_at: Some((now - Duration::hours(5) - Duration::minutes(45)).to_rfc3339()),
-            duration_secs: Some(900.0), target_ids: vec!["10.88.11.162".into(), "10.88.11.163".into()],
-            checklist: vec![
-                ChecklistItem { id: "cl-1".into(), category: "infrastructure".into(), name: "Disk space > 20%".into(), status: "passed".into(), checked_by: Some("auto".into()), checked_at: Some((now - Duration::hours(6)).to_rfc3339()), notes: String::new() },
-                ChecklistItem { id: "cl-2".into(), category: "application".into(), name: "All tests passing".into(), status: "passed".into(), checked_by: Some("ci".into()), checked_at: Some((now - Duration::hours(6)).to_rfc3339()), notes: String::new() },
-                ChecklistItem { id: "cl-3".into(), category: "database".into(), name: "DB backup completed".into(), status: "passed".into(), checked_by: Some("dba".into()), checked_at: Some((now - Duration::hours(6)).to_rfc3339()), notes: String::new() },
-            ],
-            pre_deploy_results: vec![
-                DeployCheck { name: "Disk Space".into(), check_type: "disk".into(), status: "passed".into(), value_before: Some("62%".into()), value_after: None, threshold: Some("80%".into()), message: "Sufficient disk space".into() },
-                DeployCheck { name: "Memory Available".into(), check_type: "memory".into(), status: "passed".into(), value_before: Some("4.2GB".into()), value_after: None, threshold: Some("1GB".into()), message: "Sufficient memory".into() },
-            ],
-            post_deploy_results: vec![
-                DeployCheck { name: "HTTP Health".into(), check_type: "http".into(), status: "passed".into(), value_before: Some("200 OK".into()), value_after: Some("200 OK".into()), threshold: None, message: "Health endpoint responding".into() },
-                DeployCheck { name: "Response Time".into(), check_type: "latency".into(), status: "passed".into(), value_before: Some("45ms".into()), value_after: Some("42ms".into()), threshold: Some("200ms".into()), message: "Response time within limits".into() },
-                DeployCheck { name: "Error Rate".into(), check_type: "error_rate".into(), status: "passed".into(), value_before: Some("0.02%".into()), value_after: Some("0.01%".into()), threshold: Some("1%".into()), message: "Error rate acceptable".into() },
-            ],
-            rollback_triggered: false, notes: "Smooth deployment, no issues".into(), runbook_id: Some("rb-001".into()),
-        },
-        Deployment {
-            id: "deploy-002".into(), name: "Frontend v2.1.0".into(), version: "2.1.0".into(), environment: "production".into(),
-            deployed_by: "admin".into(), status: "success".into(), started_at: (now - Duration::hours(5)).to_rfc3339(), completed_at: Some((now - Duration::hours(4) - Duration::minutes(50)).to_rfc3339()),
-            duration_secs: Some(600.0), target_ids: vec!["10.88.11.162".into()],
-            checklist: vec![], pre_deploy_results: vec![], post_deploy_results: vec![],
-            rollback_triggered: false, notes: "Frontend static files update".into(), runbook_id: None,
-        },
-        Deployment {
-            id: "deploy-003".into(), name: "DB Migration v45".into(), version: "45".into(), environment: "staging".into(),
-            deployed_by: "dba".into(), status: "failed".into(), started_at: (now - Duration::days(1)).to_rfc3339(), completed_at: Some((now - Duration::days(1) + Duration::minutes(25)).to_rfc3339()),
-            duration_secs: Some(1500.0), target_ids: vec!["10.88.11.50".into()],
-            checklist: vec![], pre_deploy_results: vec![],
-            post_deploy_results: vec![
-                DeployCheck { name: "DB Connectivity".into(), check_type: "tcp".into(), status: "failed".into(), value_before: Some("connected".into()), value_after: Some("timeout".into()), threshold: None, message: "Database connection timeout after migration".into() },
-            ],
-            rollback_triggered: true, notes: "Migration failed, rolled back".into(), runbook_id: None,
-        },
-    ];
-
-    let runbooks = vec![
-        DeploymentRunbook { id: "rb-001".into(), name: "Production API Deployment".into(), content_markdown: "# Production API Deployment\n\n## Pre-Deployment\n1. Verify CI/CD pipeline green\n2. Check disk space on target servers\n3. Backup current version\n4. Notify team on #deployments\n\n## Deployment\n1. Pull latest Docker image\n2. Run database migrations\n3. Rolling restart services\n\n## Post-Deployment\n1. Verify health endpoints\n2. Check error rates in dashboard\n3. Monitor for 15 minutes\n4. Close deployment ticket".into(), linked_environment: Some("production".into()), created_at: (now - Duration::days(30)).to_rfc3339(), updated_at: (now - Duration::days(2)).to_rfc3339() },
-        DeploymentRunbook { id: "rb-002".into(), name: "Database Migration".into(), content_markdown: "# Database Migration\n\n## Pre-Migration\n1. Take full backup\n2. Test migration on staging\n3. Lock write access\n\n## Migration\n1. Run migration script\n2. Verify schema changes\n\n## Post-Migration\n1. Unlock write access\n2. Verify application connectivity\n3. Run data integrity checks".into(), linked_environment: None, created_at: (now - Duration::days(20)).to_rfc3339(), updated_at: (now - Duration::days(20)).to_rfc3339() },
-    ];
-
-    DeployStore { deployments, runbooks }
+    DeployStore { deployments: Vec::new(), runbooks: Vec::new() }
 }
 
 pub async fn list_deployments(State(_s): State<AppState>, Query(params): Query<DeploymentListQuery>) -> Result<Json<Vec<Deployment>>, ApiError> {

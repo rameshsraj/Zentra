@@ -23,7 +23,11 @@ use crate::state::AppState;
 use zentra_core::models::auth::JwtClaims;
 
 fn jwt_secret() -> String {
-    std::env::var("ZENTRA_JWT_SECRET").unwrap_or_else(|_| "Zentra-default-jwt-secret-change-me".into())
+    std::env::var("ZENTRA_JWT_SECRET").unwrap_or_else(|_| {
+        tracing::error!("ZENTRA_JWT_SECRET is not set — all JWT validation will fail");
+        // Return empty string so all tokens are rejected — never use a default secret
+        String::new()
+    })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -170,24 +174,22 @@ async fn extract_auth(state: &AppState, request: &Request<Body>) -> Result<AuthC
         return extract_api_key_auth(state, key_str).await;
     }
 
-    // Anonymous access (read-only for public dashboards)
-    Ok(AuthContext {
-        user_id: Uuid::nil(),
-        org_id: state.org_id,
-        role: "Viewer".into(),
-        permissions: vec![
-            Permission { resource: "dashboard".into(), action: "read".into() },
-            Permission { resource: "metrics".into(), action: "read".into() },
-        ],
-        auth_method: AuthMethod::Anonymous,
-    })
+    // No valid credentials provided — reject the request.
+    // Anonymous access is not permitted; all requests must authenticate.
+    Err(unauthorized_response("Authentication required — provide a Bearer token or X-API-Key"))
 }
 
 async fn extract_jwt_auth(state: &AppState, token: &str) -> Result<AuthContext, Response> {
-    let validation = Validation::new(Algorithm::HS256);
+    let secret = jwt_secret();
+    if secret.is_empty() {
+        return Err(unauthorized_response("Server authentication not configured"));
+    }
+    let mut validation = Validation::new(Algorithm::HS256);
+    validation.validate_exp = true;
+    validation.leeway = 30; // 30s clock-skew tolerance, no more
     let token_data = decode::<JwtClaims>(
         token,
-        &DecodingKey::from_secret(jwt_secret().as_bytes()),
+        &DecodingKey::from_secret(secret.as_bytes()),
         &validation,
     ).map_err(|e| {
         tracing::debug!("JWT validation failed: {}", e);
@@ -288,17 +290,9 @@ async fn extract_api_key_auth(state: &AppState, api_key: &str) -> Result<AuthCon
             })
         }
         None => {
-            // Fallback: allow anonymous-style for backward compat
-            Ok(AuthContext {
-                user_id: Uuid::nil(),
-                org_id: state.org_id,
-                role: "Agent".into(),
-                permissions: vec![
-                    Permission { resource: "metrics".into(), action: "write".into() },
-                    Permission { resource: "logs".into(), action: "write".into() },
-                ],
-                auth_method: AuthMethod::ApiKey,
-            })
+            // Reject: unknown or invalid API key — never grant fallback access
+            tracing::warn!("Rejected unknown API key attempt");
+            Err(unauthorized_response("Invalid or revoked API key"))
         }
     }
 }

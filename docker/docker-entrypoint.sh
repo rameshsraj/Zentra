@@ -113,14 +113,14 @@ if [ -z "${ZENTRA_JWT_SECRET:-}" ]; then
     export ZENTRA_JWT_SECRET=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 48)
     echo "[entrypoint] ZENTRA_JWT_SECRET not set — auto-generated for this session."
 fi
-export ZENTRA_ALLOW_INSECURE_JWT="${ZENTRA_ALLOW_INSECURE_JWT:-1}"
+export ZENTRA_ALLOW_INSECURE_JWT="${ZENTRA_ALLOW_INSECURE_JWT:-0}"
 
 # Auto-generate ZENTRA_MASTER_KEY if not provided (required for credential encryption)
 if [ -z "${ZENTRA_MASTER_KEY:-}" ]; then
     export ZENTRA_MASTER_KEY=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 64)
     echo "[entrypoint] ZENTRA_MASTER_KEY not set — auto-generated for this session."
 fi
-export ZENTRA_ALLOW_ORIGINS="${ZENTRA_ALLOW_ORIGINS:-*}"
+export ZENTRA_ALLOW_ORIGINS="${ZENTRA_ALLOW_ORIGINS:-}"
 export ZENTRA_ORG_ID="${ZENTRA_ORG_ID:-00000000-0000-0000-0000-000000000001}"
 
 # D05: Force API server to bind to localhost only (not externally reachable)
@@ -151,12 +151,19 @@ if [ ! -f "${PGDATA}/PG_VERSION" ]; then
     sed -i "s/^#listen_addresses = 'localhost'/listen_addresses = '127.0.0.1'/" "${PGDATA}/postgresql.conf"
 
     # Allow local connections only — no external DB access (D04, D05)
+    # Use scram-sha-256 for all password auth (strongest available)
     cat > "${PGDATA}/pg_hba.conf" <<EOFHBA
 # TYPE  DATABASE  USER      ADDRESS       METHOD
 # No external DB access — PostgreSQL is internal-only
-local   all       all                     trust
-host    all       all       127.0.0.1/32  md5
-host    all       all       ::1/128       md5
+# peer = OS-level user identity (local socket only, no password)
+# scram-sha-256 = strongest password hash for TCP connections
+local   all       postgres                peer
+local   all       all                     scram-sha-256
+host    all       all       127.0.0.1/32  scram-sha-256
+host    all       all       ::1/128       scram-sha-256
+# Reject everything else
+host    all       all       0.0.0.0/0     reject
+host    all       all       ::/0          reject
 EOFHBA
 
     # Enable TimescaleDB in shared_preload_libraries
@@ -174,6 +181,14 @@ maintenance_work_mem = 64MB
 random_page_cost = 1.1
 log_timezone = 'UTC'
 timezone = 'UTC'
+
+# Security hardening
+password_encryption = scram-sha-256
+log_connections = on
+log_disconnections = on
+log_statement = 'ddl'
+log_line_prefix = '%t [%p]: user=%u,db=%d,app=%a '
+ssl = off
 EOFCONF
 
     echo "[entrypoint] Starting PostgreSQL for initial setup..."
@@ -289,15 +304,41 @@ else
 fi
 
 # zentra user keys (used by zentra-server process running as non-root)
+# IMPORTANT: If root already has a key (distributed to remote hosts by deploy-all.ps1),
+# copy it to zentra user so both identities share the same keypair.
+# This ensures zentra-server (running as 'zentra') uses the key that remote hosts trust.
 if [ ! -f /opt/zentra/.ssh/id_rsa ]; then
-    echo "[entrypoint] Generating SSH key pair for zentra user..."
-    ssh-keygen -t rsa -b 4096 -f /opt/zentra/.ssh/id_rsa -N "" -C "zentra@$(hostname)" >/dev/null 2>&1
+    if [ -f /root/.ssh/id_rsa ]; then
+        echo "[entrypoint] Copying root's SSH key to zentra user (shared identity)..."
+        cp /root/.ssh/id_rsa /opt/zentra/.ssh/id_rsa
+        cp /root/.ssh/id_rsa.pub /opt/zentra/.ssh/id_rsa.pub
+    else
+        echo "[entrypoint] Generating SSH key pair for zentra user..."
+        ssh-keygen -t rsa -b 4096 -f /opt/zentra/.ssh/id_rsa -N "" -C "zentra@$(hostname)" >/dev/null 2>&1
+    fi
     chown zentra:zentra /opt/zentra/.ssh/id_rsa /opt/zentra/.ssh/id_rsa.pub
     chmod 600 /opt/zentra/.ssh/id_rsa
     chmod 644 /opt/zentra/.ssh/id_rsa.pub
-    echo "[entrypoint] zentra user SSH key pair generated at /opt/zentra/.ssh/id_rsa"
+    echo "[entrypoint] zentra user SSH key ready at /opt/zentra/.ssh/id_rsa"
 else
-    echo "[entrypoint] zentra user SSH key pair already exists — skipping generation."
+    # Key exists — but check if root's key is newer (deploy script may have regenerated it)
+    if [ -f /root/.ssh/id_rsa ]; then
+        ROOT_FP=$(ssh-keygen -lf /root/.ssh/id_rsa.pub 2>/dev/null | awk '{print $2}')
+        ZENTRA_FP=$(ssh-keygen -lf /opt/zentra/.ssh/id_rsa.pub 2>/dev/null | awk '{print $2}')
+        if [ -n "$ROOT_FP" ] && [ "$ROOT_FP" != "$ZENTRA_FP" ]; then
+            echo "[entrypoint] Root key changed — syncing to zentra user..."
+            cp /root/.ssh/id_rsa /opt/zentra/.ssh/id_rsa
+            cp /root/.ssh/id_rsa.pub /opt/zentra/.ssh/id_rsa.pub
+            chown zentra:zentra /opt/zentra/.ssh/id_rsa /opt/zentra/.ssh/id_rsa.pub
+            chmod 600 /opt/zentra/.ssh/id_rsa
+            chmod 644 /opt/zentra/.ssh/id_rsa.pub
+            echo "[entrypoint] zentra user SSH key synced with root."
+        else
+            echo "[entrypoint] zentra user SSH key already matches root — skipping."
+        fi
+    else
+        echo "[entrypoint] zentra user SSH key pair already exists — skipping."
+    fi
 fi
 
 # Ensure SSH config for root

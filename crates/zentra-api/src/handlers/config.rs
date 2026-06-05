@@ -7,24 +7,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use crate::state::AppState;
 use crate::tenant::OrgId;
-// AtomicBool no longer needed — demo mode permanently disabled
-
 use crate::error::ApiError;
 
 static START_TIME: std::sync::OnceLock<chrono::DateTime<chrono::Utc>> = std::sync::OnceLock::new();
-
-// ============================================================================
-// Demo mode permanently disabled — all data is live only
-// ============================================================================
-
-/// Always returns false — demo mode is permanently disabled.
-/// All handlers use live data from real infrastructure sources.
-pub fn is_demo_mode() -> bool {
-    false
-}
-
-/// No-op — demo mode is permanently disabled.
-pub fn sync_global_demo_mode(_demo: bool) {}
 
 /// Standard JSON response for live mode when data source is unavailable.
 /// Returns `{ "status": "error", "mode": "live", "message": "...", "data": null }`.
@@ -58,7 +43,6 @@ pub async fn get_mode(
 ) -> Json<Value> {
     Json(json!({
         "mode": "live",
-        "demo": false,
         "org_id": org_id,
         "description": "Live mode — displaying real-time data from connected sources."
     }))
@@ -69,7 +53,7 @@ pub struct SetModeRequest {
     pub mode: String,
 }
 
-/// POST /api/config/mode — demo mode is disabled; always returns live.
+/// POST /api/config/mode — always live.
 pub async fn set_mode(
     State(_state): State<AppState>,
     OrgId(org_id): OrgId,
@@ -78,9 +62,8 @@ pub async fn set_mode(
     Json(json!({
         "status": "success",
         "mode": "live",
-        "demo": false,
         "org_id": org_id,
-        "message": "Live mode — demo mode is permanently disabled"
+        "message": "Live mode active"
     }))
 }
 

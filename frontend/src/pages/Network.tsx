@@ -23,7 +23,6 @@ import {
   type BlacklistEntryType, type NotificationLogEntry,
   type NetworkInterface, type ProtocolStat, type SocketStats, type ContainerNetInfo, type NetworkDeviceStatus,
 } from '@/lib/api'
-import DemoModeBadge from '@/components/DemoModeBadge'
 import AddNetworkDeviceModal from '@/components/AddNetworkDeviceModal'
 
 // M10: Flat sparkline from live value — no synthetic Math.sin generation
@@ -820,8 +819,8 @@ export default function NetworkPage() {
 
       {/* Device Detail Slide-Out Panel */}
       {(selectedDevice || deviceDetailLoading) && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-sm" onClick={() => { setSelectedDevice(null); setDeviceDetailLoading(false) }}>
-          <div className="w-full max-w-2xl bg-slate-900 border-l border-white/10 shadow-2xl overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-sm">
+          <div className="w-full max-w-2xl bg-slate-900 border-l border-white/10 shadow-2xl overflow-y-auto">
             {deviceDetailLoading && !selectedDevice ? (
               <div className="flex items-center justify-center h-full">
                 <div className="text-center">
@@ -1064,8 +1063,8 @@ export default function NetworkPage() {
 
       {/* Connection Detail Side Panel */}
       {selectedConn && (
-            <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-sm" onClick={() => setSelectedConn(null)}>
-              <div className="w-full max-w-lg bg-slate-900 border-l border-white/10 shadow-2xl overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-sm">
+              <div className="w-full max-w-lg bg-slate-900 border-l border-white/10 shadow-2xl overflow-y-auto">
                 <div className="p-5 border-b border-white/10 flex items-center justify-between">
                   <h3 className="text-lg font-bold text-white flex items-center gap-2">
                     <Eye className="w-5 h-5 text-brand-400" />
@@ -1116,7 +1115,6 @@ export default function NetworkPage() {
       {/* P3: Interfaces Tab */}
           {tab === 'interfaces' && (
             <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
-              <DemoModeBadge className="m-4" />
               <table className="w-full text-sm">
                 <thead><tr className="bg-white/5">
               {['Name', 'IP Address', 'MAC', 'Speed', 'MTU', 'State', 'RX Bytes', 'TX Bytes', 'RX Pkts', 'TX Pkts', 'Errors', 'Dropped'].map(h => (
@@ -1148,7 +1146,6 @@ export default function NetworkPage() {
       {/* P3: Protocol Stats Tab */}
           {tab === 'protocol-stats' && (
             <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
-              <DemoModeBadge className="m-4" />
               <table className="w-full text-sm">
                 <thead><tr className="bg-white/5">
               {['Protocol', 'Connections', 'Bytes In', 'Bytes Out', 'Packets In', 'Packets Out', 'Errors', 'Retransmits', 'RTT (avg)'].map(h => (
@@ -1177,7 +1174,6 @@ export default function NetworkPage() {
       {/* P3: Socket Stats Tab */}
           {tab === 'sockets' && socketData && (
             <div className="space-y-4">
-              <DemoModeBadge />
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
             {Object.entries(socketData.summary).map(([k, v]) => (
                   <div key={k} className="bg-white/5 border border-white/10 rounded-xl p-4">
@@ -1211,7 +1207,6 @@ export default function NetworkPage() {
       {/* P17: Containers Tab */}
           {tab === 'containers' && (
             <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
-              <DemoModeBadge className="m-4" />
               <table className="w-full text-sm">
                 <thead><tr className="bg-white/5">
               {['Container', 'Image', 'Namespace', 'IP', 'Connections', 'RX', 'TX', 'State'].map(h => (

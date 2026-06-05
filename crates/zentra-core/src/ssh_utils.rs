@@ -13,6 +13,30 @@ pub struct SshResult {
     pub stderr: String,
 }
 
+/// Resolve the SSH identity file path.
+/// Priority:
+///   1. ZENTRA_SSH_KEY env var (explicit override)
+///   2. /opt/zentra/.ssh/id_rsa (zentra user — normal runtime)
+///   3. /root/.ssh/id_rsa (root — docker exec fallback)
+///   4. None — let ssh use its built-in default
+pub fn resolve_ssh_identity() -> Option<String> {
+    if let Ok(key) = std::env::var("ZENTRA_SSH_KEY") {
+        if std::path::Path::new(&key).exists() {
+            return Some(key);
+        }
+    }
+    let candidates = [
+        "/opt/zentra/.ssh/id_rsa",
+        "/root/.ssh/id_rsa",
+    ];
+    for path in &candidates {
+        if std::path::Path::new(path).exists() {
+            return Some(path.to_string());
+        }
+    }
+    None
+}
+
 /// Convert raw SSH stderr into a clean, user-friendly error message.
 /// Hides internal details like port numbers, protocol strings, and stack traces.
 pub fn friendly_error(host: &str, raw: &str) -> String {
@@ -54,16 +78,28 @@ pub async fn ssh_exec(host: &str, user: &str, script: &str) -> SshResult {
     let known_hosts = std::env::var("ZENTRA_SSH_KNOWN_HOSTS")
         .unwrap_or_else(|_| "/dev/null".to_string());
     let known_hosts_opt = format!("UserKnownHostsFile={}", known_hosts);
+
+    // Resolve the SSH identity file.
+    // zentra-server runs as the 'zentra' user (/opt/zentra/.ssh/id_rsa).
+    // Fall back to root's key, then let ssh use its default.
+    let identity = resolve_ssh_identity();
+
+    let mut args = vec![
+        "-o".to_string(), "StrictHostKeyChecking=accept-new".to_string(),
+        "-o".to_string(), known_hosts_opt,
+        "-o".to_string(), "ConnectTimeout=5".to_string(),
+        "-o".to_string(), "BatchMode=yes".to_string(),
+        "-o".to_string(), "LogLevel=ERROR".to_string(),
+    ];
+    if let Some(ref id) = identity {
+        args.push("-i".to_string());
+        args.push(id.clone());
+    }
+    args.push(format!("{}@{}", user, host));
+    args.push(script.to_string());
+
     let output = Command::new("ssh")
-        .args([
-            "-o", "StrictHostKeyChecking=accept-new",
-            "-o", &known_hosts_opt,
-            "-o", "ConnectTimeout=5",
-            "-o", "BatchMode=yes",
-            "-o", "LogLevel=ERROR",
-            &format!("{}@{}", user, host),
-            script,
-        ])
+        .args(&args)
         .output()
         .await;
 
@@ -81,21 +117,50 @@ pub async fn ssh_exec(host: &str, user: &str, script: &str) -> SshResult {
     }
 }
 
-/// Ensure the Zentra server has an SSH key pair, generate one if missing
+/// Ensure the Zentra server has an SSH key pair, generate one if missing.
+/// Checks /opt/zentra/.ssh/id_rsa first (zentra user), then /root/.ssh/id_rsa.
 pub async fn ensure_ssh_key() -> SshResult {
-    // Check if key exists, generate if not
-    let script = r#"
-if [ ! -f ~/.ssh/id_rsa ]; then
-    mkdir -p ~/.ssh && chmod 700 ~/.ssh
-    ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_rsa -N '' -q
+    // If a key already exists, just return the public key
+    if let Some(id) = resolve_ssh_identity() {
+        let pub_path = format!("{}.pub", id);
+        match tokio::fs::read_to_string(&pub_path).await {
+            Ok(pub_key) => return SshResult {
+                success: true,
+                stdout: format!("KEY_EXISTS\n{}", pub_key.trim()),
+                stderr: String::new(),
+            },
+            Err(_) => {} // pub key file missing, generate below
+        }
+    }
+
+    // Determine the SSH dir for key generation.
+    // Prefer /opt/zentra/.ssh (zentra user runtime), fall back to $HOME/.ssh
+    let ssh_dir = if std::path::Path::new("/opt/zentra/.ssh").exists()
+        || std::path::Path::new("/opt/zentra").exists()
+    {
+        "/opt/zentra/.ssh"
+    } else {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+        // Leak the string so we get a &'static str — this runs once
+        Box::leak(format!("{}/.ssh", home).into_boxed_str())
+    };
+
+    let script = format!(
+        r#"
+mkdir -p {dir} && chmod 700 {dir}
+if [ ! -f {dir}/id_rsa ]; then
+    ssh-keygen -t rsa -b 4096 -f {dir}/id_rsa -N '' -q
     echo "KEY_GENERATED"
 else
     echo "KEY_EXISTS"
 fi
-cat ~/.ssh/id_rsa.pub
-"#;
+cat {dir}/id_rsa.pub
+"#,
+        dir = ssh_dir
+    );
+
     let output = Command::new("bash")
-        .args(["-c", script])
+        .args(["-c", &script])
         .output()
         .await;
 
@@ -125,14 +190,21 @@ pub async fn setup_ssh_key_auth(host: &str, user: &str, password: &str) -> SshRe
     // Try sshpass + ssh-copy-id first.
     // Password is passed via SSHPASS env var with -e so it does NOT appear
     // in /proc/<pid>/cmdline or shell history.
+    let identity = resolve_ssh_identity();
+    let mut sshpass_args: Vec<String> = vec![
+        "-e".into(), "ssh-copy-id".into(),
+        "-o".into(), "StrictHostKeyChecking=no".into(),
+        "-o".into(), "UserKnownHostsFile=/dev/null".into(),
+    ];
+    if let Some(ref id) = identity {
+        sshpass_args.push("-i".into());
+        sshpass_args.push(id.clone());
+    }
+    sshpass_args.push(format!("{}@{}", user, host));
+
     let output = Command::new("sshpass")
         .env("SSHPASS", password)
-        .args([
-            "-e", "ssh-copy-id",
-            "-o", "StrictHostKeyChecking=no",
-            "-o", "UserKnownHostsFile=/dev/null",
-            &format!("{}@{}", user, host),
-        ])
+        .args(&sshpass_args)
         .output()
         .await;
 
@@ -166,9 +238,12 @@ pub async fn setup_ssh_key_auth(host: &str, user: &str, password: &str) -> SshRe
 
 /// Manual SSH key setup: read public key, inject via expect or manual SSH
 async fn setup_ssh_key_manual(host: &str, user: &str, password: &str) -> SshResult {
-    // Read our public key
+    // Read our public key from the resolved identity path
+    let pub_key_path = resolve_ssh_identity()
+        .map(|id| format!("{}.pub", id))
+        .unwrap_or_else(|| format!("{}/.ssh/id_rsa.pub", std::env::var("HOME").unwrap_or_else(|_| "/root".into())));
     let key_output = Command::new("cat")
-        .arg(format!("{}/.ssh/id_rsa.pub", std::env::var("HOME").unwrap_or_else(|_| "/root".into())))
+        .arg(&pub_key_path)
         .output()
         .await;
 

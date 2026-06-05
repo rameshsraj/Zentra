@@ -184,21 +184,28 @@ impl SshPool {
 
         debug!(host, user, socket = %socket_path.display(), "Establishing SSH ControlMaster");
 
+        let identity = crate::ssh_utils::resolve_ssh_identity();
+        let mut args = vec![
+            "-o".to_string(), "StrictHostKeyChecking=accept-new".to_string(),
+            "-o".to_string(), format!("UserKnownHostsFile={}", known_hosts),
+            "-o".to_string(), format!("ConnectTimeout={}", self.config.connect_timeout_secs),
+            "-o".to_string(), "BatchMode=yes".to_string(),
+            "-o".to_string(), "LogLevel=ERROR".to_string(),
+            "-o".to_string(), format!("ControlPath={}", socket_path.display()),
+            "-o".to_string(), "ControlMaster=yes".to_string(),
+            "-o".to_string(), format!("ControlPersist={}", self.config.control_persist_secs),
+            "-o".to_string(), format!("ServerAliveInterval={}", self.config.server_alive_interval),
+            "-o".to_string(), format!("ServerAliveCountMax={}", self.config.server_alive_count_max),
+        ];
+        if let Some(ref id) = identity {
+            args.push("-i".to_string());
+            args.push(id.clone());
+        }
+        args.push("-fN".to_string()); // go to background, no command
+        args.push(format!("{}@{}", user, host));
+
         let output = Command::new("ssh")
-            .args([
-                "-o", "StrictHostKeyChecking=accept-new",
-                "-o", &format!("UserKnownHostsFile={}", known_hosts),
-                "-o", &format!("ConnectTimeout={}", self.config.connect_timeout_secs),
-                "-o", "BatchMode=yes",
-                "-o", "LogLevel=ERROR",
-                "-o", &format!("ControlPath={}", socket_path.display()),
-                "-o", "ControlMaster=yes",
-                "-o", &format!("ControlPersist={}", self.config.control_persist_secs),
-                "-o", &format!("ServerAliveInterval={}", self.config.server_alive_interval),
-                "-o", &format!("ServerAliveCountMax={}", self.config.server_alive_count_max),
-                "-fN",   // go to background, no command
-                &format!("{}@{}", user, host),
-            ])
+            .args(&args)
             .output()
             .await
             .map_err(|e| format!("Failed to spawn SSH master: {}", e))?;
@@ -220,14 +227,21 @@ impl SshPool {
         script: &str,
         socket_path: &PathBuf,
     ) -> SshResult {
+        let identity = crate::ssh_utils::resolve_ssh_identity();
+        let mut args = vec![
+            "-o".to_string(), format!("ControlPath={}", socket_path.display()),
+            "-o".to_string(), "BatchMode=yes".to_string(),
+            "-o".to_string(), "LogLevel=ERROR".to_string(),
+        ];
+        if let Some(ref id) = identity {
+            args.push("-i".to_string());
+            args.push(id.clone());
+        }
+        args.push(format!("{}@{}", user, host));
+        args.push(script.to_string());
+
         let output = Command::new("ssh")
-            .args([
-                "-o", &format!("ControlPath={}", socket_path.display()),
-                "-o", "BatchMode=yes",
-                "-o", "LogLevel=ERROR",
-                &format!("{}@{}", user, host),
-                script,
-            ])
+            .args(&args)
             .output()
             .await;
 

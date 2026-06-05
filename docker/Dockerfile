@@ -126,18 +126,32 @@ COPY docker/nginx.conf /etc/nginx/conf.d/zentra.conf
 COPY docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Replace default nginx.conf with minimal wrapper
+# Replace default nginx.conf with hardened wrapper
 RUN rm -f /etc/nginx/conf.d/default.conf && \
     printf '%s\n' \
     'worker_processes auto;' \
+    'worker_rlimit_nofile 8192;' \
     'error_log /var/log/nginx/error.log warn;' \
     'pid /run/nginx.pid;' \
-    'events { worker_connections 1024; }' \
+    'events {' \
+    '    worker_connections 1024;' \
+    '    multi_accept on;' \
+    '}' \
     'http {' \
     '    include /etc/nginx/mime.types;' \
     '    default_type application/octet-stream;' \
     '    sendfile on;' \
+    '    tcp_nopush on;' \
+    '    tcp_nodelay on;' \
     '    keepalive_timeout 65;' \
+    '    server_tokens off;' \
+    '    types_hash_max_size 2048;' \
+    '    # Reject requests with undefined Host header' \
+    '    server {' \
+    '        listen 5010 default_server;' \
+    '        server_name "";' \
+    '        return 444;' \
+    '    }' \
     '    include /etc/nginx/conf.d/*.conf;' \
     '}' > /etc/nginx/nginx.conf
 

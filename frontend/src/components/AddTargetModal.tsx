@@ -3,7 +3,6 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { createTarget, verifySsh, setupSsh, crawlServer } from '@/lib/api'
 import type { CrawledComponent, CrawlResult } from '@/lib/api'
 import { X, Plus, Loader2, CheckCircle, XCircle, KeyRound, AlertTriangle, Search, Database, Server, HardDrive, Wifi, Package, Clock } from 'lucide-react'
-import { useAppMode } from '@/contexts/AppModeContext'
 
 interface AddTargetModalProps {
   open: boolean
@@ -40,7 +39,6 @@ type ModalStep = 'form' | 'crawling' | 'discovered'
 
 export default function AddTargetModal({ open, onClose, defaultType = '', defaultSubtype = '', title = 'Add Target' }: AddTargetModalProps) {
   const qc = useQueryClient()
-  const { isDemo } = useAppMode()
   const [form, setForm] = useState({
     name: '',
     target_type: defaultType,
@@ -221,10 +219,6 @@ export default function AddTargetModal({ open, onClose, defaultType = '', defaul
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (isDemo) {
-      setError('Adding targets is disabled in Demo mode. Switch to Live mode to manage infrastructure.')
-      return
-    }
     if (!form.name || !form.host || !form.target_type) {
       setError('Name, type, and host are required')
       return
@@ -257,8 +251,8 @@ export default function AddTargetModal({ open, onClose, defaultType = '', defaul
     })
 
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={handleClose}>
-        <div className="w-full max-w-2xl bg-slate-900 border border-white/10 rounded-2xl shadow-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+        <div className="w-full max-w-2xl bg-slate-900 border border-white/10 rounded-2xl shadow-2xl max-h-[85vh] flex flex-col">
           <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 flex-shrink-0">
             <h2 className="text-lg font-bold text-white flex items-center gap-2">
               <Search className="w-5 h-5 text-brand-400" />
@@ -448,8 +442,8 @@ export default function AddTargetModal({ open, onClose, defaultType = '', defaul
 
   // ── Step 1: Form ──
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={handleClose}>
-      <div className="w-full max-w-lg bg-slate-900 border border-white/10 rounded-2xl shadow-2xl" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="w-full max-w-lg bg-slate-900 border border-white/10 rounded-2xl shadow-2xl">
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
           <h2 className="text-lg font-bold text-white flex items-center gap-2">
             <Plus className="w-5 h-5 text-brand-400" />

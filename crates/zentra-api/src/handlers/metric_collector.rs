@@ -188,6 +188,7 @@ async fn collect_network_metrics(pool: &PgPool, org_id: Uuid) -> usize {
     let ssh_user = std::env::var("ZENTRA_SSH_USER").unwrap_or_else(|_| "root".into());
 
     // Build parallel SNMP poll script for all devices
+    let sq = crate::validation::shell_quote;
     let mut script_parts = vec!["TMPDIR=$(mktemp -d)".to_string()];
     for (i, (_, _, host, port, _)) in rows.iter().enumerate() {
         let snmp_target = if *port != 161 { format!("{}:{}", host, port) } else { host.clone() };
@@ -204,7 +205,7 @@ async fn collect_network_metrics(pool: &PgPool, org_id: Uuid) -> usize {
                  2>&1; \
                echo '@@END_{}@@'; \
              }} > $TMPDIR/dev_{} 2>&1 &",
-            i, snmp_target, i, i
+            i, sq(&snmp_target), i, i
         ));
     }
     script_parts.push("wait".to_string());
@@ -526,11 +527,12 @@ EXIT;
         let output = match output {
             Some(o) if !o.trim().is_empty() => o,
             _ => {
-                // Fall back to SSH — use single-quoted heredoc so $ is literal (no shell expansion)
+                // Fall back to SSH — shell-quote the connection string to prevent injection
+                let sq = crate::validation::shell_quote;
                 let conn_str = format!("{}/{}@//{}:{}/{}", db_user, db_pass, t.host, t.port, service);
                 let cmd = format!(
                     "sqlplus -S {} <<'EOSQL'\n{}\nEOSQL",
-                    conn_str, sql_script
+                    sq(&conn_str), sql_script
                 );
                 let result = zentra_core::ssh_pool::pooled_ssh_exec(&t.host, &ssh_user, &cmd).await;
                 if !result.success || result.stdout.trim().is_empty() {

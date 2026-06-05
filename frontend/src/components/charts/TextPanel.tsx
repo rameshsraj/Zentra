@@ -6,10 +6,24 @@ interface TextPanelProps {
 
 export default function TextPanel({ content, mode = 'plain', className = '' }: TextPanelProps) {
   if (mode === 'html') {
+    // Sanitize dangerous HTML to prevent XSS
+    const sanitized = content
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
+      .replace(/<object[\s\S]*?<\/object>/gi, '')
+      .replace(/<embed[\s\S]*?>/gi, '')
+      .replace(/<form[\s\S]*?<\/form>/gi, '')
+      .replace(/<link[\s\S]*?>/gi, '')
+      .replace(/<meta[\s\S]*?>/gi, '')
+      .replace(/\bon\w+\s*=\s*["'][^"']*["']/gi, '')
+      .replace(/\bon\w+\s*=\s*[^\s>]*/gi, '')
+      .replace(/javascript\s*:/gi, 'blocked:')
+      .replace(/vbscript\s*:/gi, 'blocked:')
+      .replace(/data\s*:\s*text\/html/gi, 'blocked:')
     return (
       <div
         className={`prose prose-invert prose-sm max-w-none ${className}`}
-        dangerouslySetInnerHTML={{ __html: content }}
+        dangerouslySetInnerHTML={{ __html: sanitized }}
       />
     )
   }

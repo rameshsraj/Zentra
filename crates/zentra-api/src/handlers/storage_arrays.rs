@@ -90,6 +90,7 @@ async fn fetch_storage_arrays(state: &AppState, org_id: Uuid) -> Vec<StorageArra
 
     // Build a single SSH script that polls ALL arrays in parallel.
     // Each job writes to its own temp file to avoid interleaved output.
+    let sq = crate::validation::shell_quote;
     let mut script_parts = vec!["TMPDIR=$(mktemp -d)".to_string()];
     for (i, (_, _, host, port, _, _)) in rows.iter().enumerate() {
         let snmp_target = if *port != 161 { format!("{}:{}", host, port) } else { host.clone() };
@@ -99,7 +100,7 @@ async fn fetch_storage_arrays(state: &AppState, org_id: Uuid) -> Vec<StorageArra
                echo '@@EXTENDS_{}@@'; \
                snmpwalk -v2c -c public -t2 -r0 {} NET-SNMP-EXTEND-MIB::nsExtendOutputFull 2>&1; \
                echo '@@END_{}@@'; }} > $TMPDIR/arr_{} 2>&1 &",
-            i, snmp_target, i, snmp_target, i, i
+            i, sq(&snmp_target), i, sq(&snmp_target), i, i
         ));
     }
     script_parts.push("wait".to_string());

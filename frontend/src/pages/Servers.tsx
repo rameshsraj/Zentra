@@ -313,8 +313,8 @@ export default function ServersPage() {
 
       {/* Server Detail Side Panel */}
       {selected && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-sm" onClick={() => setSelected(null)}>
-          <div className="w-full max-w-lg bg-slate-900 border-l border-white/10 shadow-2xl overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-sm">
+          <div className="w-full max-w-lg bg-slate-900 border-l border-white/10 shadow-2xl overflow-y-auto">
             <div className="p-5 border-b border-white/10 flex items-center justify-between">
               <div>
                 <h3 className="text-lg font-bold text-white">{selected.name}</h3>
@@ -430,8 +430,8 @@ export default function ServersPage() {
 
       {/* Disk Drilldown Modal */}
       {diskDrilldown && selected && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setDiskDrilldown(false)}>
-          <div className="bg-slate-900 border border-white/10 rounded-2xl w-full max-w-2xl shadow-2xl max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-slate-900 border border-white/10 rounded-2xl w-full max-w-2xl shadow-2xl max-h-[80vh] overflow-y-auto">
             <div className="p-5 border-b border-white/10 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-amber-500/20 rounded-lg"><HardDrive className="w-5 h-5 text-amber-400" /></div>
@@ -512,8 +512,8 @@ export default function ServersPage() {
 
       {/* Delete Confirmation Dialog */}
       {deleteConfirm?.open && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setDeleteConfirm(null)}>
-          <div className="bg-slate-900 border border-white/10 rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-slate-900 border border-white/10 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
             <div className="flex items-center gap-3 mb-4">
               <div className="p-2 bg-red-500/20 rounded-lg">
                 <Trash2 className="w-5 h-5 text-red-400" />
@@ -548,8 +548,8 @@ export default function ServersPage() {
 
       {/* SSH Key Setup Modal */}
       {sshSetup?.open && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setSshSetup(null)}>
-          <div className="bg-slate-900 border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-slate-900 border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-2xl">
             <div className="flex items-center gap-3 mb-4">
               <div className="p-2 bg-blue-500/20 rounded-lg">
                 <KeyRound className="w-5 h-5 text-blue-400" />

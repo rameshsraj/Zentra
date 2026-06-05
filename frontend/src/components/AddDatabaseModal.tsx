@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { createTarget, testDbConnection } from '@/lib/api'
 import { X, Plus, Loader2, Database, CheckCircle } from 'lucide-react'
-import { useAppMode } from '@/contexts/AppModeContext'
 
 interface AddDatabaseModalProps {
   open: boolean
@@ -32,7 +31,6 @@ const DB_CONFIGS: Record<string, {
 
 export default function AddDatabaseModal({ open, onClose, dbType, title }: AddDatabaseModalProps) {
   const qc = useQueryClient()
-  const { isDemo } = useAppMode()
   const config = DB_CONFIGS[dbType]
 
   const [form, setForm] = useState({
@@ -82,7 +80,6 @@ export default function AddDatabaseModal({ open, onClose, dbType, title }: AddDa
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (isDemo) { setError('Adding databases is disabled in Demo mode.'); return }
     if (!form.name || !form.host) { setError('Name and Host are required'); return }
     if (!testResult?.ok) { setError('Please run "Test Connection" successfully before adding.'); return }
     setError('')
@@ -119,8 +116,8 @@ export default function AddDatabaseModal({ open, onClose, dbType, title }: AddDa
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-lg bg-slate-900 border border-white/10 rounded-2xl shadow-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="w-full max-w-lg bg-slate-900 border border-white/10 rounded-2xl shadow-2xl max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 flex-shrink-0">
           <h2 className="text-lg font-bold text-white flex items-center gap-2">

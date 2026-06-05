@@ -8,11 +8,9 @@ export const getHealth = () => fetchJSON<{ status: string }>('/health')
 export const getSystemStatus = () => fetchJSON<SystemStatus>('/system/status')
 export const getDbHealth = () => fetchJSON<{ database: string }>('/system/db')
 
-// Global Demo/Live Mode
-export interface AppModeResponse { mode: 'demo' | 'live'; demo: boolean; description: string }
+// App Mode (always live)
+export interface AppModeResponse { mode: 'live'; description: string }
 export const getAppMode = () => fetchJSON<AppModeResponse>('/config/mode')
-export const setAppMode = (mode: 'demo' | 'live') =>
-  fetchJSON<AppModeResponse>('/config/mode', { method: 'POST', body: JSON.stringify({ mode }) })
 
 // P11: Config/Status API
 export const getRuntimeInfo = () => fetchJSON<{ status: string; data: Record<string, unknown> }>('/v1/status/runtimeinfo')
@@ -48,4 +46,3 @@ export const getLicenseStatus = () => fetchJSON<LicenseStatus>('/system/license-
 
 // Data Audit (V5 Prompt 19)
 export const getDataSourceAudit = () => fetchJSON<any>('/audit/data-sources')
-export const getMockDataCheck = () => fetchJSON<any>('/audit/mock-data')

@@ -157,8 +157,8 @@ export default function MiddlewareServicePage({ serviceType, title, extraEndpoin
 
       {/* Add Instance Modal */}
       {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowAddModal(false)}>
-          <div className="w-full max-w-lg bg-slate-900 border border-white/10 rounded-2xl shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-lg bg-slate-900 border border-white/10 rounded-2xl shadow-2xl">
             <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
               <h2 className="text-lg font-bold text-white flex items-center gap-2">
                 <Plus className="w-5 h-5 text-brand-400" />

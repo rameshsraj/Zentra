@@ -212,6 +212,29 @@ if ($LASTEXITCODE -eq 0) {
     Write-Warn "Failed to generate SSH key pair"
 }
 
+# Copy root's key to zentra user so zentra-server (running as 'zentra') uses the same key
+$ZENTRA_SSH_DIR = "/opt/zentra/.ssh"
+Write-Info "Copying SSH key to zentra user ($ZENTRA_SSH_DIR)..."
+docker exec zentra mkdir -p $ZENTRA_SSH_DIR
+docker exec zentra cp $ROOT_KEY $ZENTRA_SSH_DIR/id_rsa
+docker exec zentra cp "${ROOT_KEY}.pub" $ZENTRA_SSH_DIR/id_rsa.pub
+docker exec zentra chown zentra:zentra $ZENTRA_SSH_DIR/id_rsa $ZENTRA_SSH_DIR/id_rsa.pub
+docker exec zentra chmod 600 $ZENTRA_SSH_DIR/id_rsa
+docker exec zentra chmod 644 $ZENTRA_SSH_DIR/id_rsa.pub
+# SSH config for zentra user
+docker exec zentra sh -c "echo 'Host *' > $ZENTRA_SSH_DIR/config"
+docker exec zentra sh -c "echo '    StrictHostKeyChecking no' >> $ZENTRA_SSH_DIR/config"
+docker exec zentra sh -c "echo '    UserKnownHostsFile /dev/null' >> $ZENTRA_SSH_DIR/config"
+docker exec zentra sh -c "echo '    LogLevel ERROR' >> $ZENTRA_SSH_DIR/config"
+docker exec zentra sh -c "echo '    GSSAPIAuthentication no' >> $ZENTRA_SSH_DIR/config"
+docker exec zentra chown zentra:zentra $ZENTRA_SSH_DIR/config
+docker exec zentra chmod 600 $ZENTRA_SSH_DIR/config
+if ($LASTEXITCODE -eq 0) {
+    Write-Ok "SSH key copied to zentra user at $ZENTRA_SSH_DIR"
+} else {
+    Write-Warn "Failed to copy SSH key to zentra user"
+}
+
 # ---------------------------------------------------------------------------
 # Step 6: Connect Zentra container to simulation network
 # ---------------------------------------------------------------------------

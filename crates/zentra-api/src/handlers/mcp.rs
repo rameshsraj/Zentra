@@ -716,9 +716,10 @@ async fn execute_live_tool(
                     let mut devices = Vec::new();
                     let mut online = 0u32;
                     let mut offline = 0u32;
+                    let sq = crate::validation::shell_quote;
                     for t in &net_targets {
                         let snmp_target = if t.port != 161 { format!("{}:{}", t.host, t.port) } else { t.host.clone() };
-                        let cmd = format!("snmpget -v2c -c public -t2 -r0 {} .1.3.6.1.2.1.1.1.0 2>&1", snmp_target);
+                        let cmd = format!("snmpget -v2c -c public -t2 -r0 {} .1.3.6.1.2.1.1.1.0 2>&1", sq(&snmp_target));
                         let res = zentra_core::ssh_pool::pooled_ssh_exec(&ssh_host, &ssh_user, &cmd).await;
                         let ok = res.stdout.contains("STRING:");
                         if ok { online += 1; } else { offline += 1; }
@@ -770,9 +771,10 @@ async fn execute_live_tool(
                     let mut arrays = Vec::new();
                     let mut healthy = 0u32;
                     let mut offline_count = 0u32;
+                    let sq = crate::validation::shell_quote;
                     for t in &storage_targets {
                         let snmp_target = if t.port != 161 { format!("{}:{}", t.host, t.port) } else { t.host.clone() };
-                        let cmd = format!("snmpget -v2c -c public -t2 -r0 {} .1.3.6.1.2.1.1.1.0 2>&1", snmp_target);
+                        let cmd = format!("snmpget -v2c -c public -t2 -r0 {} .1.3.6.1.2.1.1.1.0 2>&1", sq(&snmp_target));
                         let res = zentra_core::ssh_pool::pooled_ssh_exec(&ssh_host, &ssh_user, &cmd).await;
                         let ok = res.stdout.contains("STRING:");
                         let sys_descr = if ok { res.stdout.split("STRING:").nth(1).map(|s| s.trim().to_string()) } else { None };
@@ -790,9 +792,10 @@ async fn execute_live_tool(
                 },
                 "storage_get_array_detail" => {
                     let name = params.get("array_name").and_then(|v| v.as_str()).unwrap_or("");
+                    let sq = crate::validation::shell_quote;
                     if let Some(t) = storage_targets.iter().find(|t| t.name == name || t.host == name) {
                         let snmp_target = if t.port != 161 { format!("{}:{}", t.host, t.port) } else { t.host.clone() };
-                        let cmd = format!("snmpget -v2c -c public -t2 -r0 {} .1.3.6.1.2.1.1.1.0 2>&1", snmp_target);
+                        let cmd = format!("snmpget -v2c -c public -t2 -r0 {} .1.3.6.1.2.1.1.1.0 2>&1", sq(&snmp_target));
                         let res = zentra_core::ssh_pool::pooled_ssh_exec(&ssh_host, &ssh_user, &cmd).await;
                         let ok = res.stdout.contains("STRING:");
                         let sys_descr = if ok { res.stdout.split("STRING:").nth(1).map(|s| s.trim().to_string()) } else { None };

@@ -385,14 +385,20 @@ pub async fn setup_ssh(
     Json(req): Json<SetupSshRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     if !validation::is_safe_ssh_host(&req.host) {
-        return Err(ApiError::BadRequest("Invalid host: this address is not allowed for security reasons".into()));
+        return Err(ApiError::BadRequest("Invalid host".into()));
+    }
+    if !validation::is_safe_username(&req.username) {
+        return Err(ApiError::BadRequest("Invalid username".into()));
+    }
+    if req.password.is_empty() || req.password.len() > 256 {
+        return Err(ApiError::BadRequest("Invalid password".into()));
     }
     let result = ssh_utils::setup_ssh_key_auth(&req.host, &req.username, &req.password).await;
 
     if result.success {
         Ok(Json(serde_json::json!({
             "success": true,
-            "message": result.stdout,
+            "message": "SSH key setup successful",
             "host": req.host,
             "username": req.username,
         })))
@@ -515,14 +521,21 @@ who 2>/dev/null | wc -l || echo "0"
 echo "===END==="
 "#;
 
+    let identity = zentra_core::ssh_utils::resolve_ssh_identity();
+    let mut ssh_args = vec![
+        "-o".to_string(), "StrictHostKeyChecking=accept-new".to_string(),
+        "-o".to_string(), "ConnectTimeout=5".to_string(),
+        "-o".to_string(), "BatchMode=yes".to_string(),
+    ];
+    if let Some(ref id_file) = identity {
+        ssh_args.push("-i".to_string());
+        ssh_args.push(id_file.clone());
+    }
+    ssh_args.push(format!("{}@{}", user, host));
+    ssh_args.push(stats_script.to_string());
+
     let output = Command::new("ssh")
-        .args([
-            "-o", "StrictHostKeyChecking=accept-new",
-            "-o", "ConnectTimeout=5",
-            "-o", "BatchMode=yes",
-            &format!("{}@{}", user, host),
-            stats_script,
-        ])
+        .args(&ssh_args)
         .output()
         .await
         .map_err(|e| ApiError::Internal(ssh_utils::friendly_error(host, &e.to_string())))?;
@@ -841,14 +854,21 @@ echo "${FW}"
 echo "===END==="
 "#;
 
+    let identity = zentra_core::ssh_utils::resolve_ssh_identity();
+    let mut ssh_args = vec![
+        "-o".to_string(), "StrictHostKeyChecking=accept-new".to_string(),
+        "-o".to_string(), "ConnectTimeout=10".to_string(),
+        "-o".to_string(), "BatchMode=yes".to_string(),
+    ];
+    if let Some(ref id_file) = identity {
+        ssh_args.push("-i".to_string());
+        ssh_args.push(id_file.clone());
+    }
+    ssh_args.push(format!("{}@{}", user, host));
+    ssh_args.push(crawl_script.to_string());
+
     let output = Command::new("ssh")
-        .args([
-            "-o", "StrictHostKeyChecking=accept-new",
-            "-o", "ConnectTimeout=10",
-            "-o", "BatchMode=yes",
-            &format!("{}@{}", user, host),
-            crawl_script,
-        ])
+        .args(&ssh_args)
         .output()
         .await
         .map_err(|e| ApiError::Internal(ssh_utils::friendly_error(host, &e.to_string())))?;

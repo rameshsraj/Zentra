@@ -2,7 +2,6 @@ import { useState, useCallback } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { scanSubnet, testNetworkDevice, createTarget } from '@/lib/api'
 import type { SubnetScanResult } from '@/lib/api'
-import { useAppMode } from '@/contexts/AppModeContext'
 import {
   X, Search, Loader2, Plus, Wifi, WifiOff, Router,
   Shield, Server, Radio, Printer, HelpCircle,
@@ -42,7 +41,6 @@ const deviceTypeColor: Record<string, string> = {
 
 export default function AddNetworkDeviceModal({ open, onClose }: Props) {
   const qc = useQueryClient()
-  const { isDemo } = useAppMode()
   const [tab, setTab] = useState<Tab>('scan')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -126,7 +124,6 @@ export default function AddNetworkDeviceModal({ open, onClose }: Props) {
 
   const handleManualAdd = useCallback((e: React.FormEvent) => {
     e.preventDefault()
-    if (isDemo) { setError('Adding targets is disabled in Demo mode.'); return }
     if (!manualForm.name || !manualForm.host) { setError('Name and host are required'); return }
     setError('')
     addDeviceMut.mutate({
@@ -136,10 +133,9 @@ export default function AddNetworkDeviceModal({ open, onClose }: Props) {
       subtype: manualForm.subtype,
       description: manualForm.description,
     })
-  }, [manualForm, isDemo, addDeviceMut])
+  }, [manualForm, addDeviceMut])
 
   const handleBulkAdd = useCallback(() => {
-    if (isDemo) { setError('Adding targets is disabled in Demo mode.'); return }
     if (!scanResult) return
     const devices = scanResult.devices.filter(d => selectedDevices.has(d.ip))
     if (devices.length === 0) { setError('No devices selected'); return }
@@ -153,7 +149,7 @@ export default function AddNetworkDeviceModal({ open, onClose }: Props) {
         description: d.sys_descr || `Discovered via subnet scan (${d.vendor || 'unknown vendor'})`,
       })
     })
-  }, [scanResult, selectedDevices, isDemo, addDeviceMut])
+  }, [scanResult, selectedDevices, addDeviceMut])
 
   const toggleDevice = (ip: string) => {
     setSelectedDevices(prev => {
@@ -175,8 +171,8 @@ export default function AddNetworkDeviceModal({ open, onClose }: Props) {
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-3xl max-h-[85vh] bg-slate-900 border border-white/10 rounded-2xl shadow-2xl flex flex-col" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="w-full max-w-3xl max-h-[85vh] bg-slate-900 border border-white/10 rounded-2xl shadow-2xl flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 flex-shrink-0">
           <div>

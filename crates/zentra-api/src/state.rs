@@ -8,7 +8,6 @@ use zentra_log_engine::correlation::CorrelationEngine;
 use crate::target_pool::SharedTargetPoolCache;
 use dashmap::DashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::info;
 
 /// Shared application state available to all API handlers
@@ -30,8 +29,6 @@ pub struct AppState {
     pub jwt_secret: Arc<str>,
     /// Cached outbound PgPools for monitored targets (max 64, 5-min idle TTL).
     pub target_pools: SharedTargetPoolCache,
-    /// Per-instance demo/live mode flag.
-    demo_mode: Arc<AtomicBool>,
     /// Shared HTTP client with connection pooling for all outbound monitoring.
     /// Configured with keep-alive, idle TTL, and per-host connection limits.
     pub http_client: reqwest::Client,
@@ -45,10 +42,6 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(pool: DbPool, tsdb_pool: DbPool, event_bus: EventBus, org_id: uuid::Uuid, jwt_secret: String) -> Self {
-        // Default: demo mode OFF unless ZENTRA_DEMO_MODE=true (must be explicit opt-in)
-        let demo = std::env::var("ZENTRA_DEMO_MODE")
-            .map(|v| v == "true" || v == "1")
-            .unwrap_or(false);
         // Build a shared reqwest::Client with connection pooling.
         // This SINGLE client is reused for ALL outbound HTTP monitoring:
         // middleware (Nginx, Apache, HAProxy, …), cloud APIs (AWS/Azure/GCP),
@@ -97,17 +90,6 @@ impl AppState {
             tsdb_pool,
             event_bus,
             org_id,
-            demo_mode: Arc::new(AtomicBool::new(demo)),
         }
-    }
-
-    /// Check if this instance is in demo mode.
-    pub fn is_demo_mode(&self) -> bool {
-        self.demo_mode.load(Ordering::Relaxed)
-    }
-
-    /// Switch demo/live mode at runtime.
-    pub fn set_demo_mode(&self, demo: bool) {
-        self.demo_mode.store(demo, Ordering::Relaxed);
     }
 }
