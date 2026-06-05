@@ -10,7 +10,7 @@ $ErrorActionPreference = "Stop"
 $SERVER_HOST  = if ($env:SERVER_HOST)  { $env:SERVER_HOST }  else { "10.88.11.162" }
 $SERVER_PORT  = if ($env:SERVER_PORT)  { [int]$env:SERVER_PORT } else { 22 }
 $SERVER_USER  = if ($env:SERVER_USER)  { $env:SERVER_USER }  else { "root" }
-$DEPLOY_PATH  = if ($env:DEPLOY_PATH)  { $env:DEPLOY_PATH }  else { "/store/Zentra" }
+$DEPLOY_PATH  = if ($env:DEPLOY_PATH)  { $env:DEPLOY_PATH }  else { "/store/zentra" }
 $BACKEND_PORT = if ($env:ZENTRA_API_PORT) { [int]$env:ZENTRA_API_PORT } else { 5006 }
 $FRONTEND_PORT= if ($env:FRONTEND_PORT) { [int]$env:FRONTEND_PORT } else { 5010 }
 
@@ -23,7 +23,7 @@ if (-not (Test-Path "$PROJECT_ROOT\Cargo.toml")) {
     $PROJECT_ROOT = Split-Path -Parent $PSScriptRoot
 }
 if (-not (Test-Path "$PROJECT_ROOT\Cargo.toml")) {
-    $PROJECT_ROOT = "C:\Project-code\Zentra"
+    $PROJECT_ROOT = "C:\git\Zentra"
 }
 
 Write-Host "============================================" -ForegroundColor Cyan

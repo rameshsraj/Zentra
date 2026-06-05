@@ -5,6 +5,7 @@ import CommandPalette from './CommandPalette'
 import FloatingChatbot from './FloatingChatbot'
 import { useTheme } from '@/contexts/ThemeContext'
 import { themeList, type ThemeName } from '@/styles/themes'
+import { Palette, Check, Sun, Moon } from 'lucide-react'
 import {
   LayoutDashboard,
   Bell,
@@ -191,10 +192,11 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
 
   if (collapsed) {
     return (
-      <div className="px-3 py-2 border-t border-white/10">
+      <div className="px-3 py-2" style={{ borderTop: '1px solid var(--sidebar-border)' }}>
         <button
           onClick={logout}
-          className="flex justify-center w-full p-1 rounded hover:bg-white/10 text-gray-400 hover:text-red-400 transition"
+          className="flex justify-center w-full p-1 rounded hover:text-red-400 transition"
+          style={{ color: 'var(--sidebar-text-muted)' }}
           title="Sign out"
         >
           <LogOut className="w-4 h-4" />
@@ -204,19 +206,22 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
   }
 
   return (
-    <div className="px-3 py-2 border-t border-white/10 space-y-1">
+    <div className="px-3 py-2 space-y-1" style={{ borderTop: '1px solid var(--sidebar-border)' }}>
       <div className="flex items-center gap-2 px-2 py-1.5">
-        <div className="w-7 h-7 rounded-full bg-brand-600/30 flex items-center justify-center flex-shrink-0">
-          <User className="w-3.5 h-3.5 text-brand-400" />
+        <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style={{ backgroundColor: 'var(--sidebar-active-bg)' }}>
+          <User className="w-3.5 h-3.5" style={{ color: 'var(--accent)' }} />
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-xs font-medium text-white truncate">{user.display_name || user.username}</p>
-          <p className="text-[10px] text-gray-500 truncate">{user.roles?.[0] || 'User'}</p>
+          <p className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>{user.display_name || user.username}</p>
+          <p className="text-[10px] truncate" style={{ color: 'var(--sidebar-text-muted)' }}>{user.roles?.[0] || 'User'}</p>
         </div>
       </div>
       <button
         onClick={logout}
-        className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-gray-400 hover:text-red-400 hover:bg-white/5 transition"
+        className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:text-red-400 transition"
+        style={{ color: 'var(--sidebar-text-muted)' }}
+        onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--sidebar-hover)')}
+        onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
       >
         <LogOut className="w-3 h-3" />
         Sign out
@@ -225,41 +230,154 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
   )
 }
 
-function ThemeSelector() {
-  const { themeName, setTheme } = useTheme()
-  return (
-    <div className="px-3 py-2 border-t border-white/10">
-      <label className="text-[9px] text-slate-500 uppercase tracking-wider font-semibold">Theme</label>
-      <div className="flex flex-wrap gap-1 mt-1">
-        {themeList.map(t => (
-          <button
-            key={t.name}
-            onClick={() => setTheme(t.name as ThemeName)}
-            className={`w-5 h-5 rounded-full border-2 transition-all ${themeName === t.name ? 'border-white scale-110' : 'border-transparent opacity-60 hover:opacity-100'}`}
-            style={{ backgroundColor: t.colors.accent }}
-            title={t.label}
-          />
-        ))}
+function ThemeSelector({ collapsed }: { collapsed: boolean }) {
+  const { themeName, setTheme, theme: currentTheme } = useTheme()
+  const [open, setOpen] = useState(false)
+
+  const darkThemes = themeList.filter(t => t.isDark)
+  const lightThemes = themeList.filter(t => !t.isDark)
+
+  if (collapsed) {
+    return (
+      <div className="px-3 py-2" style={{ borderTop: `1px solid var(--sidebar-border)` }}>
+        <button
+          onClick={() => setOpen(!open)}
+          className="flex justify-center w-full p-1.5 rounded-lg transition-colors"
+          style={{ color: 'var(--sidebar-text)' }}
+          onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--sidebar-hover)')}
+          onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+          title="Change theme"
+        >
+          <Palette className="w-4 h-4" />
+        </button>
+        {open && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+            <div
+              className="fixed left-16 bottom-16 z-50 w-64 rounded-xl shadow-2xl p-3 space-y-3 max-h-[70vh] overflow-y-auto custom-scrollbar"
+              style={{ backgroundColor: 'var(--card-bg)', border: `1px solid var(--card-border)` }}
+            >
+              <ThemePanelContent darkThemes={darkThemes} lightThemes={lightThemes} themeName={themeName} setTheme={setTheme} onClose={() => setOpen(false)} />
+            </div>
+          </>
+        )}
       </div>
+    )
+  }
+
+  return (
+    <div className="px-3 py-2" style={{ borderTop: `1px solid var(--sidebar-border)` }}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors"
+        style={{ color: 'var(--sidebar-text)' }}
+        onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--sidebar-hover)')}
+        onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+      >
+        <Palette className="w-3.5 h-3.5" />
+        <span className="flex-1 text-left">Theme</span>
+        <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ backgroundColor: 'var(--sidebar-hover)', color: 'var(--sidebar-text-muted)' }}>{currentTheme.label}</span>
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div
+            className="fixed left-64 bottom-16 z-50 w-72 rounded-xl shadow-2xl p-3 space-y-3 max-h-[70vh] overflow-y-auto custom-scrollbar"
+            style={{ backgroundColor: 'var(--card-bg)', border: `1px solid var(--card-border)` }}
+          >
+            <ThemePanelContent darkThemes={darkThemes} lightThemes={lightThemes} themeName={themeName} setTheme={setTheme} onClose={() => setOpen(false)} />
+          </div>
+        </>
+      )}
     </div>
+  )
+}
+
+function ThemePanelContent({ darkThemes, lightThemes, themeName, setTheme, onClose }: {
+  darkThemes: typeof themeList
+  lightThemes: typeof themeList
+  themeName: ThemeName
+  setTheme: (name: ThemeName) => void
+  onClose: () => void
+}) {
+  return (
+    <>
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Choose Theme</h3>
+        <button onClick={onClose} className="text-xs px-2 py-0.5 rounded" style={{ color: 'var(--text-muted)' }}>✕</button>
+      </div>
+      {lightThemes.length > 0 && (
+        <div>
+          <div className="flex items-center gap-1.5 mb-2">
+            <Sun className="w-3 h-3" style={{ color: 'var(--text-muted)' }} />
+            <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-muted)' }}>Light</span>
+          </div>
+          <div className="space-y-1">
+            {lightThemes.map(t => (
+              <ThemeOption key={t.name} theme={t} isActive={themeName === t.name} onSelect={() => { setTheme(t.name as ThemeName); onClose() }} />
+            ))}
+          </div>
+        </div>
+      )}
+      <div>
+        <div className="flex items-center gap-1.5 mb-2">
+          <Moon className="w-3 h-3" style={{ color: 'var(--text-muted)' }} />
+          <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: 'var(--text-muted)' }}>Dark</span>
+        </div>
+        <div className="space-y-1">
+          {darkThemes.map(t => (
+            <ThemeOption key={t.name} theme={t} isActive={themeName === t.name} onSelect={() => { setTheme(t.name as ThemeName); onClose() }} />
+          ))}
+        </div>
+      </div>
+    </>
+  )
+}
+
+function ThemeOption({ theme: t, isActive, onSelect }: { theme: typeof themeList[0]; isActive: boolean; onSelect: () => void }) {
+  return (
+    <button
+      onClick={onSelect}
+      className={cn(
+        'w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-medium transition-all',
+        isActive ? 'ring-1' : 'opacity-80 hover:opacity-100'
+      )}
+      style={{
+        backgroundColor: isActive ? t.colors.sidebarActiveBg : 'transparent',
+        color: isActive ? t.colors.accent : 'var(--text-secondary)',
+        ringColor: isActive ? t.colors.accent : undefined,
+      }}
+      onMouseEnter={e => { if (!isActive) e.currentTarget.style.backgroundColor = 'var(--sidebar-hover)' }}
+      onMouseLeave={e => { if (!isActive) e.currentTarget.style.backgroundColor = 'transparent' }}
+    >
+      {/* Color preview dots */}
+      <div className="flex gap-0.5 flex-shrink-0">
+        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.bgPrimary, border: `1px solid ${t.colors.border}` }} />
+        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.accent }} />
+        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.success }} />
+        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.colors.danger }} />
+      </div>
+      <span className="flex-1 text-left">{t.label}</span>
+      {isActive && <Check className="w-3.5 h-3.5" style={{ color: t.colors.accent }} />}
+    </button>
   )
 }
 
 function ModeToggle({ collapsed }: { collapsed: boolean }) {
   if (collapsed) {
     return (
-      <div className="p-3 border-t border-white/10">
+      <div className="p-3" style={{ borderTop: '1px solid var(--sidebar-border)' }}>
         <div className="flex justify-center w-full">
-          <div className="w-2.5 h-2.5 rounded-full animate-pulse bg-emerald-500" />
+          <div className="w-2.5 h-2.5 rounded-full animate-pulse" style={{ backgroundColor: 'var(--success)' }} />
         </div>
       </div>
     )
   }
 
   return (
-    <div className="p-3 border-t border-white/10 space-y-2">
-      <div className="flex items-center gap-2 text-xs text-gray-500">
-        <div className="w-2 h-2 rounded-full animate-pulse bg-emerald-500" />
+    <div className="p-3 space-y-2" style={{ borderTop: '1px solid var(--sidebar-border)' }}>
+      <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--sidebar-text-muted)' }}>
+        <div className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: 'var(--success)' }} />
         <span>Zentra v0.1.0</span>
       </div>
     </div>
@@ -466,25 +584,32 @@ export default function Layout() {
       {/* Sidebar */}
       <aside
         className={cn(
-          'flex-shrink-0 flex flex-col transition-all duration-300 bg-gradient-to-b from-slate-900 via-blue-950/30 to-slate-900 border-r border-white/10 shadow-2xl',
+          'flex-shrink-0 flex flex-col transition-all duration-300 shadow-2xl',
           collapsed ? 'w-16' : 'w-64'
         )}
+        style={{
+          background: 'var(--sidebar-bg-gradient, var(--sidebar-bg))',
+          borderRight: '1px solid var(--sidebar-border)',
+        }}
       >
         {/* Logo */}
-        <div className="h-14 flex items-center justify-between px-3 border-b border-white/10">
+        <div className="h-14 flex items-center justify-between px-3" style={{ borderBottom: '1px solid var(--sidebar-border)' }}>
           <div className="flex items-center gap-2 overflow-hidden">
-            <div className="w-8 h-8 rounded-lg bg-brand-600/30 flex items-center justify-center flex-shrink-0">
-              <Activity className="w-5 h-5 text-brand-400" />
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: 'var(--sidebar-active-bg)' }}>
+              <Activity className="w-5 h-5" style={{ color: 'var(--accent)' }} />
             </div>
             {!collapsed && (
-              <span className="text-lg font-bold tracking-tight text-white whitespace-nowrap">
+              <span className="text-lg font-bold tracking-tight whitespace-nowrap" style={{ color: 'var(--text-primary)' }}>
                 Zentra
               </span>
             )}
           </div>
           <button
             onClick={() => { setCollapsed(c => { const next = !c; try { localStorage.setItem('zentra-sidebar-collapsed', String(next)) } catch {} return next }) }}
-            className="p-1 rounded hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
+            className="p-1 rounded transition-colors"
+            style={{ color: 'var(--sidebar-text-muted)' }}
+            onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'var(--sidebar-hover)'; e.currentTarget.style.color = 'var(--text-primary)' }}
+            onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--sidebar-text-muted)' }}
           >
             {collapsed ? <Menu className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
           </button>
@@ -495,11 +620,18 @@ export default function Layout() {
           <div className="px-3 pt-3">
             <button
               onClick={openPalette}
-              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-gray-500 text-sm hover:bg-white/10 transition-colors"
+              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors"
+              style={{
+                backgroundColor: 'var(--input-bg)',
+                border: '1px solid var(--input-border)',
+                color: 'var(--sidebar-text-muted)',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--sidebar-hover)')}
+              onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'var(--input-bg)')}
             >
               <Search className="w-3.5 h-3.5" />
               <span>Search...</span>
-              <kbd className="ml-auto text-[10px] bg-white/10 px-1.5 py-0.5 rounded">⌘K</kbd>
+              <kbd className="ml-auto text-[10px] px-1.5 py-0.5 rounded" style={{ backgroundColor: 'var(--sidebar-hover)' }}>⌘K</kbd>
             </button>
           </div>
         )}
@@ -522,12 +654,13 @@ export default function Layout() {
                 <div key={item.label}>
                   <button
                     onClick={() => toggleExpand(item.label)}
-                    className={cn(
-                      'w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all',
-                      active
-                        ? 'bg-brand-600/20 text-brand-400'
-                        : 'text-gray-400 hover:bg-white/10 hover:text-gray-200'
-                    )}
+                    className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all"
+                    style={{
+                      backgroundColor: active ? 'var(--sidebar-active-bg)' : 'transparent',
+                      color: active ? 'var(--sidebar-active-text)' : 'var(--sidebar-text)',
+                    }}
+                    onMouseEnter={e => { if (!active) { e.currentTarget.style.backgroundColor = 'var(--sidebar-hover)' } }}
+                    onMouseLeave={e => { if (!active) { e.currentTarget.style.backgroundColor = 'transparent' } }}
                   >
                     <item.icon className="w-4 h-4 flex-shrink-0" />
                     {!collapsed && (
@@ -543,21 +676,23 @@ export default function Layout() {
                     )}
                   </button>
                   {isExp && !collapsed && (
-                    <div className="ml-4 mt-0.5 space-y-0.5 border-l border-white/10 pl-2">
+                    <div className="ml-4 mt-0.5 space-y-0.5 pl-2" style={{ borderLeft: '1px solid var(--sidebar-border)' }}>
                       {filterChildren(item.children!).map((child) => {
                         const hasSubChildren = child.children && child.children.length > 0
                         const isSubExp = expanded.includes(child.label)
+                        const childActive = isActive(child.to)
                         if (hasSubChildren) {
                           return (
                             <div key={child.label}>
                               <button
                                 onClick={() => toggleExpand(child.label)}
-                                className={cn(
-                                  'w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
-                                  isActive(child.to)
-                                    ? 'bg-brand-600/20 text-brand-400'
-                                    : 'text-gray-500 hover:bg-white/10 hover:text-gray-300'
-                                )}
+                                className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                                style={{
+                                  backgroundColor: childActive ? 'var(--sidebar-active-bg)' : 'transparent',
+                                  color: childActive ? 'var(--sidebar-active-text)' : 'var(--sidebar-text-muted)',
+                                }}
+                                onMouseEnter={e => { if (!childActive) { e.currentTarget.style.backgroundColor = 'var(--sidebar-hover)'; e.currentTarget.style.color = 'var(--sidebar-text)' } }}
+                                onMouseLeave={e => { if (!childActive) { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--sidebar-text-muted)' } }}
                               >
                                 <child.icon className="w-3.5 h-3.5" />
                                 <span className="flex-1 text-left">{child.label}</span>
@@ -569,25 +704,27 @@ export default function Layout() {
                                 />
                               </button>
                               {isSubExp && (
-                                <div className="ml-4 mt-0.5 space-y-0.5 border-l border-white/10 pl-2">
-                                  {child.children!.map((sub) => (
-                                    <NavLink
-                                      key={sub.to}
-                                      to={sub.to}
-                                      end
-                                      className={({ isActive: isSubActive }) =>
-                                        cn(
-                                          'flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] font-medium transition-colors',
-                                          isSubActive
-                                            ? 'bg-brand-600/20 text-brand-400'
-                                            : 'text-gray-500 hover:bg-white/10 hover:text-gray-300'
-                                        )
-                                      }
-                                    >
-                                      <sub.icon className="w-3 h-3" />
-                                      {sub.label}
-                                    </NavLink>
-                                  ))}
+                                <div className="ml-4 mt-0.5 space-y-0.5 pl-2" style={{ borderLeft: '1px solid var(--sidebar-border)' }}>
+                                  {child.children!.map((sub) => {
+                                    const subActive = location.pathname === sub.to || location.pathname.startsWith(sub.to + '/')
+                                    return (
+                                      <NavLink
+                                        key={sub.to}
+                                        to={sub.to}
+                                        end
+                                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[11px] font-medium transition-colors"
+                                        style={{
+                                          backgroundColor: subActive ? 'var(--sidebar-active-bg)' : 'transparent',
+                                          color: subActive ? 'var(--sidebar-active-text)' : 'var(--sidebar-text-muted)',
+                                        }}
+                                        onMouseEnter={e => { if (!subActive) { e.currentTarget.style.backgroundColor = 'var(--sidebar-hover)'; e.currentTarget.style.color = 'var(--sidebar-text)' } }}
+                                        onMouseLeave={e => { if (!subActive) { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--sidebar-text-muted)' } }}
+                                      >
+                                        <sub.icon className="w-3 h-3" />
+                                        {sub.label}
+                                      </NavLink>
+                                    )
+                                  })}
                                 </div>
                               )}
                             </div>
@@ -598,14 +735,13 @@ export default function Layout() {
                             key={child.to}
                             to={child.to}
                             end
-                            className={({ isActive: isChildActive }) =>
-                              cn(
-                                'flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
-                                isChildActive
-                                  ? 'bg-brand-600/20 text-brand-400'
-                                  : 'text-gray-500 hover:bg-white/10 hover:text-gray-300'
-                              )
-                            }
+                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                            style={{
+                              backgroundColor: childActive ? 'var(--sidebar-active-bg)' : 'transparent',
+                              color: childActive ? 'var(--sidebar-active-text)' : 'var(--sidebar-text-muted)',
+                            }}
+                            onMouseEnter={e => { if (!childActive) { e.currentTarget.style.backgroundColor = 'var(--sidebar-hover)'; e.currentTarget.style.color = 'var(--sidebar-text)' } }}
+                            onMouseLeave={e => { if (!childActive) { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--sidebar-text-muted)' } }}
                           >
                             <child.icon className="w-3.5 h-3.5" />
                             {child.label}
@@ -622,14 +758,13 @@ export default function Layout() {
               <NavLink
                 key={item.to}
                 to={item.to}
-                className={({ isActive: isNavActive }) =>
-                  cn(
-                    'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all',
-                    isNavActive
-                      ? 'bg-brand-600/20 text-brand-400 shadow-lg shadow-brand-600/5'
-                      : 'text-gray-400 hover:bg-white/10 hover:text-gray-200'
-                  )
-                }
+                className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all"
+                style={({ isActive: isNavActive }) => ({
+                  backgroundColor: isNavActive ? 'var(--sidebar-active-bg)' : 'transparent',
+                  color: isNavActive ? 'var(--sidebar-active-text)' : 'var(--sidebar-text)',
+                })}
+                onMouseEnter={e => { if (!isActive(item.to)) { e.currentTarget.style.backgroundColor = 'var(--sidebar-hover)' } }}
+                onMouseLeave={e => { if (!isActive(item.to)) { e.currentTarget.style.backgroundColor = 'transparent' } }}
               >
                 <item.icon className="w-4 h-4 flex-shrink-0" />
                 {!collapsed && item.label}
@@ -639,9 +774,7 @@ export default function Layout() {
         </nav>
 
         {/* Theme Selector */}
-        {!collapsed && (
-          <ThemeSelector />
-        )}
+        <ThemeSelector collapsed={collapsed} />
 
         {/* User Menu */}
         <UserMenu collapsed={collapsed} />
@@ -651,7 +784,7 @@ export default function Layout() {
       </aside>
 
       {/* Main content */}
-      <main id="main-content" className="flex-1 overflow-y-auto bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+      <main id="main-content" className="flex-1 overflow-y-auto" style={{ background: 'var(--main-bg-gradient, var(--main-bg))' }}>
         {trialExpired && (
           <div className="bg-amber-900/80 border-b border-amber-600/50 px-6 py-3 flex items-center gap-3">
             <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0" />

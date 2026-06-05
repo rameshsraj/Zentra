@@ -908,7 +908,7 @@ export interface UserDetail extends UserListItem {
   password_changed_at: string | null; updated_at: string
   roles: any[]; groups: any[]
 }
-export interface CreateUserReq { email: string; username: string; password: string; display_name?: string; role_ids?: string[] }
+export interface CreateUserReq { email: string; username: string; password: string; display_name?: string; role_ids?: string[]; org_id?: string }
 export interface UpdateUserReq { email?: string; username?: string; display_name?: string; avatar_url?: string; timezone?: string; theme?: string; is_active?: boolean }
 export interface BulkUserActionReq { action: string; user_ids: string[] }
 

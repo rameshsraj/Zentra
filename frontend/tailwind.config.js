@@ -22,10 +22,10 @@ export default {
           950: '#172554',
         },
         surface: {
-          DEFAULT: '#0f172a',
-          card: '#1e293b',
-          hover: '#334155',
-          border: '#475569',
+          DEFAULT: 'var(--bg-primary)',
+          card: 'var(--card-bg)',
+          hover: 'var(--sidebar-hover)',
+          border: 'var(--card-border)',
         },
         bg: {
           primary: 'var(--bg-primary)',
@@ -44,6 +44,19 @@ export default {
         border: {
           DEFAULT: 'var(--border)',
           hover: 'var(--border-hover)',
+        },
+        sidebar: {
+          bg: 'var(--sidebar-bg)',
+          text: 'var(--sidebar-text)',
+          muted: 'var(--sidebar-text-muted)',
+          active: 'var(--sidebar-active-text)',
+          'active-bg': 'var(--sidebar-active-bg)',
+          border: 'var(--sidebar-border)',
+          hover: 'var(--sidebar-hover)',
+        },
+        card: {
+          bg: 'var(--card-bg)',
+          border: 'var(--card-border)',
         },
         success: 'var(--success)',
         warning: 'var(--warning)',

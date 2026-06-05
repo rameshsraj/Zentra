@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::state::AppState;
 use crate::tenant::OrgId;
+use crate::auth_middleware::AuthContext;
 use zentra_core::models::auth::*;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -112,15 +113,109 @@ pub async fn list_users(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// POST /api/users — create user (admin only)
+// POST /api/users — create user (role-enforced)
+//
+// Business rules:
+//   • Super Admin → can create Admins only, must specify target org_id
+//   • Admin       → can create Users only, within their own org
+//   • Others      → forbidden
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub async fn create_user(
     State(state): State<AppState>,
-    OrgId(org_id): OrgId,
+    OrgId(caller_org_id): OrgId,
+    axum::Extension(ctx): axum::Extension<AuthContext>,
     Json(req): Json<CreateUserRequest>,
 ) -> impl IntoResponse {
-    // Check if email already exists
+    let caller_role = ctx.role.as_str();
+
+    // ── Role gate ────────────────────────────────────────────────────────
+    let is_super = caller_role == "Super Admin";
+    let is_admin = caller_role == "Admin";
+
+    if !is_super && !is_admin {
+        return (StatusCode::FORBIDDEN, Json(json!({
+            "error": "forbidden",
+            "message": "Only Admins can create users"
+        }))).into_response();
+    }
+
+    // ── Determine target org_id ──────────────────────────────────────────
+    let target_org_id = if is_super {
+        // Super Admin MUST supply org_id for the new Admin
+        match req.org_id {
+            Some(oid) => {
+                // Verify org exists and is active
+                let org_ok: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM organizations WHERE org_id = $1 AND status IN ('active','trial'))"
+                ).bind(oid).fetch_one(&state.pool).await.unwrap_or(false);
+                if !org_ok {
+                    return (StatusCode::BAD_REQUEST, Json(json!({
+                        "error": "invalid_org",
+                        "message": "Organization does not exist or is not active"
+                    }))).into_response();
+                }
+                oid
+            }
+            None => {
+                return (StatusCode::BAD_REQUEST, Json(json!({
+                    "error": "org_required",
+                    "message": "Super Admin must specify org_id when creating an Admin"
+                }))).into_response();
+            }
+        }
+    } else {
+        // Admin creates within their own org; ignore any supplied org_id
+        caller_org_id
+    };
+
+    // ── Role assignment enforcement ──────────────────────────────────────
+    // Resolve the role names the caller is trying to assign
+    if let Some(ref role_ids) = req.role_ids {
+        if !role_ids.is_empty() {
+            let placeholders: Vec<String> = (1..=role_ids.len()).map(|i| format!("${}", i)).collect();
+            let sql = format!(
+                "SELECT name FROM roles WHERE role_id IN ({}) AND org_id = ${}",
+                placeholders.join(", "),
+                role_ids.len() + 1
+            );
+            let mut query = sqlx::query_scalar::<_, String>(&sql);
+            for rid in role_ids {
+                query = query.bind(rid);
+            }
+            query = query.bind(target_org_id);
+            let assigned_roles: Vec<String> = query.fetch_all(&state.pool).await.unwrap_or_default();
+
+            if is_super {
+                // Super Admin can only create Admins — must include Admin role, must not include
+                // regular user-only roles without Admin
+                let has_admin = assigned_roles.iter().any(|r| r == "Admin");
+                if !has_admin {
+                    return (StatusCode::BAD_REQUEST, Json(json!({
+                        "error": "role_required",
+                        "message": "Super Admin must assign the Admin role when creating users"
+                    }))).into_response();
+                }
+            } else {
+                // Admin cannot assign Admin or Super Admin roles
+                let assigns_elevated = assigned_roles.iter().any(|r| r == "Admin" || r == "Super Admin");
+                if assigns_elevated {
+                    return (StatusCode::FORBIDDEN, Json(json!({
+                        "error": "forbidden",
+                        "message": "Admin cannot assign Admin or Super Admin roles"
+                    }))).into_response();
+                }
+            }
+        }
+    } else if is_super {
+        // Super Admin did not select any roles — reject
+        return (StatusCode::BAD_REQUEST, Json(json!({
+            "error": "role_required",
+            "message": "Super Admin must assign the Admin role when creating users"
+        }))).into_response();
+    }
+
+    // ── Check email uniqueness ───────────────────────────────────────────
     let existing = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM users WHERE email = $1"
     )
@@ -152,7 +247,7 @@ pub async fn create_user(
          VALUES ($1, $2, $3, $4, $5, $6)"
     )
     .bind(user_id)
-    .bind(org_id)
+    .bind(target_org_id)
     .bind(&req.email)
     .bind(&req.username)
     .bind(&password_hash)
@@ -175,18 +270,18 @@ pub async fn create_user(
             )
             .bind(user_id)
             .bind(role_id)
-            .bind(org_id)
+            .bind(target_org_id)
             .execute(&state.pool)
             .await;
         }
     } else {
-        // Assign default Viewer role
+        // Assign default Viewer role (only for Admin-created users)
         let _ = sqlx::query(
             "INSERT INTO user_roles (user_id, role_id, org_id) \
              SELECT $1, role_id, $2 FROM roles WHERE name = 'Viewer' AND org_id = $2 LIMIT 1"
         )
         .bind(user_id)
-        .bind(org_id)
+        .bind(target_org_id)
         .execute(&state.pool)
         .await;
     }
@@ -196,15 +291,16 @@ pub async fn create_user(
         "INSERT INTO audit_log (org_id, user_id, action, resource_type, resource_id, details, status) \
          VALUES ($1, $2, 'create_user', 'user', $3, $4, 'success')"
     )
-    .bind(org_id)
-    .bind(user_id)
+    .bind(target_org_id)
+    .bind(ctx.user_id)
     .bind(user_id.to_string())
-    .bind(json!({"email": req.email, "username": req.username}))
+    .bind(json!({"email": req.email, "username": req.username, "created_by": ctx.email, "target_org": target_org_id}))
     .execute(&state.pool)
     .await;
 
     (StatusCode::CREATED, Json(json!({
         "id": user_id,
+        "org_id": target_org_id,
         "email": req.email,
         "username": req.username,
         "message": "User created successfully"

@@ -51,6 +51,9 @@ pub struct CreateUserRequest {
     pub password: String,
     pub display_name: Option<String>,
     pub role_ids: Option<Vec<Uuid>>,
+    /// Super Admin can specify a target org when creating an Admin.
+    /// Ignored for non-Super-Admin callers.
+    pub org_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
