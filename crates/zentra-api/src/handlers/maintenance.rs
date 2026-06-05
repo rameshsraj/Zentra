@@ -103,75 +103,10 @@ fn store() -> &'static RwLock<MaintenanceStore> {
 }
 
 fn init_store() -> MaintenanceStore {
-    let now = Utc::now();
-    let windows = vec![
-        MaintenanceWindow {
-            id: "mw-001".into(),
-            name: "Weekend DB Patching".into(),
-            scope_type: "group".into(),
-            scope_targets: vec!["databases".into()],
-            schedule_type: "recurring".into(),
-            start_time: (now + Duration::days(2)).to_rfc3339(),
-            end_time: (now + Duration::days(2) + Duration::hours(4)).to_rfc3339(),
-            recurrence: Some("0 2 * * 6".into()),
-            suppress_alerts: true,
-            created_by: "admin".into(),
-            created_at: (now - Duration::days(7)).to_rfc3339(),
-            is_active: false,
-        },
-        MaintenanceWindow {
-            id: "mw-002".into(),
-            name: "Network Switch Upgrade".into(),
-            scope_type: "host".into(),
-            scope_targets: vec!["10.88.11.1".into(), "10.88.11.2".into()],
-            schedule_type: "once".into(),
-            start_time: (now - Duration::hours(1)).to_rfc3339(),
-            end_time: (now + Duration::hours(3)).to_rfc3339(),
-            recurrence: None,
-            suppress_alerts: true,
-            created_by: "netops".into(),
-            created_at: (now - Duration::days(1)).to_rfc3339(),
-            is_active: true,
-        },
-        MaintenanceWindow {
-            id: "mw-003".into(),
-            name: "SSL Certificate Renewal".into(),
-            scope_type: "service".into(),
-            scope_targets: vec!["web-services".into()],
-            schedule_type: "once".into(),
-            start_time: (now + Duration::days(5)).to_rfc3339(),
-            end_time: (now + Duration::days(5) + Duration::hours(1)).to_rfc3339(),
-            recurrence: None,
-            suppress_alerts: false,
-            created_by: "security".into(),
-            created_at: now.to_rfc3339(),
-            is_active: false,
-        },
-        MaintenanceWindow {
-            id: "mw-004".into(),
-            name: "Monthly Server Reboot".into(),
-            scope_type: "all".into(),
-            scope_targets: vec![],
-            schedule_type: "recurring".into(),
-            start_time: (now - Duration::days(15)).to_rfc3339(),
-            end_time: (now - Duration::days(15) + Duration::hours(2)).to_rfc3339(),
-            recurrence: Some("0 3 1 * *".into()),
-            suppress_alerts: true,
-            created_by: "admin".into(),
-            created_at: (now - Duration::days(30)).to_rfc3339(),
-            is_active: false,
-        },
-    ];
-
-    let mut sla_targets = std::collections::HashMap::new();
-    sla_targets.insert("hc-http-google".into(), 99.9);
-    sla_targets.insert("hc-http-api".into(), 99.95);
-    sla_targets.insert("hc-tcp-ssh".into(), 99.99);
-    sla_targets.insert("hc-ping-gw".into(), 99.99);
-    sla_targets.insert("hc-dns-resolve".into(), 99.9);
-    sla_targets.insert("hc-ssl-cert".into(), 99.5);
-
-    MaintenanceStore { windows, sla_targets }
+    MaintenanceStore {
+        windows: vec![],
+        sla_targets: std::collections::HashMap::new(),
+    }
 }
 
 fn is_window_active(w: &MaintenanceWindow) -> bool {
@@ -296,61 +231,7 @@ pub async fn check_target_maintenance(
 pub async fn sla_reports(
     State(_s): State<AppState>,
 ) -> Result<Json<Vec<SLAReport>>, ApiError> {
-    let store = store().read();
-    let checks = vec![
-        ("hc-http-google", "Google HTTP Check", "google.com", 99.92, 99.88, 99.91, 99.90),
-        ("hc-http-api", "API Health Endpoint", "10.88.11.162", 100.0, 99.97, 99.95, 99.94),
-        ("hc-tcp-ssh", "SSH Port Check", "10.88.11.162", 100.0, 100.0, 99.99, 99.99),
-        ("hc-tcp-pg", "PostgreSQL Port", "10.88.11.50", 100.0, 99.95, 99.93, 99.92),
-        ("hc-tcp-mysql", "MySQL Port", "10.88.11.51", 100.0, 99.90, 99.88, 99.85),
-        ("hc-ping-gw", "Gateway Ping", "10.88.11.1", 100.0, 100.0, 99.98, 99.97),
-        ("hc-ping-dns", "DNS Server Ping", "8.8.8.8", 100.0, 99.99, 99.99, 99.99),
-        ("hc-dns-resolve", "DNS Resolution", "8.8.8.8", 100.0, 99.95, 99.92, 99.90),
-        ("hc-ssl-cert", "SSL Certificate Check", "google.com", 100.0, 100.0, 100.0, 100.0),
-        ("hc-disk-root", "Root Disk Space", "10.88.11.162", 100.0, 99.80, 99.75, 99.70),
-        ("hc-disk-data", "Data Disk Space", "10.88.11.162", 94.0, 96.5, 97.2, 97.8),
-        ("hc-proc-nginx", "Nginx Process", "10.88.11.162", 100.0, 99.95, 99.90, 99.88),
-        ("hc-load-avg", "Load Average", "10.88.11.162", 100.0, 99.85, 99.80, 99.75),
-        ("hc-ntp-sync", "NTP Sync Check", "10.88.11.162", 100.0, 99.98, 99.95, 99.93),
-        ("hc-snmp-uptime", "SNMP System Uptime", "10.88.11.1", 98.0, 97.5, 98.2, 98.5),
-    ];
-
-    let reports: Vec<SLAReport> = checks.into_iter().map(|(id, name, host, u24, u7, u30, u90)| {
-        let target = store.sla_targets.get(id).copied().unwrap_or(99.9);
-        let outage_count = if u30 < 99.9 { 3 } else if u30 < 99.99 { 1 } else { 0 };
-        let downtime = (100.0 - u30) * 30.0 * 24.0 * 60.0 / 100.0;
-        let longest = if outage_count > 0 { downtime / outage_count as f64 } else { 0.0 };
-
-        let outages: Vec<OutageEntry> = if outage_count > 0 {
-            (0..outage_count).map(|i| {
-                let start = Utc::now() - Duration::days(10 * (i as i64 + 1));
-                OutageEntry {
-                    started_at: start.to_rfc3339(),
-                    ended_at: Some((start + Duration::minutes(longest as i64)).to_rfc3339()),
-                    duration_mins: (longest * 100.0).round() / 100.0,
-                    reason: format!("Auto-detected: {} degradation", if i == 0 { "response time" } else { "connectivity" }),
-                }
-            }).collect()
-        } else { vec![] };
-
-        SLAReport {
-            check_id: id.into(),
-            check_name: name.into(),
-            target_host: host.into(),
-            sla_target_pct: target,
-            uptime_24h: u24,
-            uptime_7d: u7,
-            uptime_30d: u30,
-            uptime_90d: u90,
-            total_outages_30d: outage_count,
-            total_downtime_mins_30d: (downtime * 100.0).round() / 100.0,
-            longest_outage_mins: (longest * 100.0).round() / 100.0,
-            compliance: u30 >= target,
-            outages,
-        }
-    }).collect();
-
-    Ok(Json(reports))
+    Ok(Json(vec![]))
 }
 
 pub async fn sla_report_detail(

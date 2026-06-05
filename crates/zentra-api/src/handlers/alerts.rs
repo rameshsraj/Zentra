@@ -180,38 +180,7 @@ pub async fn create_rule(
 // ── Alert Silences ──
 
 pub async fn list_silences() -> Json<serde_json::Value> {
-    Json(serde_json::json!([
-        {
-            "id": "sil-001",
-            "name": "Maintenance Window - DB Upgrade",
-            "matchers": [{ "name": "host", "value": "db-oracle-01", "is_regex": false }],
-            "starts_at": "2025-01-15T22:00:00Z",
-            "ends_at": "2025-01-16T06:00:00Z",
-            "created_by": "admin",
-            "comment": "Scheduled Oracle upgrade",
-            "status": "active"
-        },
-        {
-            "id": "sil-002",
-            "name": "Suppress Network Alerts - DC2",
-            "matchers": [{ "name": "datacenter", "value": "dc2", "is_regex": false }, { "name": "severity", "value": "warning", "is_regex": false }],
-            "starts_at": "2025-01-14T08:00:00Z",
-            "ends_at": "2025-01-14T12:00:00Z",
-            "created_by": "netops",
-            "comment": "Network maintenance in DC2",
-            "status": "expired"
-        },
-        {
-            "id": "sil-003",
-            "name": "Ignore dev-* alerts",
-            "matchers": [{ "name": "host", "value": "dev-.*", "is_regex": true }],
-            "starts_at": "2025-01-01T00:00:00Z",
-            "ends_at": "2025-12-31T23:59:59Z",
-            "created_by": "admin",
-            "comment": "Dev environment noise suppression",
-            "status": "active"
-        }
-    ]))
+    Json(serde_json::json!([]))
 }
 
 pub async fn create_silence(Json(body): Json<serde_json::Value>) -> Json<serde_json::Value> {
@@ -415,17 +384,7 @@ pub struct InhibitionRule {
 
 fn inhibition_store() -> &'static parking_lot::RwLock<Vec<InhibitionRule>> {
     static INSTANCE: std::sync::OnceLock<parking_lot::RwLock<Vec<InhibitionRule>>> = std::sync::OnceLock::new();
-    INSTANCE.get_or_init(|| parking_lot::RwLock::new(vec![
-        InhibitionRule {
-            id: Uuid::nil(),
-            name: "Critical suppresses Warning".into(),
-            source_match: serde_json::json!({"severity": "critical"}),
-            target_match: serde_json::json!({"severity": "warning"}),
-            equal_labels: vec!["alertname".into(), "instance".into()],
-            enabled: true,
-            created_at: Utc::now(),
-        },
-    ]))
+    INSTANCE.get_or_init(|| parking_lot::RwLock::new(vec![]))
 }
 
 /// GET /api/alerts/inhibitions

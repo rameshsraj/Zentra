@@ -52,12 +52,7 @@ pub async fn get_status(State(_s): State<AppState>, Path(id): Path<String>) -> R
 pub async fn performance_history(State(_s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<HAProxyHistoryPoint>>, ApiError> {
     let insts = instances().read();
     let _inst = insts.iter().find(|i| i.id == id).ok_or((StatusCode::NOT_FOUND, "Not found".into()))?;
-    let now = Utc::now();
-    let points: Vec<HAProxyHistoryPoint> = (0..60).rev().map(|i| {
-        let j = (i as f64 * 0.12).sin();
-        HAProxyHistoryPoint { timestamp: (now - Duration::minutes(i)).to_rfc3339(), sessions: (1500.0 + j * 300.0) as u64, session_rate: 1000.0 + j * 200.0, hrsp_2xx: (10000.0 + j * 2000.0) as u64, hrsp_5xx: (5.0 + j * 3.0).max(0.0) as u64, queue_depth: (2.0 + j * 3.0).max(0.0) as u64 }
-    }).collect();
-    Ok(Json(points))
+    Ok(Json(vec![]))
 }
 
 pub async fn create_instance(State(_s): State<AppState>, Json(req): Json<CreateHAProxyRequest>) -> Result<Json<HAProxyInstance>, ApiError> {

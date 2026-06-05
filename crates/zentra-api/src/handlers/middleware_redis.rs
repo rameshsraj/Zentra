@@ -40,11 +40,7 @@ pub async fn get_status(State(_s): State<AppState>, Path(id): Path<String>) -> R
 }
 pub async fn performance_history(State(_s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<RedisHistoryPoint>>, ApiError> {
     let insts = instances().read(); let _inst = insts.iter().find(|i| i.id == id).ok_or((StatusCode::NOT_FOUND, "Not found".into()))?;
-    let now = Utc::now();
-    let points: Vec<RedisHistoryPoint> = (0..60).rev().map(|i| { let j = (i as f64 * 0.1).sin();
-        RedisHistoryPoint { timestamp: (now - Duration::minutes(i)).to_rfc3339(), ops_per_sec: 45000.0 + j * 8000.0, used_memory_mb: 2048.0 + j * 200.0, connected_clients: (128.0 + j * 20.0) as u32, hit_rate: 89.96 + j * 2.0 }
-    }).collect();
-    Ok(Json(points))
+    Ok(Json(vec![]))
 }
 pub async fn create_instance(State(_s): State<AppState>, Json(req): Json<CreateRedisRequest>) -> Result<Json<RedisInstance>, ApiError> {
     let inst = RedisInstance { id: crate::error::short_id("redis"), name: req.name, host: req.host, port: req.port.unwrap_or(6379), status: "unknown".into(), created_at: Utc::now().to_rfc3339() };

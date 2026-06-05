@@ -46,12 +46,7 @@ pub async fn get_status(State(_s): State<AppState>, Path(id): Path<String>) -> R
 pub async fn performance_history(State(_s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<PhpFpmHistoryPoint>>, ApiError> {
     let insts = instances().read();
     let _inst = insts.iter().find(|i| i.id == id).ok_or((StatusCode::NOT_FOUND, "Not found".into()))?;
-    let now = Utc::now();
-    let points: Vec<PhpFpmHistoryPoint> = (0..60).rev().map(|i| {
-        let j = (i as f64 * 0.13).sin();
-        PhpFpmHistoryPoint { timestamp: (now - Duration::minutes(i)).to_rfc3339(), active_processes: (12.0 + j * 6.0) as u32, idle_processes: (18.0 - j * 6.0) as u32, listen_queue: (j * 2.0).max(0.0) as u32, slow_requests: (45.0 + i as f64 * 0.3) as u64, accepted_conn: (845000.0 + i as f64 * 100.0) as u64 }
-    }).collect();
-    Ok(Json(points))
+    Ok(Json(vec![]))
 }
 
 pub async fn create_instance(State(_s): State<AppState>, Json(req): Json<CreatePhpFpmRequest>) -> Result<Json<PhpFpmInstance>, ApiError> {

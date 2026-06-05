@@ -88,84 +88,9 @@ fn store() -> &'static RwLock<ItsmStore> {
 }
 
 fn init_store() -> ItsmStore {
-    let now = Utc::now();
     ItsmStore {
-        configs: vec![
-            ItsmConfig {
-                id: "itsm-001".into(),
-                name: "ServiceNow Production".into(),
-                provider: "servicenow".into(),
-                enabled: true,
-                url: "https://example.service-now.com".into(),
-                username: Some("zentra_svc".into()),
-                api_key_masked: Some("****".into()),
-                project_key: None,
-                instance: Some("example".into()),
-                routing_key: None,
-                field_mappings: serde_json::json!({
-                    "category": "Infrastructure",
-                    "assignment_group": "NOC",
-                    "cmdb_ci": "auto_detect"
-                }),
-                created_at: (now - chrono::Duration::days(30)).to_rfc3339(),
-                last_sync: Some((now - chrono::Duration::hours(1)).to_rfc3339()),
-                sync_status: "ok".into(),
-                tickets_created: 47,
-            },
-            ItsmConfig {
-                id: "itsm-002".into(),
-                name: "JIRA Cloud".into(),
-                provider: "jira".into(),
-                enabled: true,
-                url: "https://yourcompany.atlassian.net".into(),
-                username: Some("alerts@yourcompany.com".into()),
-                api_key_masked: Some("****".into()),
-                project_key: Some("OPS".into()),
-                instance: None,
-                routing_key: None,
-                field_mappings: serde_json::json!({
-                    "issue_type": "Bug",
-                    "labels": ["Zentra", "auto-created"],
-                    "priority_map": {"critical": "Highest", "warning": "High", "info": "Medium"}
-                }),
-                created_at: (now - chrono::Duration::days(14)).to_rfc3339(),
-                last_sync: Some((now - chrono::Duration::hours(2)).to_rfc3339()),
-                sync_status: "ok".into(),
-                tickets_created: 23,
-            },
-        ],
-        tickets: vec![
-            ItsmTicket {
-                id: "ticket-001".into(),
-                provider: "servicenow".into(),
-                external_id: "INC0012345".into(),
-                external_url: "https://example.service-now.com/incident.do?sys_id=abc123".into(),
-                title: "CPU usage critical on app-server-01".into(),
-                description: "CPU usage exceeded 95% threshold for 10 minutes. Automatic ticket created by Zentra.".into(),
-                status: "resolved".into(),
-                priority: "2 - High".into(),
-                assignee: Some("John Doe".into()),
-                alert_id: Some("alert-xyz".into()),
-                created_at: (now - chrono::Duration::hours(8)).to_rfc3339(),
-                updated_at: (now - chrono::Duration::hours(6)).to_rfc3339(),
-                resolved_at: Some((now - chrono::Duration::hours(6)).to_rfc3339()),
-            },
-            ItsmTicket {
-                id: "ticket-002".into(),
-                provider: "jira".into(),
-                external_id: "OPS-1042".into(),
-                external_url: "https://yourcompany.atlassian.net/browse/OPS-1042".into(),
-                title: "Disk space warning on db-primary".into(),
-                description: "Disk usage at 87% on /var/lib/postgresql. Immediate attention required.".into(),
-                status: "open".into(),
-                priority: "High".into(),
-                assignee: Some("ops-team".into()),
-                alert_id: Some("alert-abc".into()),
-                created_at: (now - chrono::Duration::hours(2)).to_rfc3339(),
-                updated_at: (now - chrono::Duration::hours(1)).to_rfc3339(),
-                resolved_at: None,
-            },
-        ],
+        configs: vec![],
+        tickets: vec![],
     }
 }
 

@@ -82,89 +82,7 @@ pub async fn list_dashboards(
     State(_state): State<AppState>,
     Query(_params): Query<DashboardQuery>,
 ) -> Result<Json<Vec<DashboardResponse>>, ApiError> {
-    let now = Utc::now();
-    let dashboards = vec![
-        DashboardResponse {
-            dashboard_id: Uuid::now_v7(),
-            org_id: Uuid::nil(),
-            name: "Infrastructure Overview".into(),
-            description: Some("Main monitoring dashboard".into()),
-            panels: vec![
-                DashboardPanel {
-                    panel_id: "p1".into(),
-                    title: "CPU Usage".into(),
-                    panel_type: "timeseries".into(),
-                    metric_query: "server.cpu_usage_percent".into(),
-                    width: 6, height: 4, position_x: 0, position_y: 0,
-                    options: serde_json::json!({"unit": "%", "thresholds": [80, 95]}),
-                },
-                DashboardPanel {
-                    panel_id: "p2".into(),
-                    title: "Memory Usage".into(),
-                    panel_type: "gauge".into(),
-                    metric_query: "server.memory_usage_percent".into(),
-                    width: 3, height: 4, position_x: 6, position_y: 0,
-                    options: serde_json::json!({"unit": "%", "max": 100}),
-                },
-                DashboardPanel {
-                    panel_id: "p3".into(),
-                    title: "Network Throughput".into(),
-                    panel_type: "timeseries".into(),
-                    metric_query: "network.bytes_received,network.bytes_sent".into(),
-                    width: 6, height: 4, position_x: 0, position_y: 4,
-                    options: serde_json::json!({"unit": "bytes/s", "stacked": true}),
-                },
-            ],
-            variables: vec![
-                TemplateVariable {
-                    name: "host".into(),
-                    label: Some("Host".into()),
-                    variable_type: "query".into(),
-                    query: Some("SELECT DISTINCT resource_id FROM metrics".into()),
-                    options: vec!["prod-web-01".into(), "prod-web-02".into(), "prod-db-01".into()],
-                    current_value: Some("prod-web-01".into()),
-                    multi: true,
-                    include_all: true,
-                },
-                TemplateVariable {
-                    name: "interval".into(),
-                    label: Some("Interval".into()),
-                    variable_type: "interval".into(),
-                    query: None,
-                    options: vec!["1m".into(), "5m".into(), "15m".into(), "1h".into()],
-                    current_value: Some("5m".into()),
-                    multi: false,
-                    include_all: false,
-                },
-            ],
-            version: 3,
-            created_by: Some("admin".into()),
-            created_at: now,
-            updated_at: now,
-        },
-        DashboardResponse {
-            dashboard_id: Uuid::now_v7(),
-            org_id: Uuid::nil(),
-            name: "Database Performance".into(),
-            description: Some("PostgreSQL and Oracle metrics".into()),
-            panels: vec![
-                DashboardPanel {
-                    panel_id: "dp1".into(),
-                    title: "Active Connections".into(),
-                    panel_type: "stat".into(),
-                    metric_query: "database.active_connections".into(),
-                    width: 3, height: 3, position_x: 0, position_y: 0,
-                    options: serde_json::json!({}),
-                },
-            ],
-            variables: vec![],
-            version: 1,
-            created_by: Some("admin".into()),
-            created_at: now,
-            updated_at: now,
-        },
-    ];
-    Ok(Json(dashboards))
+    Ok(Json(vec![]))
 }
 
 pub async fn create_dashboard(
@@ -190,19 +108,7 @@ pub async fn get_dashboard(
     State(_state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<DashboardResponse>, ApiError> {
-    let now = Utc::now();
-    Ok(Json(DashboardResponse {
-        dashboard_id: id,
-        org_id: Uuid::nil(),
-        name: "Example Dashboard".into(),
-        description: None,
-        panels: vec![],
-        variables: vec![],
-        version: 1,
-        created_by: None,
-        created_at: now,
-        updated_at: now,
-    }))
+    Err(ApiError::NotFound(format!("Dashboard {} not found", id)))
 }
 
 pub async fn delete_dashboard(
@@ -217,23 +123,7 @@ pub async fn export_dashboard(
     State(_state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<DashboardExport>, ApiError> {
-    let now = Utc::now();
-    Ok(Json(DashboardExport {
-        zentra_version: "0.1.0".into(),
-        export_format: "Zentra-dashboard-v1".into(),
-        dashboard: DashboardResponse {
-            dashboard_id: id,
-            org_id: Uuid::nil(),
-            name: "Exported Dashboard".into(),
-            description: Some("Exported for sharing".into()),
-            panels: vec![],
-            variables: vec![],
-            version: 1,
-            created_by: Some("admin".into()),
-            created_at: now,
-            updated_at: now,
-        },
-    }))
+    Err(ApiError::NotFound(format!("Dashboard {} not found", id)))
 }
 
 /// Import a dashboard from JSON.
@@ -529,16 +419,7 @@ pub struct CreatePlaylistRequest {
 
 fn playlist_store() -> &'static parking_lot::RwLock<Vec<Playlist>> {
     static INSTANCE: std::sync::OnceLock<parking_lot::RwLock<Vec<Playlist>>> = std::sync::OnceLock::new();
-    INSTANCE.get_or_init(|| parking_lot::RwLock::new(vec![
-        Playlist {
-            playlist_id: Uuid::nil(),
-            name: "NOC Display".into(),
-            interval_seconds: 30,
-            dashboard_ids: vec![Uuid::nil()],
-            current_index: 0,
-            created_at: Utc::now(),
-        },
-    ]))
+    INSTANCE.get_or_init(|| parking_lot::RwLock::new(vec![]))
 }
 fn bookmark_store() -> &'static parking_lot::RwLock<std::collections::HashSet<Uuid>> {
     static INSTANCE: std::sync::OnceLock<parking_lot::RwLock<std::collections::HashSet<Uuid>>> = std::sync::OnceLock::new();
@@ -889,14 +770,14 @@ pub async fn dashboard_overview(
     State(_s): State<AppState>,
 ) -> Json<serde_json::Value> {
     Json(serde_json::json!({
-        "hosts": { "total": 48, "up": 45, "down": 2, "degraded": 1 },
-        "alerts": { "total": 127, "critical": 3, "warning": 18, "info": 106 },
-        "security_events": { "total": 1234, "high": 12, "medium": 45, "low": 1177 },
-        "sla_pct": 99.87,
-        "oracle": { "connections": 3, "healthy": 2, "degraded": 1, "metrics_collected": 4200 },
-        "network": { "bandwidth_mbps": 4500, "active_connections": 12450, "packets_sec": 85000 },
-        "storage": { "total_tb": 120.5, "used_pct": 68.2, "iops": 45000 },
-        "uptime_days": 142,
+        "hosts": { "total": 0, "up": 0, "down": 0, "degraded": 0 },
+        "alerts": { "total": 0, "critical": 0, "warning": 0, "info": 0 },
+        "security_events": { "total": 0, "high": 0, "medium": 0, "low": 0 },
+        "sla_pct": 0.0,
+        "oracle": { "connections": 0, "healthy": 0, "degraded": 0, "metrics_collected": 0 },
+        "network": { "bandwidth_mbps": 0, "active_connections": 0, "packets_sec": 0 },
+        "storage": { "total_tb": 0.0, "used_pct": 0.0, "iops": 0 },
+        "uptime_days": 0,
     }))
 }
 
@@ -905,16 +786,7 @@ pub async fn dashboard_health_summary(
     State(_s): State<AppState>,
 ) -> Json<serde_json::Value> {
     Json(serde_json::json!({
-        "modules": [
-            { "name": "Servers", "status": "healthy", "hosts_up": 24, "hosts_total": 25, "alerts": 2, "sparkline": [95,96,97,98,99,99,98] },
-            { "name": "Network", "status": "healthy", "hosts_up": 12, "hosts_total": 12, "alerts": 1, "sparkline": [90,92,95,93,96,97,98] },
-            { "name": "Storage", "status": "healthy", "hosts_up": 8, "hosts_total": 8, "alerts": 0, "sparkline": [99,99,99,98,99,99,99] },
-            { "name": "Oracle DB", "status": "degraded", "hosts_up": 2, "hosts_total": 3, "alerts": 5, "sparkline": [95,96,92,88,85,90,92] },
-            { "name": "PostgreSQL", "status": "healthy", "hosts_up": 4, "hosts_total": 4, "alerts": 0, "sparkline": [99,99,99,99,99,99,99] },
-            { "name": "Security", "status": "warning", "hosts_up": null, "hosts_total": null, "alerts": 12, "sparkline": [80,85,82,78,75,80,85] },
-            { "name": "Middleware", "status": "healthy", "hosts_up": 15, "hosts_total": 15, "alerts": 3, "sparkline": [96,97,98,99,98,97,98] },
-            { "name": "Health Checks", "status": "healthy", "hosts_up": null, "hosts_total": null, "alerts": 1, "sparkline": [99,99,98,99,99,99,99] },
-        ],
+        "modules": [],
     }))
 }
 
@@ -922,17 +794,7 @@ pub async fn dashboard_health_summary(
 pub async fn dashboard_timeline(
     State(_s): State<AppState>,
 ) -> Json<serde_json::Value> {
-    let now = chrono::Utc::now();
     Json(serde_json::json!({
-        "events": [
-            { "time": (now - chrono::Duration::minutes(5)).to_rfc3339(), "type": "alert", "severity": "critical", "module": "oracle", "message": "ORA-04031: shared memory allocation failed on ora-prod-01", "entity": "ora-prod-01" },
-            { "time": (now - chrono::Duration::minutes(12)).to_rfc3339(), "type": "discovery", "severity": "info", "module": "network", "message": "New host discovered: 10.88.11.45 (srv-cache-01)", "entity": "10.88.11.45" },
-            { "time": (now - chrono::Duration::minutes(25)).to_rfc3339(), "type": "security", "severity": "warning", "module": "security", "message": "Brute force login attempt from 203.0.113.50", "entity": "203.0.113.50" },
-            { "time": (now - chrono::Duration::minutes(40)).to_rfc3339(), "type": "maintenance", "severity": "info", "module": "servers", "message": "Scheduled maintenance started on srv-web-02", "entity": "srv-web-02" },
-            { "time": (now - chrono::Duration::minutes(55)).to_rfc3339(), "type": "alert", "severity": "warning", "module": "storage", "message": "Volume /data/pg exceeding 85% capacity", "entity": "storage-nas-01" },
-            { "time": (now - chrono::Duration::hours(1)).to_rfc3339(), "type": "deployment", "severity": "info", "module": "operations", "message": "Deployment v2.5.1 completed successfully", "entity": "app-cluster" },
-            { "time": (now - chrono::Duration::hours(2)).to_rfc3339(), "type": "alert", "severity": "critical", "module": "network", "message": "BGP peer 192.168.1.1 down", "entity": "gw-core-01" },
-            { "time": (now - chrono::Duration::hours(3)).to_rfc3339(), "type": "health_check", "severity": "warning", "module": "health", "message": "SSL certificate expires in 14 days for api.example.com", "entity": "api.example.com" },
-        ],
+        "events": [],
     }))
 }

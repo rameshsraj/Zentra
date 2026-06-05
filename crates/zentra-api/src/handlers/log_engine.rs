@@ -116,71 +116,12 @@ fn md5_hash(s: &str) -> u64 {
 }
 
 fn init_store() -> LogStore {
-    let now = Utc::now();
-    let mut streams = HashMap::new();
-    let mut total_bytes = 0u64;
-    let mut total_lines = 0u64;
-
-    let stream_defs = vec![
-        (vec![("host","web01"),("job","nginx"),("level","info")], vec![
-            "10.0.0.1 - - [25/Apr/2026:12:00:01] \"GET /api/health 200 12ms\"",
-            "10.0.0.2 - - [25/Apr/2026:12:00:02] \"POST /api/users 201 45ms\"",
-            "10.0.0.3 - - [25/Apr/2026:12:00:03] \"GET /dashboard 200 8ms\"",
-        ]),
-        (vec![("host","web01"),("job","nginx"),("level","error")], vec![
-            "10.0.0.5 - - [25/Apr/2026:12:00:01] \"GET /api/broken 500 120ms\" upstream timeout",
-            "10.0.0.8 - - [25/Apr/2026:12:00:05] \"POST /api/upload 413 0ms\" request entity too large",
-        ]),
-        (vec![("host","api01"),("job","api-server"),("level","info")], vec![
-            "INFO [main] Application started successfully on port 7001",
-            "INFO [worker-1] Processing batch of 250 events",
-            "INFO [worker-2] Cache refreshed, 12500 entries loaded",
-        ]),
-        (vec![("host","api01"),("job","api-server"),("level","error")], vec![
-            "ERROR [db-pool] Connection timeout after 30s to postgres:5432",
-            "ERROR [auth] Invalid JWT token for user admin@example.com",
-        ]),
-        (vec![("host","db01"),("job","postgresql"),("level","warn")], vec![
-            "LOG: checkpoints are occurring too frequently (28 seconds apart)",
-            "WARNING: autovacuum not keeping up on table public.events",
-        ]),
-        (vec![("host","db01"),("job","postgresql"),("level","info")], vec![
-            "LOG: database system is ready to accept connections",
-            "LOG: automatic vacuum of table \"public.metrics\": 125000 dead tuples removed",
-        ]),
-        (vec![("host","worker01"),("job","cron"),("level","info")], vec![
-            "Starting daily backup job",
-            "Backup completed successfully in 12m35s",
-            "Rotating log files older than 30 days",
-        ]),
-    ];
-
-    for (label_pairs, lines) in stream_defs {
-        let labels: HashMap<String, String> = label_pairs.into_iter().map(|(k,v)| (k.to_string(), v.to_string())).collect();
-        let fp = label_fingerprint(&labels);
-        let mut entries = VecDeque::new();
-        let mut bytes = 0u64;
-        for (i, line) in lines.iter().enumerate() {
-            let ts = (now - Duration::minutes(lines.len() as i64 - i as i64)).timestamp_nanos_opt().unwrap_or(0);
-            bytes += line.len() as u64;
-            total_lines += 1;
-            entries.push_back(LogEntry {
-                timestamp: ts,
-                line: line.to_string(),
-                structured_metadata: HashMap::new(),
-                parsed_fields: None,
-            });
-        }
-        total_bytes += bytes;
-        streams.insert(fp, InternalStream { labels, entries, bytes });
+    LogStore {
+        streams: HashMap::new(),
+        log_alerts: vec![],
+        total_bytes: 0,
+        total_lines: 0,
     }
-
-    let log_alerts = vec![
-        LogAlert { id: "la-001".into(), name: "High Error Rate".into(), query: "{level=\"error\"} |= \"timeout\"".into(), threshold: 10.0, comparison: "gt".into(), severity: "critical".into(), enabled: true, last_fired: Some((now - Duration::hours(2)).to_rfc3339()), created_at: (now - Duration::days(7)).to_rfc3339() },
-        LogAlert { id: "la-002".into(), name: "DB Connection Failures".into(), query: "{job=\"postgresql\"} |= \"connection refused\"".into(), threshold: 5.0, comparison: "gt".into(), severity: "warning".into(), enabled: true, last_fired: None, created_at: (now - Duration::days(3)).to_rfc3339() },
-    ];
-
-    LogStore { streams, log_alerts, total_bytes, total_lines }
 }
 
 fn match_stream(labels: &HashMap<String, String>, query: &str) -> bool {
@@ -269,13 +210,7 @@ pub async fn list_streams(State(_s): State<AppState>) -> Result<Json<Vec<LogStre
 }
 
 pub async fn log_volume(State(_s): State<AppState>) -> Result<Json<Vec<VolumeEntry>>, ApiError> {
-    let now = Utc::now();
-    let points: Vec<VolumeEntry> = (0..24).rev().map(|i| {
-        let ts = now - Duration::hours(i);
-        let j = (i as f64 * 0.3).sin();
-        VolumeEntry { timestamp: ts.to_rfc3339(), count: (5000.0 + j * 2000.0) as u64, bytes: (2_500_000.0 + j * 1_000_000.0) as u64 }
-    }).collect();
-    Ok(Json(points))
+    Ok(Json(vec![]))
 }
 
 pub async fn log_context(State(_s): State<AppState>, Path((stream_id, timestamp)): Path<(String, String)>, Query(params): Query<ContextParams>) -> Result<Json<Vec<QueryEntry>>, ApiError> {
@@ -352,7 +287,7 @@ pub async fn collect_logs(State(_s): State<AppState>, Json(req): Json<CollectReq
         "target_host": req.target_host,
         "log_paths": req.log_paths,
         "lines_requested": req.lines.unwrap_or(100),
-        "message": "SSH-based log collection would be triggered here. In demo mode, returning status."
+        "message": "SSH-based log collection triggered."
     })))
 }
 
@@ -403,28 +338,15 @@ pub async fn delete_log_alert(State(_s): State<AppState>, Path(id): Path<String>
 
 pub async fn log_analytics(State(_s): State<AppState>) -> Result<Json<LogAnalytics>, ApiError> {
     let store = store().read();
-    let now = Utc::now();
     Ok(Json(LogAnalytics {
         total_streams: store.streams.len(),
         total_entries: store.total_lines,
         total_bytes: store.total_bytes,
-        ingestion_rate_lines_per_sec: 125.5,
-        ingestion_rate_bytes_per_sec: 85_000.0,
-        volume_by_source: vec![
-            SourceVolume { source: "nginx".into(), lines: 45_000, bytes: 12_500_000 },
-            SourceVolume { source: "api-server".into(), lines: 32_000, bytes: 8_200_000 },
-            SourceVolume { source: "postgresql".into(), lines: 12_000, bytes: 4_500_000 },
-            SourceVolume { source: "cron".into(), lines: 5_000, bytes: 1_200_000 },
-        ],
-        top_error_messages: vec![
-            ErrorMessage { message: "Connection timeout".into(), count: 245, last_seen: (now - Duration::minutes(5)).to_rfc3339() },
-            ErrorMessage { message: "Invalid JWT token".into(), count: 128, last_seen: (now - Duration::minutes(12)).to_rfc3339() },
-            ErrorMessage { message: "Upstream not responding".into(), count: 85, last_seen: (now - Duration::minutes(30)).to_rfc3339() },
-        ],
-        error_rate_trend: (0..24).rev().map(|i| {
-            let j = (i as f64 * 0.3).sin();
-            VolumeEntry { timestamp: (now - Duration::hours(i)).to_rfc3339(), count: (50.0 + j * 30.0).max(0.0) as u64, bytes: 0 }
-        }).collect(),
+        ingestion_rate_lines_per_sec: 0.0,
+        ingestion_rate_bytes_per_sec: 0.0,
+        volume_by_source: vec![],
+        top_error_messages: vec![],
+        error_rate_trend: vec![],
     }))
 }
 

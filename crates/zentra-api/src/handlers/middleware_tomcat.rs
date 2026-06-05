@@ -53,12 +53,7 @@ pub async fn get_status(State(_s): State<AppState>, Path(id): Path<String>) -> R
 pub async fn performance_history(State(_s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<TomcatHistoryPoint>>, ApiError> {
     let insts = instances().read();
     let _inst = insts.iter().find(|i| i.id == id).ok_or((StatusCode::NOT_FOUND, "Not found".into()))?;
-    let now = Utc::now();
-    let points: Vec<TomcatHistoryPoint> = (0..60).rev().map(|i| {
-        let j = (i as f64 * 0.1).sin();
-        TomcatHistoryPoint { timestamp: (now - Duration::minutes(i)).to_rfc3339(), threads_busy: (160.0 + j * 30.0) as u32, request_count: (2800000.0 + i as f64 * 1000.0) as u64, error_count: (4500.0 + i as f64 * 5.0) as u64, active_sessions: (340.0 + j * 40.0) as u32, heap_used_mb: 1024.0 + j * 200.0 }
-    }).collect();
-    Ok(Json(points))
+    Ok(Json(vec![]))
 }
 
 pub async fn create_instance(State(_s): State<AppState>, Json(req): Json<CreateTomcatRequest>) -> Result<Json<TomcatInstance>, ApiError> {

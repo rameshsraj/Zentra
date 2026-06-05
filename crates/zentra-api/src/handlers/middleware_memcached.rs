@@ -38,11 +38,7 @@ pub async fn get_status(State(_s): State<AppState>, Path(id): Path<String>) -> R
 }
 pub async fn performance_history(State(_s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<MemcachedHistoryPoint>>, ApiError> {
     let insts = instances().read(); let _inst = insts.iter().find(|i| i.id == id).ok_or((StatusCode::NOT_FOUND, "Not found".into()))?;
-    let now = Utc::now();
-    let points: Vec<MemcachedHistoryPoint> = (0..60).rev().map(|i| { let j = (i as f64 * 0.1).sin();
-        MemcachedHistoryPoint { timestamp: (now - Duration::minutes(i)).to_rfc3339(), hit_rate: 90.37 + j * 3.0, curr_items: (2_450_000.0 + j * 50000.0) as u64, evictions: (125_000.0 + j * 5000.0) as u64, cmd_get_per_sec: 8500.0 + j * 1500.0, bytes_used_mb: 2150.0 + j * 100.0 }
-    }).collect();
-    Ok(Json(points))
+    Ok(Json(vec![]))
 }
 pub async fn create_instance(State(_s): State<AppState>, Json(req): Json<CreateMemcachedRequest>) -> Result<Json<MemcachedInstance>, ApiError> {
     let inst = MemcachedInstance { id: crate::error::short_id("memcached"), name: req.name, host: req.host, port: req.port.unwrap_or(11211), status: "unknown".into(), created_at: Utc::now().to_rfc3339() };

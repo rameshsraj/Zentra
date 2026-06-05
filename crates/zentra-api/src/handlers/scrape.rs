@@ -171,25 +171,5 @@ pub async fn scrape_health_summary(
 pub async fn list_recording_rules(
     State(_state): State<AppState>,
 ) -> Result<Json<Vec<ScrapeRecordingRuleResponse>>, ApiError> {
-    let rules = vec![
-        ScrapeRecordingRuleResponse {
-            rule_id: Uuid::now_v7(),
-            name: "cpu_avg_5m".into(),
-            source_metric: "node_cpu_seconds_total".into(),
-            output_metric: "recording:node_cpu:avg_5m".into(),
-            aggregation: "avg".into(),
-            group_by: vec!["instance".into(), "mode".into()],
-            enabled: true,
-        },
-        ScrapeRecordingRuleResponse {
-            rule_id: Uuid::now_v7(),
-            name: "http_request_rate".into(),
-            source_metric: "http_requests_total".into(),
-            output_metric: "recording:http_requests:rate_1m".into(),
-            aggregation: "rate".into(),
-            group_by: vec!["job".into()],
-            enabled: true,
-        },
-    ];
-    Ok(Json(rules))
+    Ok(Json(vec![]))
 }

@@ -82,124 +82,53 @@ pub async fn cluster_status(
     State(_s): State<AppState>,
 ) -> Result<Json<HaClusterStatus>, ApiError> {
     let now = Utc::now();
-
-    let nodes = vec![
-        ClusterNode {
-            id: "node-001".into(),
-            hostname: "Zentra-01.internal".into(),
-            role: "leader".into(),
-            status: "healthy".into(),
-            region: "us-east-1".into(),
-            zone: "us-east-1a".into(),
-            version: "0.1.0".into(),
-            uptime_secs: 1_296_000, // 15 days
-            last_heartbeat: now.to_rfc3339(),
-            cpu_usage: 34.2,
-            memory_usage: 62.8,
-            connections: 847,
-            metrics_per_sec: 12400,
-            logs_per_sec: 3200,
-            is_current: true,
-        },
-        ClusterNode {
-            id: "node-002".into(),
-            hostname: "Zentra-02.internal".into(),
-            role: "follower".into(),
-            status: "healthy".into(),
-            region: "us-east-1".into(),
-            zone: "us-east-1b".into(),
-            version: "0.1.0".into(),
-            uptime_secs: 1_296_000,
-            last_heartbeat: (now - chrono::Duration::seconds(2)).to_rfc3339(),
-            cpu_usage: 28.7,
-            memory_usage: 58.3,
-            connections: 0,
-            metrics_per_sec: 0,
-            logs_per_sec: 0,
-            is_current: false,
-        },
-        ClusterNode {
-            id: "node-003".into(),
-            hostname: "Zentra-03.internal".into(),
-            role: "follower".into(),
-            status: "healthy".into(),
-            region: "us-east-1".into(),
-            zone: "us-east-1c".into(),
-            version: "0.1.0".into(),
-            uptime_secs: 864_000, // 10 days
-            last_heartbeat: (now - chrono::Duration::seconds(1)).to_rfc3339(),
-            cpu_usage: 31.1,
-            memory_usage: 60.2,
-            connections: 0,
-            metrics_per_sec: 0,
-            logs_per_sec: 0,
-            is_current: false,
-        },
-    ];
-
-    let replicas = vec![
-        ReplicaStatus {
-            id: "replica-001".into(),
-            primary_id: "node-001".into(),
-            host: "Zentra-02.internal".into(),
-            port: 5432,
-            status: "streaming".into(),
-            lag_bytes: 1024,
-            lag_secs: 0.12,
-            sync_state: "sync".into(),
-            last_replay: (now - chrono::Duration::milliseconds(120)).to_rfc3339(),
-        },
-        ReplicaStatus {
-            id: "replica-002".into(),
-            primary_id: "node-001".into(),
-            host: "Zentra-03.internal".into(),
-            port: 5432,
-            status: "streaming".into(),
-            lag_bytes: 2048,
-            lag_secs: 0.21,
-            sync_state: "async".into(),
-            last_replay: (now - chrono::Duration::milliseconds(210)).to_rfc3339(),
-        },
-    ];
+    let hostname = std::env::var("HOSTNAME").unwrap_or_else(|_| "localhost".into());
 
     Ok(Json(HaClusterStatus {
-        cluster_id: "cluster-prod-001".into(),
-        cluster_name: "Zentra Production".into(),
+        cluster_id: "cluster-standalone".into(),
+        cluster_name: "Zentra".into(),
         health: "healthy".into(),
-        leader_id: "node-001".into(),
-        leader_hostname: "Zentra-01.internal".into(),
-        nodes,
-        replicas,
-        quorum_size: 2,
+        leader_id: "self".into(),
+        leader_hostname: hostname.clone(),
+        nodes: vec![
+            ClusterNode {
+                id: "self".into(),
+                hostname,
+                role: "leader".into(),
+                status: "healthy".into(),
+                region: String::new(),
+                zone: String::new(),
+                version: env!("CARGO_PKG_VERSION").into(),
+                uptime_secs: 0,
+                last_heartbeat: now.to_rfc3339(),
+                cpu_usage: 0.0,
+                memory_usage: 0.0,
+                connections: 0,
+                metrics_per_sec: 0,
+                logs_per_sec: 0,
+                is_current: true,
+            },
+        ],
+        replicas: vec![],
+        quorum_size: 1,
         quorum_met: true,
-        total_nodes: 3,
-        healthy_nodes: 3,
-        term: 47,
-        commit_index: 184_291,
-        last_applied: 184_291,
+        total_nodes: 1,
+        healthy_nodes: 1,
+        term: 0,
+        commit_index: 0,
+        last_applied: 0,
         election_timeout_ms: 5000,
         heartbeat_interval_ms: 1000,
         split_brain_detected: false,
-        failovers_last_30d: 1,
-        last_failover: Some((now - chrono::Duration::days(12)).to_rfc3339()),
+        failovers_last_30d: 0,
+        last_failover: None,
     }))
 }
 
 pub async fn failover_history(
     State(_s): State<AppState>,
 ) -> Result<Json<Vec<FailoverEvent>>, ApiError> {
-    let now = Utc::now();
-    Ok(Json(vec![
-        FailoverEvent {
-            id: "fo-001".into(),
-            occurred_at: (now - chrono::Duration::days(12)).to_rfc3339(),
-            old_leader: "Zentra-02.internal".into(),
-            new_leader: "Zentra-01.internal".into(),
-            reason: "Heartbeat timeout — old leader became unreachable for 5 seconds".into(),
-            duration_secs: 3,
-            affected_connections: 412,
-        },
-    ]))
+    Ok(Json(vec![]))
 }
 
 pub async fn ha_health(
@@ -209,16 +138,12 @@ pub async fn ha_health(
     Ok(Json(serde_json::json!({
         "status": "healthy",
         "cluster_health": "100%",
-        "leader_uptime_secs": 1296000,
-        "replication_lag_ms": 120,
+        "leader_uptime_secs": 0,
+        "replication_lag_ms": 0,
         "write_quorum": true,
-        "read_replicas": 2,
-        "consistent_hash_ring_size": 512,
-        "data_distribution": {
-            "node-001": "34.2%",
-            "node-002": "33.1%",
-            "node-003": "32.7%",
-        },
+        "read_replicas": 0,
+        "consistent_hash_ring_size": 0,
+        "data_distribution": {},
         "checked_at": now.to_rfc3339(),
     })))
 }
