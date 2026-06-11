@@ -85,7 +85,7 @@ apt-get update -qq >> "${LOG_FILE}" 2>&1
 apt-get install -y -qq \
     build-essential pkg-config libssl-dev libpq-dev \
     curl wget git unzip ca-certificates gnupg lsb-release \
-    libaio1 libclang-dev clang \
+    libaio1 libclang-dev clang libpcap-dev \
     nginx \
     python3 sudo \
     >> "${LOG_FILE}" 2>&1
@@ -286,12 +286,14 @@ cp "${BUILD_DIR}/release/zentra-server" "${DEPLOY_DIR}/bin/zentra-server"
 chmod +x "${DEPLOY_DIR}/bin/zentra-server"
 ok "zentra-server built and copied to ${DEPLOY_DIR}/bin/"
 
-# Also build the agent if it exists
-if cargo build --release --bin zentra-agent 2>&1 | tee -a "${LOG_FILE}"; then
+# Also build the agent (non-fatal — server is the critical binary)
+if cargo build --release --bin zentra-agent 2>&1 | tee -a "${LOG_FILE}" || true; then
     if [ -f "${BUILD_DIR}/release/zentra-agent" ]; then
         cp "${BUILD_DIR}/release/zentra-agent" "${DEPLOY_DIR}/bin/zentra-agent"
         chmod +x "${DEPLOY_DIR}/bin/zentra-agent"
         ok "zentra-agent built and copied"
+    else
+        warn "zentra-agent build failed (non-fatal) — server will still run"
     fi
 fi
 

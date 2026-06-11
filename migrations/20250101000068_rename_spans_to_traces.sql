@@ -1,11 +1,15 @@
--- Rename 'spans' table to 'traces' for consistency with OTel nomenclature
--- and to match the 'trace_id' primary identifier.
--- Fully idempotent: skips if already renamed.
+-- Rename 'spans' table to 'traces' for consistency with OTel nomenclature.
+-- Fully idempotent:
+--   • Fresh install: 'traces' already exists as base table, 'spans' is a VIEW → nothing to do
+--   • Upgrade path:  'spans' is a base table, 'traces' doesn't exist → rename
 
 DO $$ BEGIN
+    -- Only rename if 'spans' is a real BASE TABLE (not a view) and 'traces' doesn't exist
     IF EXISTS (SELECT 1 FROM pg_tables WHERE tablename = 'spans' AND schemaname = 'public')
        AND NOT EXISTS (SELECT 1 FROM pg_tables WHERE tablename = 'traces' AND schemaname = 'public') THEN
         ALTER TABLE spans RENAME TO traces;
+    ELSE
+        RAISE NOTICE 'rename_spans_to_traces: nothing to do (traces already exists or spans is a view)';
     END IF;
 END $$;
 
