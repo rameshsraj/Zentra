@@ -13,14 +13,14 @@ DO $$ BEGIN
     END IF;
 END $$;
 
--- Update associated indexes (skip if already renamed or not present)
+-- Update associated indexes (skip if old name doesn't exist OR target name already exists)
 DO $$ BEGIN
-    IF EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'spans_pkey') THEN ALTER INDEX spans_pkey RENAME TO traces_pkey; END IF;
-    IF EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_spans_trace_id') THEN ALTER INDEX idx_spans_trace_id RENAME TO idx_traces_trace_id; END IF;
-    IF EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_spans_service_name') THEN ALTER INDEX idx_spans_service_name RENAME TO idx_traces_service_name; END IF;
-    IF EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_spans_http_method') THEN ALTER INDEX idx_spans_http_method RENAME TO idx_traces_http_method; END IF;
-    IF EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_spans_db_system') THEN ALTER INDEX idx_spans_db_system RENAME TO idx_traces_db_system; END IF;
-    IF EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_spans_http_status') THEN ALTER INDEX idx_spans_http_status RENAME TO idx_traces_http_status; END IF;
-    IF EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_spans_rpc_system') THEN ALTER INDEX idx_spans_rpc_system RENAME TO idx_traces_rpc_system; END IF;
-    IF EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_spans_tags_gin') THEN ALTER INDEX idx_spans_tags_gin RENAME TO idx_traces_tags_gin; END IF;
+    IF EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'spans_pkey') AND NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'traces_pkey') THEN ALTER INDEX spans_pkey RENAME TO traces_pkey; END IF;
+    IF EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_spans_trace_id') AND NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_traces_trace_id') THEN ALTER INDEX idx_spans_trace_id RENAME TO idx_traces_trace_id; END IF;
+    IF EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_spans_service_name') AND NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_traces_service_name') THEN ALTER INDEX idx_spans_service_name RENAME TO idx_traces_service_name; END IF;
+    IF EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_spans_http_method') AND NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_traces_http_method') THEN ALTER INDEX idx_spans_http_method RENAME TO idx_traces_http_method; END IF;
+    IF EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_spans_db_system') AND NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_traces_db_system') THEN ALTER INDEX idx_spans_db_system RENAME TO idx_traces_db_system; END IF;
+    IF EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_spans_http_status') AND NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_traces_http_status') THEN ALTER INDEX idx_spans_http_status RENAME TO idx_traces_http_status; END IF;
+    IF EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_spans_rpc_system') AND NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_traces_rpc_system') THEN ALTER INDEX idx_spans_rpc_system RENAME TO idx_traces_rpc_system; END IF;
+    IF EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_spans_tags_gin') AND NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_traces_tags_gin') THEN ALTER INDEX idx_spans_tags_gin RENAME TO idx_traces_tags_gin; END IF;
 END $$;
