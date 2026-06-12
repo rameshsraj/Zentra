@@ -1,12 +1,16 @@
 use zentra_agent::leader_election;
 use zentra_agent::orchestrator::Orchestrator;
 use zentra_agent::plugin_manager::create_plugin_for_target;
+use zentra_agent::remote_delivery::RemoteDeliveryService;
+use zentra_agent::heartbeat::HeartbeatLoop;
+use zentra_agent::remote_targets::RemoteTargetFetcher;
 use zentra_core::models::metric::MetricBatch;
 use zentra_core::models::log_entry::LogBatch;
 use zentra_db::pool::create_pool;
 use zentra_ingestion::IngestionService;
 use zentra_stream::EventBus;
 use std::collections::HashSet;
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
@@ -18,7 +22,6 @@ use uuid::Uuid;
 async fn main() {
     dotenvy::dotenv().ok();
 
-    // Item 5: Shared telemetry — OTel layer for self-instrumentation
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info"));
     let fmt_layer = tracing_subscriber::fmt::layer().with_target(true);
@@ -33,6 +36,20 @@ async fn main() {
     info!("Zentra Agent starting...");
 
     let config = zentra_core::AppConfig::from_env();
+
+    if config.agent_mode == "remote" {
+        run_remote_mode(config).await;
+    } else {
+        run_local_mode(config).await;
+    }
+}
+
+// ============================================================================
+// LOCAL MODE — unchanged from original behaviour
+// ============================================================================
+
+async fn run_local_mode(config: zentra_core::AppConfig) {
+    info!("Agent running in LOCAL mode (direct DB connection)");
 
     let pool = create_pool(&config.database_url)
         .await
@@ -55,10 +72,8 @@ async fn main() {
         ingestion_logs.run_log_ingestion(log_rx).await;
     });
 
-    // Tracks target IDs that already have a collection loop running.
     let active_ids: Arc<Mutex<HashSet<Uuid>>> = Arc::new(Mutex::new(HashSet::new()));
 
-    // Initial load of targets
     let initial_targets = zentra_db::repositories::targets::list_targets(
         &pool, config.org_id, None, true,
     )
@@ -72,7 +87,6 @@ async fn main() {
         for target in initial_targets {
             if ids.contains(&target.target_id) { continue; }
             if let Some(plugin) = create_plugin_for_target(&target) {
-                // Acquire advisory lock — skip if another agent instance already owns this target.
                 let Some(lock) = leader_election::try_acquire(&config.database_url, target.target_id).await else {
                     continue;
                 };
@@ -85,14 +99,14 @@ async fn main() {
                     cancel.clone(),
                 );
                 tokio::spawn(async move {
-                    let _lock = lock; // hold advisory lock for duration of collection loop
+                    let _lock = lock;
                     orch.run_collection_loop(plugin, target).await;
                 });
             }
         }
     }
 
-    // Periodic target reload — picks up newly added targets without restart.
+    // Periodic target reload
     let reload_pool = pool.clone();
     let reload_event_bus = event_bus.clone();
     let reload_metric_tx = metric_tx.clone();
@@ -102,7 +116,7 @@ async fn main() {
     let reload_db_url = config.database_url.clone();
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(30));
-        ticker.tick().await; // skip immediate
+        ticker.tick().await;
         loop {
             tokio::select! {
                 _ = reload_cancel.cancelled() => break,
@@ -119,7 +133,6 @@ async fn main() {
             for target in targets {
                 if ids.contains(&target.target_id) { continue; }
                 if let Some(plugin) = create_plugin_for_target(&target) {
-                    // Acquire advisory lock — skip if another agent already owns this target.
                     let Some(lock) = leader_election::try_acquire(&reload_db_url, target.target_id).await else {
                         continue;
                     };
@@ -133,7 +146,7 @@ async fn main() {
                         reload_cancel.clone(),
                     );
                     tokio::spawn(async move {
-                        let _lock = lock; // hold advisory lock for duration of collection loop
+                        let _lock = lock;
                         orch.run_collection_loop(plugin, target).await;
                     });
                 }
@@ -146,9 +159,7 @@ async fn main() {
 
     info!("Target reload loop running (30s interval)");
 
-    // ============================================================
-    // Start Hubble gRPC Flow Collector (Cilium)
-    // ============================================================
+    // Hubble collector
     let hubble_relay = std::env::var("HUBBLE_RELAY_ADDRESS").unwrap_or_else(|_| "hubble-relay:4245".into());
     let hubble_collector = zentra_agent::collectors::hubble::HubbleCollector::new(
         pool.clone(),
@@ -162,8 +173,93 @@ async fn main() {
     tokio::signal::ctrl_c().await.ok();
     info!("Shutdown signal received, stopping agent...");
     cancel.cancel();
-    // Item 13: Flush pending spans before exit
     zentra_core::telemetry::shutdown_telemetry();
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     info!("Zentra Agent stopped");
+}
+
+// ============================================================================
+// REMOTE MODE — no DB, communicates with Zentra server over HTTPS
+// ============================================================================
+
+async fn run_remote_mode(config: zentra_core::AppConfig) {
+    info!(
+        api_endpoint = %config.api_endpoint,
+        dc_name = %config.dc_name,
+        "Agent running in REMOTE mode (no database connection)"
+    );
+
+    let cancel = CancellationToken::new();
+    let event_bus = EventBus::new();
+    let active_targets = Arc::new(AtomicUsize::new(0));
+
+    let (metric_tx, metric_rx) = mpsc::channel::<MetricBatch>(1024);
+    let (_log_tx, log_rx) = mpsc::channel::<LogBatch>(1024);
+
+    // Remote delivery service — replaces IngestionService
+    let delivery_metrics = RemoteDeliveryService::new(
+        config.api_endpoint.clone(),
+        config.agent_api_key.clone(),
+        config.dc_name.clone(),
+        config.buffer_dir.clone(),
+    );
+    let delivery_logs = RemoteDeliveryService::new(
+        config.api_endpoint.clone(),
+        config.agent_api_key.clone(),
+        config.dc_name.clone(),
+        config.buffer_dir.clone(),
+    );
+
+    tokio::spawn(async move {
+        delivery_metrics.run_metric_delivery(metric_rx).await;
+    });
+    tokio::spawn(async move {
+        delivery_logs.run_log_delivery(log_rx).await;
+    });
+
+    // Heartbeat loop (30s)
+    let heartbeat = HeartbeatLoop::new(
+        config.api_endpoint.clone(),
+        config.agent_api_key.clone(),
+        config.dc_name.clone(),
+        active_targets.clone(),
+        cancel.clone(),
+    );
+    tokio::spawn(async move {
+        heartbeat.run().await;
+    });
+
+    // Remote target fetcher (60s reconciliation)
+    let fetcher = RemoteTargetFetcher::new(
+        config.api_endpoint.clone(),
+        config.agent_api_key.clone(),
+        event_bus.clone(),
+        metric_tx.clone(),
+        config.org_id,
+        cancel.clone(),
+        active_targets.clone(),
+    );
+    tokio::spawn(async move {
+        fetcher.run().await;
+    });
+
+    // Wait for shutdown
+    tokio::signal::ctrl_c().await.ok();
+    info!("Shutdown signal received, stopping remote agent...");
+    cancel.cancel();
+
+    // Wait up to 5 seconds for in-flight plugin calls
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    // Flush offline buffer
+    let mut flusher = RemoteDeliveryService::new(
+        config.api_endpoint.clone(),
+        config.agent_api_key.clone(),
+        config.dc_name.clone(),
+        config.buffer_dir.clone(),
+    );
+    flusher.flush_all().await;
+
+    zentra_core::telemetry::shutdown_telemetry();
+    info!("Zentra Agent (remote) stopped");
 }

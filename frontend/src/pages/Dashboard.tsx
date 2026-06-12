@@ -22,6 +22,7 @@ import ProgressBar from '@/components/charts/ProgressBar'
 import StatusGrid from '@/components/charts/StatusGrid'
 import TimelineList from '@/components/charts/TimelineList'
 import PageHeader from '@/components/PageHeader'
+import OnboardingChecklist from '@/components/OnboardingChecklist'
 import { useAuth } from '@/contexts/AuthContext'
 
 // M10: Flat sparkline from live value — no synthetic Math.sin generation
@@ -108,6 +109,8 @@ export default function DashboardPage() {
           </div>
         </div>
       </PageHeader>
+
+      <OnboardingChecklist />
 
       {!hasAnyOtherModules ? (
         /* Empty State Command Center Dashboard when no other modules are selected */

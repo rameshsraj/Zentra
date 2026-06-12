@@ -90,6 +90,13 @@ const CloudMonitoringPage = lazy(() => import('./pages/CloudMonitoring'))
 // Storage Deep-Dive (P11)
 const StorageDeepDivePage = lazy(() => import('./pages/StorageDeepDive'))
 
+// Fleet
+const FleetPage = lazy(() => import('./pages/Fleet'))
+const AgentInstallWizardPage = lazy(() => import('./pages/AgentInstallWizard'))
+
+// Billing
+const BillingPage = lazy(() => import('./pages/Billing'))
+
 export default function App() {
   return (
     <AuthProvider>
@@ -185,6 +192,13 @@ export default function App() {
 
             {/* Storage Deep-Dive (P11) */}
             <Route path="storage-deep-dive" element={<StorageDeepDivePage />} />
+
+            {/* Fleet */}
+            <Route path="fleet" element={<FleetPage />} />
+            <Route path="fleet/install" element={<AgentInstallWizardPage />} />
+
+            {/* Billing */}
+            <Route path="billing" element={<BillingPage />} />
 
             {/* Fallback — redirect unknown paths to dashboard */}
             <Route path="*" element={<Navigate to="/dashboard" replace />} />

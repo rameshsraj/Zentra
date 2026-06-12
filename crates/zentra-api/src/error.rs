@@ -29,6 +29,12 @@ pub enum ApiError {
     #[error("forbidden: {0}")]
     Forbidden(String),
 
+    #[error("payment required: {0}")]
+    PaymentRequired(String),
+
+    #[error("too many requests: {0}")]
+    TooManyRequests(String),
+
     #[error("internal: {0}")]
     Internal(String),
 
@@ -47,6 +53,8 @@ impl IntoResponse for ApiError {
             Self::BadRequest(m) => (StatusCode::BAD_REQUEST, m.clone()),
             Self::Unauthorized(m) => (StatusCode::UNAUTHORIZED, m.clone()),
             Self::Forbidden(m) => (StatusCode::FORBIDDEN, m.clone()),
+            Self::PaymentRequired(m) => (StatusCode::PAYMENT_REQUIRED, m.clone()),
+            Self::TooManyRequests(m) => (StatusCode::TOO_MANY_REQUESTS, m.clone()),
             Self::Internal(m) => {
                 tracing::error!(error = %m, "internal error");
                 // Never leak internal details to the client
@@ -71,6 +79,8 @@ impl From<(StatusCode, String)> for ApiError {
             StatusCode::BAD_REQUEST => Self::BadRequest(msg),
             StatusCode::UNAUTHORIZED => Self::Unauthorized(msg),
             StatusCode::FORBIDDEN => Self::Forbidden(msg),
+            StatusCode::PAYMENT_REQUIRED => Self::PaymentRequired(msg),
+            StatusCode::TOO_MANY_REQUESTS => Self::TooManyRequests(msg),
             _ => Self::Internal(msg),
         }
     }

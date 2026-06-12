@@ -65,11 +65,19 @@ pub fn is_public_path(method: &Method, path: &str) -> bool {
     if method == Method::OPTIONS {
         return true;
     }
+    if (*method == Method::POST && path == "/api/agents/heartbeat")
+        || (*method == Method::GET && path == "/api/agents/targets")
+    {
+        return true;
+    }
     if matches!(
         path,
         "/api/health"
             | "/api/auth/login"
             | "/api/auth/refresh"
+            | "/api/signup"
+            | "/api/signup/verify-email"
+            | "/api/billing/webhook"
             | "/api/docs"
             | "/api/docs/redoc"
             | "/api/openapi.json"

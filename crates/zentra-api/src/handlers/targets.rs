@@ -55,6 +55,9 @@ pub async fn create_target(
     OrgId(org_id): OrgId,
     Json(req): Json<CreateTargetRequest>,
 ) -> Result<Json<Target>, ApiError> {
+    // Quota enforcement
+    crate::handlers::signup::check_target_quota(State(state.clone()), OrgId(org_id)).await?;
+
     if !validation::is_safe_ssh_host(&req.host) {
         return Err(ApiError::BadRequest("Invalid host: this address is not allowed for security reasons".into()));
     }

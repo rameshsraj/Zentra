@@ -1,0 +1,326 @@
+use axum::{
+    extract::{ConnectInfo, Path, State},
+    http::HeaderMap,
+    Extension, Json,
+};
+use chrono::{DateTime, Utc};
+use rand::Rng;
+use serde::Deserialize;
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use sqlx::Row;
+use std::net::SocketAddr;
+use uuid::Uuid;
+
+use crate::auth_middleware::AuthContext;
+use crate::error::ApiError;
+use crate::handlers::otlp::validate_otlp_key;
+use crate::state::AppState;
+
+const AGENT_KEY_HEADER: &str = "x-zentra-key";
+
+#[derive(Debug, Deserialize)]
+pub struct RegisterAgentRequest {
+    pub datacenter_name: String,
+    pub description: Option<String>,
+    pub region_label: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AgentHeartbeatRequest {
+    pub agent_version: String,
+    pub active_targets: i32,
+    pub os_name: String,
+    pub dc_name: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct AgentListRow {
+    agent_id: Uuid,
+    datacenter_name: String,
+    status: String,
+    last_seen: Option<DateTime<Utc>>,
+    agent_version: Option<String>,
+    active_target_count: i32,
+    ip_address: Option<String>,
+    region_label: Option<String>,
+}
+
+fn is_agent_admin(ctx: &AuthContext) -> bool {
+    matches!(ctx.role.as_str(), "Admin" | "Org Admin" | "Super Admin")
+}
+
+fn require_agent_admin(ctx: &AuthContext) -> Result<(), ApiError> {
+    if is_agent_admin(ctx) {
+        Ok(())
+    } else {
+        Err(ApiError::Forbidden(
+            "Only Org Admin or Super Admin users can manage agents".into(),
+        ))
+    }
+}
+
+fn generate_agent_api_key() -> String {
+    let mut rng = rand::thread_rng();
+    let suffix = (0..32)
+        .map(|_| {
+            let idx = rng.gen_range(0..36);
+            if idx < 10 {
+                (b'0' + idx) as char
+            } else {
+                (b'a' + idx - 10) as char
+            }
+        })
+        .collect::<String>();
+    format!("isok_{suffix}")
+}
+
+fn hash_api_key(raw_key: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(raw_key.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn extract_agent_key(headers: &HeaderMap) -> Result<String, ApiError> {
+    headers
+        .get(AGENT_KEY_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| ApiError::Unauthorized("Missing X-Zentra-Key header".into()))
+}
+
+pub async fn register_agent(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<AuthContext>,
+    Json(body): Json<RegisterAgentRequest>,
+) -> Result<Json<Value>, ApiError> {
+    require_agent_admin(&ctx)?;
+
+    let datacenter_name = body.datacenter_name.trim();
+    if datacenter_name.is_empty() {
+        return Err(ApiError::BadRequest("datacenter_name is required".into()));
+    }
+
+    let raw_key = generate_agent_api_key();
+    let key_hash = hash_api_key(&raw_key);
+    let key_prefix = raw_key.chars().take(13).collect::<String>();
+    let agent_id = Uuid::now_v7();
+
+    let mut tx = state
+        .tsdb_pool
+        .begin()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let otlp_api_key_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO otlp_api_keys
+         (org_id, name, key_hash, key_prefix, permissions, rate_limit_rpm, max_payload_bytes, enabled, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, true, NOW(), NOW())
+         RETURNING id",
+    )
+    .bind(ctx.org_id)
+    .bind(format!("agent:{datacenter_name}"))
+    .bind(&key_hash)
+    .bind(&key_prefix)
+    .bind(vec![
+        "traces".to_string(),
+        "metrics".to_string(),
+        "logs".to_string(),
+        "profiles".to_string(),
+    ])
+    .bind(10_000_i32)
+    .bind(5_242_880_i32)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    sqlx::query(
+        "INSERT INTO agent_fleet
+         (agent_id, org_id, otlp_api_key_id, api_key_hash, datacenter_name, description, region_label, status, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', NOW(), NOW())",
+    )
+    .bind(agent_id)
+    .bind(ctx.org_id)
+    .bind(otlp_api_key_id)
+    .bind(&key_hash)
+    .bind(datacenter_name)
+    .bind(body.description.as_deref())
+    .bind(body.region_label.as_deref())
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    Ok(Json(json!({
+        "agent_id": agent_id,
+        "api_key": raw_key,
+        "warning": "Store this key securely. It will not be shown again.",
+    })))
+}
+
+pub async fn heartbeat(
+    State(state): State<AppState>,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(body): Json<AgentHeartbeatRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let raw_key = extract_agent_key(&headers)?;
+    let (org_id, _) = validate_otlp_key(&state, &raw_key)
+        .await
+        .map_err(ApiError::Unauthorized)?;
+    let key_hash = hash_api_key(&raw_key);
+
+    sqlx::query(
+        "INSERT INTO agent_fleet
+         (org_id, otlp_api_key_id, api_key_hash, datacenter_name, agent_version, active_target_count, last_seen, ip_address, os_name, status, created_at, updated_at)
+         VALUES ($1, (SELECT id FROM otlp_api_keys WHERE key_hash = $2 LIMIT 1), $2, $3, $4, $5, NOW(), $6, $7, 'active', NOW(), NOW())
+         ON CONFLICT (api_key_hash) DO UPDATE
+         SET datacenter_name = EXCLUDED.datacenter_name,
+             agent_version = EXCLUDED.agent_version,
+             active_target_count = EXCLUDED.active_target_count,
+             last_seen = NOW(),
+             ip_address = EXCLUDED.ip_address,
+             os_name = EXCLUDED.os_name,
+             status = 'active',
+             updated_at = NOW()",
+    )
+    .bind(org_id)
+    .bind(&key_hash)
+    .bind(body.dc_name.trim())
+    .bind(body.agent_version.trim())
+    .bind(body.active_targets)
+    .bind(remote_addr.ip().to_string())
+    .bind(body.os_name.trim())
+    .execute(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    Ok(Json(json!({
+        "server_timestamp_utc": Utc::now(),
+    })))
+}
+
+pub async fn agent_targets(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let raw_key = extract_agent_key(&headers)?;
+    let (org_id, _) = validate_otlp_key(&state, &raw_key)
+        .await
+        .map_err(ApiError::Unauthorized)?;
+
+    let targets = zentra_db::repositories::targets::list_targets(&state.pool, org_id, None, true)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .into_iter()
+        .filter(|target| {
+            !(matches!(target.status, zentra_core::models::target::TargetStatus::Critical)
+                && target.consecutive_failures >= 5)
+        })
+        .collect::<Vec<_>>();
+
+    Ok(Json(json!(targets)))
+}
+
+pub async fn list_agents(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<AuthContext>,
+) -> Result<Json<Value>, ApiError> {
+    require_agent_admin(&ctx)?;
+
+    let rows = sqlx::query_as::<_, AgentListRow>(
+        "SELECT agent_id, datacenter_name, status, last_seen, agent_version, active_target_count, ip_address, region_label
+         FROM agent_fleet
+         WHERE org_id = $1
+         ORDER BY datacenter_name ASC",
+    )
+    .bind(ctx.org_id)
+    .fetch_all(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let agents = rows
+        .into_iter()
+        .map(|row| {
+            json!({
+                "agent_id": row.agent_id,
+                "datacenter_name": row.datacenter_name,
+                "status": row.status,
+                "last_seen": row.last_seen,
+                "version": row.agent_version,
+                "active_target_count": row.active_target_count,
+                "ip_address": row.ip_address,
+                "region_label": row.region_label,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Ok(Json(json!(agents)))
+}
+
+pub async fn deregister_agent(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(agent_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    require_agent_admin(&ctx)?;
+
+    let row = sqlx::query(
+        "SELECT api_key_hash, otlp_api_key_id
+         FROM agent_fleet
+         WHERE agent_id = $1 AND org_id = $2",
+    )
+    .bind(agent_id)
+    .bind(ctx.org_id)
+    .fetch_optional(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?
+    .ok_or_else(|| ApiError::NotFound("Agent not found".into()))?;
+
+    let api_key_hash: String = row.get("api_key_hash");
+    let otlp_api_key_id: Uuid = row.get("otlp_api_key_id");
+
+    let mut tx = state
+        .tsdb_pool
+        .begin()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    sqlx::query(
+        "UPDATE agent_fleet
+         SET status = 'deregistered', updated_at = NOW()
+         WHERE agent_id = $1 AND org_id = $2",
+    )
+    .bind(agent_id)
+    .bind(ctx.org_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    sqlx::query(
+        "UPDATE otlp_api_keys
+         SET enabled = false, updated_at = NOW()
+         WHERE id = $1 AND org_id = $2",
+    )
+    .bind(otlp_api_key_id)
+    .bind(ctx.org_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    state.otlp_key_cache.remove(&api_key_hash);
+
+    Ok(Json(json!({
+        "deregistered": true,
+        "agent_id": agent_id,
+    })))
+}

@@ -17,7 +17,7 @@ const MAX_BACKOFF_MS: u64 = 60_000;
 pub struct Orchestrator {
     event_bus: EventBus,
     metric_tx: mpsc::Sender<MetricBatch>,
-    profiler: EbpfProfiler,
+    profiler: Option<EbpfProfiler>,
     cancel: CancellationToken,
 }
 
@@ -29,8 +29,18 @@ impl Orchestrator {
         org_id: uuid::Uuid,
         cancel: CancellationToken,
     ) -> Self {
-        let profiler = EbpfProfiler::new(pool, org_id);
+        let profiler = Some(EbpfProfiler::new(pool, org_id));
         Self { event_bus, metric_tx, profiler, cancel }
+    }
+
+    /// Create an Orchestrator for remote mode — no DB pool, no eBPF profiling.
+    pub fn new_remote(
+        event_bus: EventBus,
+        metric_tx: mpsc::Sender<MetricBatch>,
+        _org_id: uuid::Uuid,
+        cancel: CancellationToken,
+    ) -> Self {
+        Self { event_bus, metric_tx, profiler: None, cancel }
     }
 
     /// Start a collection loop for a single target + plugin pair.
@@ -114,10 +124,13 @@ impl Orchestrator {
                 break;
             }
 
-            // Periodic profiling for server targets (every 1 hour)
-            if target_type == TargetType::Server && last_profile_at.elapsed() > tokio::time::Duration::from_secs(3600) {
+            // Periodic profiling for server targets (every 1 hour) — local mode only
+            if target_type == TargetType::Server
+                && self.profiler.is_some()
+                && last_profile_at.elapsed() > tokio::time::Duration::from_secs(3600)
+            {
                 let target_clone = target.clone();
-                let profiler = self.profiler.clone_with_pool();
+                let profiler = self.profiler.as_ref().unwrap().clone_with_pool();
                 tokio::spawn(async move {
                     if let Err(e) = profiler.profile_target(&target_clone, 30, None).await {
                         error!(target = %target_clone.name, error = %e, "Background profiling failed");
