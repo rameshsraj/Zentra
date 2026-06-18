@@ -36,7 +36,13 @@ services:
         ipv4_address: __IP_SRV_LINUX_01__
     volumes:
       - ./configs/linux-server/snmpd-rocky.conf:/etc/snmp/snmpd.conf:ro
-      - ./configs/linux-server/setup-linux.sh:/opt/setup.sh:ro
+      - ./configs/linux-server/setup-linux-agent.sh:/opt/setup.sh:ro
+      - ../target/release/zentra-agent:/opt/zentra-agent/zentra-agent:ro
+    environment:
+      - AGENT_MODE=remote
+      - API_ENDPOINT=http://__ZENTRA_HOST__:5006
+      - AGENT_API_KEY=sim-agent-rocky-01
+      - DC_NAME=srv-linux-01
     entrypoint: ["/bin/sh", "-c", "tr -d '\\r' < /opt/setup.sh | /bin/bash"]
     cap_add:
       - NET_ADMIN
@@ -52,7 +58,13 @@ services:
         ipv4_address: __IP_SRV_LINUX_02__
     volumes:
       - ./configs/linux-server/snmpd-ubuntu.conf:/etc/snmp/snmpd.conf:ro
-      - ./configs/linux-server/setup-linux-ubuntu.sh:/opt/setup.sh:ro
+      - ./configs/linux-server/setup-linux-ubuntu-agent.sh:/opt/setup.sh:ro
+      - ../target/release/zentra-agent:/opt/zentra-agent/zentra-agent:ro
+    environment:
+      - AGENT_MODE=remote
+      - API_ENDPOINT=http://__ZENTRA_HOST__:5006
+      - AGENT_API_KEY=sim-agent-ubuntu-01
+      - DC_NAME=srv-linux-02
     entrypoint: ["/bin/sh", "-c", "tr -d '\\r' < /opt/setup.sh | /bin/bash"]
     cap_add:
       - NET_ADMIN
