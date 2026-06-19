@@ -275,3 +275,50 @@ echo ""
 echo "  IMPORTANT: Change the default admin password after first login!"
 echo "======================================================"
 echo ""
+
+# ---------------------------------------------------------------------------
+# Step 9: Optionally launch Simulation Lab
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SIM_DIR="${SCRIPT_DIR}/simulation"
+SIM_SETUP="${SIM_DIR}/setup.sh"
+SIM_AGENT_BIN="${SIM_DIR}/bin/zentra-agent"
+
+if [ -f "${SIM_SETUP}" ] && [ -d "${SIM_DIR}" ]; then
+    echo ""
+    echo "======================================================"
+    echo "  Simulation Lab Available"
+    echo "======================================================"
+    echo ""
+    echo "  A datacenter simulation lab is bundled with this install."
+    echo "  It creates 12 simulated infrastructure nodes:"
+    echo "    - 2 Linux servers (with Zentra Agents)"
+    echo "    - 2 Windows servers (SNMP)"
+    echo "    - 2 network switches (SNMP)"
+    echo "    - 1 firewall (SNMP)"
+    echo "    - 1 storage array (SNMP)"
+    echo "    - 3 middleware (Nginx, Apache, Tomcat)"
+    echo "    - 1 Oracle database"
+    echo ""
+
+    if [ -x "${SIM_AGENT_BIN}" ]; then
+        echo "  Agent binary: FOUND (will be installed in Linux containers)"
+    else
+        echo "  Agent binary: NOT FOUND (agents will not run in Linux containers)"
+        echo "  Place zentra-agent binary at: ${SIM_AGENT_BIN}"
+    fi
+
+    echo ""
+    echo -n "  Do you want to start the simulation lab? (y/N): "
+    read -r answer
+    if [ "${answer}" = "y" ] || [ "${answer}" = "Y" ]; then
+        echo ""
+        info "Launching simulation lab..."
+        chmod +x "${SIM_SETUP}"
+        bash "${SIM_SETUP}"
+    else
+        echo ""
+        info "Simulation lab skipped. You can start it later with:"
+        echo "    sudo bash ${SIM_SETUP}"
+    fi
+fi

@@ -16,6 +16,9 @@ mod enterprise;
 mod monitoring;
 mod ai;
 mod otlp;
+mod agents;
+mod signup;
+mod billing;
 
 use axum::Router;
 use axum::extract::Request;
@@ -75,9 +78,15 @@ pub fn build_router(state: AppState) -> Router {
         .merge(enterprise::router())
         .merge(monitoring::router())
         .merge(ai::router())
-        .merge(otlp::router());
+        .merge(otlp::router())
+        .merge(agents::router())
+        .merge(signup::router())
+        .merge(billing::router());
 
-    let router = router.layer(middleware::from_fn(crate::license_middleware::enforce_license_middleware));
+    let router = router.layer(middleware::from_fn_with_state(
+        state.clone(),
+        crate::handlers::billing::subscription_middleware,
+    ));
 
     router
         .layer(middleware::from_fn(rewrite_v1))

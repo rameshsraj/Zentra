@@ -17,6 +17,7 @@ use crate::state::AppState;
 const RED_METRIC_MV_LOCK_ID: i64 = 48201;
 const ALERT_EVAL_LOCK_ID: i64 = 48202;
 const CACHE_PRUNE_LOCK_ID: i64 = 48203;
+const AGENT_STATUS_SWEEP_LOCK_ID: i64 = 48204;
 
 /// Try to acquire a non-blocking session-level advisory lock.
 /// Returns `true` if the lock was acquired (caller should proceed),
@@ -159,6 +160,50 @@ pub fn start_background_jobs(state: AppState) {
             info!("Background: OTLP API key cache pruned ({} entries cleared)", 0);
 
             release_advisory_lock(&state_cache.tsdb_pool, CACHE_PRUNE_LOCK_ID).await;
+        }
+    });
+
+    // 4. Agent Fleet Status Sweep (every 60 seconds)
+    let state_agents = state.clone();
+    tokio::spawn(async move {
+        let mut tick = interval(Duration::from_secs(60));
+        tick.tick().await;
+        info!("Background: Agent fleet status sweep started (HA-safe)");
+
+        loop {
+            tick.tick().await;
+
+            if !try_advisory_lock(&state_agents.tsdb_pool, AGENT_STATUS_SWEEP_LOCK_ID).await {
+                debug!("Background: Agent status sweep skipped — another node holds the lock");
+                continue;
+            }
+
+            if let Err(e) = sqlx::query(
+                "UPDATE agent_fleet
+                 SET status = 'stale', updated_at = NOW()
+                 WHERE status NOT IN ('stale', 'offline', 'deregistered')
+                   AND last_seen <= NOW() - INTERVAL '5 minutes'
+                   AND last_seen > NOW() - INTERVAL '15 minutes'"
+            )
+            .execute(&state_agents.tsdb_pool)
+            .await
+            {
+                error!("Background: Agent stale sweep failed: {}", e);
+            }
+
+            if let Err(e) = sqlx::query(
+                "UPDATE agent_fleet
+                 SET status = 'offline', updated_at = NOW()
+                 WHERE status NOT IN ('offline', 'deregistered')
+                   AND last_seen <= NOW() - INTERVAL '15 minutes'"
+            )
+            .execute(&state_agents.tsdb_pool)
+            .await
+            {
+                error!("Background: Agent offline sweep failed: {}", e);
+            }
+
+            release_advisory_lock(&state_agents.tsdb_pool, AGENT_STATUS_SWEEP_LOCK_ID).await;
         }
     });
 }

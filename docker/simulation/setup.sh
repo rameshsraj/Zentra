@@ -237,6 +237,7 @@ sed \
     -e "s|__HOST_IFACE__|${HOST_IFACE}|g" \
     -e "s|__HOST_SUBNET__|${HOST_SUBNET}|g" \
     -e "s|__HOST_GATEWAY__|${HOST_GATEWAY}|g" \
+    -e "s|__ZENTRA_HOST__|${HOST_IP}|g" \
     -e "s|__IP_SRV_LINUX_01__|${IP_SRV_LINUX_01}|g" \
     -e "s|__IP_SRV_LINUX_02__|${IP_SRV_LINUX_02}|g" \
     -e "s|__IP_SRV_WIN_01__|${IP_SRV_WIN_01}|g" \
@@ -307,8 +308,8 @@ echo "======================================================"
 echo ""
 printf "%-20s %-18s %-10s %-30s\n" "COMPONENT" "IP ADDRESS" "PORT(S)" "DESCRIPTION"
 printf "%-20s %-18s %-10s %-30s\n" "--------------------" "------------------" "----------" "------------------------------"
-printf "%-20s %-18s %-10s %-30s\n" "srv-linux-01"   "${IP_SRV_LINUX_01}"   "22,161"   "Rocky Linux 8 (Web Server)"
-printf "%-20s %-18s %-10s %-30s\n" "srv-linux-02"   "${IP_SRV_LINUX_02}"   "22,161"   "Ubuntu 22.04 (App Server)"
+printf "%-20s %-18s %-10s %-30s\n" "srv-linux-01"   "${IP_SRV_LINUX_01}"   "22,161"   "Rocky Linux 8 (Web+Agent)"
+printf "%-20s %-18s %-10s %-30s\n" "srv-linux-02"   "${IP_SRV_LINUX_02}"   "22,161"   "Ubuntu 22.04 (App+Agent)"
 printf "%-20s %-18s %-10s %-30s\n" "srv-win-01"     "${IP_SRV_WIN_01}"     "22,161"   "Windows Server 2022 (AD/DNS)"
 printf "%-20s %-18s %-10s %-30s\n" "srv-win-02"     "${IP_SRV_WIN_02}"     "22,161"   "Windows Server 2019 (Files)"
 printf "%-20s %-18s %-10s %-30s\n" "sw-core-01"     "${IP_SW_CORE_01}"     "22,161"   "Cisco Catalyst 9300 (Core)"
@@ -323,6 +324,7 @@ echo ""
 echo "------------------------------------------------------"
 echo "  SNMP Community:    public"
 echo "  SSH Credentials:   root / zentra123 (all containers)"
+echo "  Zentra Agents:     srv-linux-01, srv-linux-02 (REMOTE mode → ${HOST_IP}:5006)"
 echo "  Tomcat Manager:    zentra / zentra123"
 echo "  Nginx Status:      http://<nginx-ip>:8080/nginx_status"
 echo "  Apache Status:     http://<apache-ip>:8080/server-status"

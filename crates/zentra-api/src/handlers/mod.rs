@@ -91,3 +91,6 @@ pub mod otlp;
 pub mod otel_connectors;
 pub mod license_status;
 pub mod pool_status;
+pub mod agents;
+pub mod signup;
+pub mod billing;

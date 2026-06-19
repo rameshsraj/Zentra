@@ -127,6 +127,14 @@ pub async fn create_user(
     axum::Extension(ctx): axum::Extension<AuthContext>,
     Json(req): Json<CreateUserRequest>,
 ) -> impl IntoResponse {
+    // Quota enforcement
+    if let Err(e) = crate::handlers::signup::check_user_quota(&state.pool, caller_org_id).await {
+        return (StatusCode::PAYMENT_REQUIRED, Json(json!({
+            "error": "quota_exceeded",
+            "message": e.to_string()
+        }))).into_response();
+    }
+
     let caller_role = ctx.role.as_str();
 
     // ── Role gate ────────────────────────────────────────────────────────

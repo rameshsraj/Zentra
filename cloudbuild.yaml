@@ -1,0 +1,125 @@
+# Zentra Cloud Build Pipeline
+# Trigger: push to main branch
+# Builds Rust backend + frontend, pushes Docker images to Artifact Registry,
+# deploys to GCP VM.
+
+timeout: 1800s  # 30 min max
+
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+  # ── Step 1: Compile Rust binaries ──────────────────────────────────────
+  - id: compile-rust
+    name: rust:1.82-bookworm
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        echo "==> Restoring Cargo cache"
+        mkdir -p /workspace/.cargo-cache
+        export CARGO_HOME=/workspace/.cargo-cache
+
+        echo "==> Compiling zentra-api and zentra-agent (release + prod-license)"
+        cargo build --release \
+          --features zentra-core/prod-license,zentra-api/prod-license \
+          -p zentra-api -p zentra-agent
+
+        echo "==> Copying binaries to workspace"
+        cp target/release/zentra-api /workspace/zentra-api
+        cp target/release/zentra-agent /workspace/zentra-agent
+        ls -lh /workspace/zentra-api /workspace/zentra-agent
+    volumes:
+      - name: cargo-cache
+        path: /workspace/.cargo-cache
+
+  # ── Step 2: Build backend Docker image ─────────────────────────────────
+  - id: build-backend-image
+    name: gcr.io/cloud-builders/docker
+    waitFor: [compile-rust]
+    args:
+      - build
+      - -f
+      - docker/Dockerfile
+      - -t
+      - $_REGION-docker.pkg.dev/$PROJECT_ID/zentra/zentra-backend:$SHORT_SHA
+      - -t
+      - $_REGION-docker.pkg.dev/$PROJECT_ID/zentra/zentra-backend:latest
+      - .
+
+  # ── Step 3: Build frontend Docker image ────────────────────────────────
+  - id: build-frontend-image
+    name: gcr.io/cloud-builders/docker
+    waitFor: [compile-rust]
+    args:
+      - build
+      - -f
+      - frontend/Dockerfile
+      - -t
+      - $_REGION-docker.pkg.dev/$PROJECT_ID/zentra/zentra-frontend:$SHORT_SHA
+      - -t
+      - $_REGION-docker.pkg.dev/$PROJECT_ID/zentra/zentra-frontend:latest
+      - frontend/
+
+  # ── Step 4: Push images to Artifact Registry ───────────────────────────
+  - id: push-backend
+    name: gcr.io/cloud-builders/docker
+    waitFor: [build-backend-image]
+    args: [push, --all-tags, '$_REGION-docker.pkg.dev/$PROJECT_ID/zentra/zentra-backend']
+
+  - id: push-frontend
+    name: gcr.io/cloud-builders/docker
+    waitFor: [build-frontend-image]
+    args: [push, --all-tags, '$_REGION-docker.pkg.dev/$PROJECT_ID/zentra/zentra-frontend']
+
+  # ── Step 5: Upload agent binary to GCS ─────────────────────────────────
+  - id: upload-agent-binary
+    name: gcr.io/cloud-builders/gsutil
+    waitFor: [compile-rust]
+    args:
+      - cp
+      - /workspace/zentra-agent
+      - gs://zentra-releases/agent/latest/zentra-agent-linux-x86_64
+
+  # ── Step 6: Deploy to GCP VM ──────────────────────────────────────────
+  - id: deploy-to-vm
+    name: gcr.io/cloud-builders/gcloud
+    waitFor: [push-backend, push-frontend, upload-agent-binary]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        echo "==> Retrieving SSH key from Secret Manager"
+        gcloud secrets versions access latest --secret=zentra-deploy-ssh-key > /tmp/deploy_key
+        chmod 600 /tmp/deploy_key
+
+        VM_IP=$(gcloud secrets versions access latest --secret=zentra-vm-ip)
+        IMAGE_TAG="$SHORT_SHA"
+        REGION="$_REGION"
+
+        echo "==> Deploying to $$VM_IP with tag $$IMAGE_TAG"
+        ssh -o StrictHostKeyChecking=no -i /tmp/deploy_key zentra@$$VM_IP \
+          "bash /opt/zentra/deploy.sh $$IMAGE_TAG $$REGION"
+
+        echo "==> Waiting for health check"
+        for i in $(seq 1 30); do
+          if curl -sf "http://$$VM_IP:5006/api/health" > /dev/null 2>&1; then
+            echo "==> Health check passed"
+            exit 0
+          fi
+          echo "   Attempt $$i/30 — waiting 5s..."
+          sleep 5
+        done
+
+        echo "ERROR: Health check failed after 150s"
+        exit 1
+
+substitutions:
+  _REGION: us-central1
+
+images:
+  - $_REGION-docker.pkg.dev/$PROJECT_ID/zentra/zentra-backend:$SHORT_SHA
+  - $_REGION-docker.pkg.dev/$PROJECT_ID/zentra/zentra-frontend:$SHORT_SHA

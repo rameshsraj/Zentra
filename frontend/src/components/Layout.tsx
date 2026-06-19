@@ -172,6 +172,20 @@ const navItems: NavItem[] = [
     ],
   },
   {
+    to: '/fleet',
+    label: 'Fleet',
+    icon: Server,
+    children: [
+      { to: '/fleet', label: 'Agents', icon: Server },
+      { to: '/fleet/install', label: 'Install Wizard', icon: Cpu },
+    ],
+  },
+  {
+    to: '/billing',
+    label: 'Billing',
+    icon: Activity,
+  },
+  {
     to: '/admin/users',
     label: 'Admin',
     icon: Settings,

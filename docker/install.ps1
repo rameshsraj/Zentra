@@ -325,4 +325,48 @@ Write-Host "  IMPORTANT: Change the default admin password after first login!" -
 Write-Host "======================================================" -ForegroundColor Green
 Write-Host ""
 
+# ---------------------------------------------------------------------------
+# Step 9: Optionally launch Simulation Lab
+# ---------------------------------------------------------------------------
+$SimDir = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "simulation"
+$SimSetup = Join-Path $SimDir "setup.ps1"
+$SimAgentBin = Join-Path $SimDir "bin\zentra-agent"
+
+if ((Test-Path $SimSetup) -and (Test-Path $SimDir)) {
+    Write-Host ""
+    Write-Host "======================================================" -ForegroundColor Yellow
+    Write-Host "  Simulation Lab Available"                              -ForegroundColor Yellow
+    Write-Host "======================================================" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  A datacenter simulation lab is bundled with this install."
+    Write-Host "  It creates 12 simulated infrastructure nodes:"
+    Write-Host "    - 2 Linux servers (with Zentra Agents)"
+    Write-Host "    - 2 Windows servers (SNMP)"
+    Write-Host "    - 2 network switches (SNMP)"
+    Write-Host "    - 1 firewall (SNMP)"
+    Write-Host "    - 1 storage array (SNMP)"
+    Write-Host "    - 3 middleware (Nginx, Apache, Tomcat)"
+    Write-Host "    - 1 Oracle database"
+    Write-Host ""
+
+    if (Test-Path $SimAgentBin) {
+        Write-Host "  Agent binary: FOUND (will be installed in Linux containers)" -ForegroundColor Green
+    } else {
+        Write-Host "  Agent binary: NOT FOUND (agents will not run in Linux containers)" -ForegroundColor Yellow
+        Write-Host "  Place zentra-agent binary at: $SimAgentBin"
+    }
+
+    Write-Host ""
+    $answer = Read-Host "  Do you want to start the simulation lab? (Y/N)"
+    if ($answer -eq "Y" -or $answer -eq "y") {
+        Write-Host ""
+        Write-Info "Launching simulation lab..."
+        & $SimSetup -NoWait
+    } else {
+        Write-Host ""
+        Write-Info "Simulation lab skipped. You can start it later with:"
+        Write-Host "    powershell -ExecutionPolicy Bypass -File `"$SimSetup`""
+    }
+}
+
 if (-not $NoWait) { Read-Host "Press Enter to close" }

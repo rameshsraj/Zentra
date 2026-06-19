@@ -420,3 +420,38 @@ mod tests {
         assert!(json.contains("cpu_usage_percent"));
     }
 }
+
+// ── Seed default dashboards for a new org (used by signup) ─────────────────
+
+/// Insert a set of default dashboards for a newly created organization.
+/// Called within a transaction during signup.
+pub async fn seed_org_dashboards(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    org_id: Uuid,
+) -> Result<(), String> {
+    let defaults = [
+        ("Command Center", "overview", r#"{"panels":[]}"#),
+        ("Server Health", "servers", r#"{"panels":[]}"#),
+        ("Database Performance", "databases", r#"{"panels":[]}"#),
+        ("Network Overview", "network", r#"{"panels":[]}"#),
+    ];
+
+    for (name, slug, layout) in &defaults {
+        let dash_id = Uuid::new_v4();
+        let _ = sqlx::query(
+            "INSERT INTO dashboards (dashboard_id, org_id, name, slug, layout, is_default, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5::jsonb, true, NOW(), NOW()) ON CONFLICT DO NOTHING",
+        )
+        .bind(dash_id)
+        .bind(org_id)
+        .bind(name)
+        .bind(slug)
+        .bind(serde_json::from_str::<serde_json::Value>(layout).unwrap_or_default())
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+
+    info!(org_id = %org_id, "Seeded default dashboards for new org");
+    Ok(())
+}
