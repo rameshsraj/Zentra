@@ -225,6 +225,7 @@ $content = $content -replace "parent: __HOST_IFACE__", "# parent: $HostIface"
 $content = $content -replace "__HOST_IFACE__", $HostIface
 $content = $content -replace "__HOST_SUBNET__", $HostSubnet
 $content = $content -replace "__HOST_GATEWAY__", $HostGateway
+$content = $content -replace "__ZENTRA_HOST__", $HostGateway
 $content = $content -replace "__IP_SRV_LINUX_01__", $IpSrvLinux01
 $content = $content -replace "__IP_SRV_LINUX_02__", $IpSrvLinux02
 $content = $content -replace "__IP_SRV_WIN_01__", $IpSrvWin01
@@ -302,8 +303,8 @@ $separator = "{0,-20} {1,-18} {2,-10} {3,-30}" -f ("=" * 20),("=" * 18),("=" * 1
 
 Write-Host $header
 Write-Host $separator
-Write-Host ("{0,-20} {1,-18} {2,-10} {3,-30}" -f "srv-linux-01",   $IpSrvLinux01,  "22,161",  "Rocky Linux 8 (Web Server)")
-Write-Host ("{0,-20} {1,-18} {2,-10} {3,-30}" -f "srv-linux-02",   $IpSrvLinux02,  "22,161",  "Ubuntu 22.04 (App Server)")
+Write-Host ("{0,-20} {1,-18} {2,-10} {3,-30}" -f "srv-linux-01",   $IpSrvLinux01,  "22,161",  "Rocky Linux 8 (Web+Agent)")
+Write-Host ("{0,-20} {1,-18} {2,-10} {3,-30}" -f "srv-linux-02",   $IpSrvLinux02,  "22,161",  "Ubuntu 22.04 (App+Agent)")
 Write-Host ("{0,-20} {1,-18} {2,-10} {3,-30}" -f "srv-win-01",     $IpSrvWin01,    "22,161",  "Windows Server 2022 (AD/DNS)")
 Write-Host ("{0,-20} {1,-18} {2,-10} {3,-30}" -f "srv-win-02",     $IpSrvWin02,    "22,161",  "Windows Server 2019 (Files)")
 Write-Host ("{0,-20} {1,-18} {2,-10} {3,-30}" -f "sw-core-01",     $IpSwCore01,    "22,161",  "Cisco Catalyst 9300 (Core)")
@@ -319,6 +320,7 @@ Write-Host ""
 Write-Host "------------------------------------------------------"
 Write-Host "  SNMP Community:    public"
 Write-Host "  SSH Credentials:   root / zentra123 (all containers)"
+Write-Host "  Zentra Agents:     srv-linux-01, srv-linux-02 (REMOTE mode -> ${HostGateway}:5006)"
 Write-Host "  Tomcat Manager:    zentra / zentra123"
 Write-Host "  Nginx Status:      http://<nginx-ip>:8080/nginx_status"
 Write-Host "  Apache Status:     http://<apache-ip>:8080/server-status"

@@ -37,7 +37,7 @@ services:
     volumes:
       - ./configs/linux-server/snmpd-rocky.conf:/etc/snmp/snmpd.conf:ro
       - ./configs/linux-server/setup-linux-agent.sh:/opt/setup.sh:ro
-      - ../target/release/zentra-agent:/opt/zentra-agent/zentra-agent:ro
+      - ./bin/zentra-agent:/opt/zentra-agent/zentra-agent:ro
     environment:
       - AGENT_MODE=remote
       - API_ENDPOINT=http://__ZENTRA_HOST__:5006
@@ -59,7 +59,7 @@ services:
     volumes:
       - ./configs/linux-server/snmpd-ubuntu.conf:/etc/snmp/snmpd.conf:ro
       - ./configs/linux-server/setup-linux-ubuntu-agent.sh:/opt/setup.sh:ro
-      - ../target/release/zentra-agent:/opt/zentra-agent/zentra-agent:ro
+      - ./bin/zentra-agent:/opt/zentra-agent/zentra-agent:ro
     environment:
       - AGENT_MODE=remote
       - API_ENDPOINT=http://__ZENTRA_HOST__:5006
