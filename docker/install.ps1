@@ -223,6 +223,10 @@ ZENTRA_API_PORT=5006
 ZENTRA_ALLOW_ORIGINS=*
 ZENTRA_ORG_ID=00000000-0000-0000-0000-000000000001
 
+# Container lockdown
+# Set to 1 to keep shells available (needed for simulation SSH setup via docker exec)
+ZENTRA_SKIP_LOCKDOWN=1
+
 # Logging
 RUST_LOG=info
 "@

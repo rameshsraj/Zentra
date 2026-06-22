@@ -286,19 +286,21 @@ $sshTargets = @(
     "mw-nginx-01", "mw-apache-01", "mw-tomcat-01", "db-oracle-01"
 )
 
-# Wait up to 30 seconds for SSH to come up on at least the first node
+# Wait up to 100 seconds for SSH to come up on the first node
+# Simulation containers run setup.sh which installs openssh-server - this takes time
 $sshReady = $false
-for ($wait = 1; $wait -le 10; $wait++) {
+for ($wait = 1; $wait -le 20; $wait++) {
     $firstSimIp = Get-SimIp -Name "srv-linux-01"
     if ($firstSimIp -ne "N/A") {
-        docker exec zentra sh -c "echo > /dev/tcp/$firstSimIp/22" >$null 2>$null
+        # Try TCP connect to port 22 via bash /dev/tcp
+        docker exec zentra bash -c "echo > /dev/tcp/$firstSimIp/22" >$null 2>$null
         if ($LASTEXITCODE -eq 0) {
             $sshReady = $true
             break
         }
     }
     Write-Host "." -NoNewline
-    Start-Sleep -Seconds 3
+    Start-Sleep -Seconds 5
 }
 Write-Host ""
 
@@ -308,8 +310,14 @@ if ($sshReady) {
     Write-Warn "SSH may not be ready on all nodes yet - will attempt key distribution anyway"
 }
 
-# Extra wait for all containers to stabilize
-Start-Sleep -Seconds 5
+# Extra wait for all containers to fully stabilize (setup.sh finishes installing services)
+if ($sshReady) {
+    Write-Info "SSH detected - waiting 10s for all nodes to finish setup..."
+    Start-Sleep -Seconds 10
+} else {
+    Write-Warn "SSH not detected after 100s - attempting key distribution anyway"
+    Start-Sleep -Seconds 5
+}
 
 # ---------------------------------------------------------------------------
 # Step 8: Distribute SSH keys to simulation nodes
@@ -325,18 +333,18 @@ foreach ($target in $sshTargets) {
     $targetIp = Get-SimIp -Name $target
     if ($targetIp -ne "N/A") {
         $copyOk = $false
-        for ($attempt = 1; $attempt -le 3; $attempt++) {
+        for ($attempt = 1; $attempt -le 5; $attempt++) {
             # Direct key push via cat|pipe (avoids < redirect which breaks in PowerShell)
-            docker exec zentra sh -c "cat ${ROOT_KEY}.pub | sshpass -p zentra123 ssh -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=5 root@${targetIp} 'mkdir -p /root/.ssh && chmod 700 /root/.ssh && cat >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys'" >$null 2>$null
+            docker exec zentra bash -c "cat ${ROOT_KEY}.pub | sshpass -p zentra123 ssh -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=8 root@${targetIp} 'mkdir -p /root/.ssh && chmod 700 /root/.ssh && cat >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys'" >$null 2>$null
             if ($LASTEXITCODE -eq 0) {
                 # Verify key was actually installed
-                docker exec zentra timeout 5 ssh -i $ROOT_KEY -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no "root@${targetIp}" "echo ok" >$null 2>$null
+                docker exec zentra timeout 8 ssh -i $ROOT_KEY -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no "root@${targetIp}" "echo ok" >$null 2>$null
                 if ($LASTEXITCODE -eq 0) {
                     $copyOk = $true
                     break
                 }
             }
-            Start-Sleep -Seconds 2
+            Start-Sleep -Seconds 5
         }
         if ($copyOk) {
             $keyCount++
