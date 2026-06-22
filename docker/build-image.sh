@@ -154,6 +154,7 @@ echo ""
 echo "[D05] Building agent Docker image ${AGENT_IMAGE_NAME}:${IMAGE_TAG}..."
 
 # Copy agent binary to simulation/bin for the Dockerfile context
+mkdir -p "${PROJECT_ROOT}/docker/simulation/bin"
 if [ -f "${PROJECT_ROOT}/target/release/zentra-agent" ]; then
     cp "${PROJECT_ROOT}/target/release/zentra-agent" "${PROJECT_ROOT}/docker/simulation/bin/zentra-agent"
     echo "[D05] Agent binary copied to docker/simulation/bin/"

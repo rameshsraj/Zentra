@@ -37,8 +37,8 @@ target/release/examples/
 target/release/incremental/
 target/release/.fingerprint/
 target/release/*.d
-target/release/zentra-agent
 # Allow: target/release/zentra-server (the binary)
+# Allow: docker/simulation/bin/zentra-agent (for agent image)
 
 # ── Git & IDE ──
 .git/
@@ -89,4 +89,9 @@ logs/
 
 # ── Docker image tarballs (don't nest images inside the build) ──
 docker/zentra-latest.tar.gz
-docker/simulation/
+docker/zentra-agent-latest.tar.gz
+docker/simulation/configs/
+docker/simulation/setup.*
+docker/simulation/traffic-sim.*
+docker/simulation/docker-compose*
+# Allow: docker/simulation/bin/ (agent binary for agent image)
