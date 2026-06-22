@@ -146,12 +146,6 @@ RUN rm -f /etc/nginx/conf.d/default.conf && \
     '    keepalive_timeout 65;' \
     '    server_tokens off;' \
     '    types_hash_max_size 2048;' \
-    '    # Reject requests with undefined Host header' \
-    '    server {' \
-    '        listen 5010 default_server;' \
-    '        server_name "";' \
-    '        return 444;' \
-    '    }' \
     '    include /etc/nginx/conf.d/*.conf;' \
     '}' > /etc/nginx/nginx.conf
 
