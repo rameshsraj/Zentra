@@ -160,11 +160,11 @@ docker exec zentra rm -f /root/.ssh/id_rsa /root/.ssh/id_rsa.pub 2>/dev/null
 docker exec zentra mkdir -p /root/.ssh
 docker exec zentra chmod 700 /root/.ssh
 docker exec zentra ssh-keygen -t rsa -b 4096 -f /root/.ssh/id_rsa -N "" -q
-docker exec zentra sh -c "echo 'Host *' > /root/.ssh/config"
-docker exec zentra sh -c "echo '    StrictHostKeyChecking no' >> /root/.ssh/config"
-docker exec zentra sh -c "echo '    UserKnownHostsFile /dev/null' >> /root/.ssh/config"
-docker exec zentra sh -c "echo '    LogLevel ERROR' >> /root/.ssh/config"
-docker exec zentra sh -c "echo '    GSSAPIAuthentication no' >> /root/.ssh/config"
+docker exec zentra bash -c "echo 'Host *' > /root/.ssh/config"
+docker exec zentra bash -c "echo '    StrictHostKeyChecking no' >> /root/.ssh/config"
+docker exec zentra bash -c "echo '    UserKnownHostsFile /dev/null' >> /root/.ssh/config"
+docker exec zentra bash -c "echo '    LogLevel ERROR' >> /root/.ssh/config"
+docker exec zentra bash -c "echo '    GSSAPIAuthentication no' >> /root/.ssh/config"
 docker exec zentra chmod 600 /root/.ssh/config
 if [ $? -eq 0 ]; then
     ok "SSH key pair generated"
@@ -214,18 +214,19 @@ info "Waiting for SSH daemons to start on simulation nodes..."
 
 SSH_TARGETS="srv-linux-01 srv-linux-02 srv-win-01 srv-win-02 sw-core-01 sw-access-01 fw-01 stor-01 mw-nginx-01 mw-apache-01 mw-tomcat-01 db-oracle-01"
 
-# Wait up to 30 seconds for SSH to come up on at least the first node
+# Wait up to 100 seconds for SSH to come up on at least the first node
+# Simulation containers run setup.sh which installs openssh-server - this takes time
 SSH_READY=false
-for wait_i in $(seq 1 10); do
+for wait_i in $(seq 1 20); do
     FIRST_SIM_IP=$(get_sim_ip srv-linux-01)
     if [ -n "${FIRST_SIM_IP}" ]; then
-        if docker exec zentra sh -c "echo > /dev/tcp/${FIRST_SIM_IP}/22" >/dev/null 2>&1; then
+        if docker exec zentra bash -c "echo > /dev/tcp/${FIRST_SIM_IP}/22" >/dev/null 2>&1; then
             SSH_READY=true
             break
         fi
     fi
     printf "."
-    sleep 3
+    sleep 5
 done
 echo ""
 
@@ -235,8 +236,14 @@ else
     warn "SSH may not be ready on all nodes yet - will attempt key distribution anyway"
 fi
 
-# Extra wait for all containers to stabilize
-sleep 5
+# Extra wait for all containers to fully stabilize (setup.sh finishes installing services)
+if [ "${SSH_READY}" = true ]; then
+    info "SSH detected - waiting 10s for all nodes to finish setup..."
+    sleep 10
+else
+    warn "SSH not detected after 100s - attempting key distribution anyway"
+    sleep 5
+fi
 
 # ---------------------------------------------------------------------------
 # Step 8: Distribute SSH keys to simulation nodes
@@ -253,16 +260,16 @@ for target in ${SSH_TARGETS}; do
     TARGET_IP=$(get_sim_ip "${target}")
     if [ -n "${TARGET_IP}" ]; then
         COPY_OK=false
-        for attempt in 1 2 3; do
+        for attempt in 1 2 3 4 5; do
             # Direct key push via cat|pipe (consistent with PS1 version)
-            if docker exec zentra sh -c "cat /root/.ssh/id_rsa.pub | sshpass -p zentra123 ssh -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=5 root@${TARGET_IP} 'mkdir -p /root/.ssh && chmod 700 /root/.ssh && cat >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys'" >/dev/null 2>&1; then
+            if docker exec zentra bash -c "cat /root/.ssh/id_rsa.pub | sshpass -p zentra123 ssh -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=8 root@${TARGET_IP} 'mkdir -p /root/.ssh && chmod 700 /root/.ssh && cat >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys'" >/dev/null 2>&1; then
                 # Verify key was actually installed
-                if docker exec zentra timeout 5 ssh -i /root/.ssh/id_rsa -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no "root@${TARGET_IP}" "echo ok" >/dev/null 2>&1; then
+                if docker exec zentra timeout 8 ssh -i /root/.ssh/id_rsa -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no "root@${TARGET_IP}" "echo ok" >/dev/null 2>&1; then
                     COPY_OK=true
                     break
                 fi
             fi
-            sleep 2
+            sleep 5
         done
         if [ "${COPY_OK}" = true ]; then
             KEY_COUNT=$((KEY_COUNT + 1))
@@ -302,7 +309,7 @@ if [ -n "${FIRST_SIM_IP}" ]; then
     else
         warn "Passwordless SSH verification failed"
         warn "  Last error: ${LAST_ERROR}"
-        warn "  Manual fix: docker exec zentra sh -c \"cat /root/.ssh/id_rsa.pub | sshpass -p zentra123 ssh -o StrictHostKeyChecking=no root@${FIRST_SIM_IP} 'mkdir -p /root/.ssh && cat >> /root/.ssh/authorized_keys'\""
+        warn "  Manual fix: docker exec zentra bash -c \"cat /root/.ssh/id_rsa.pub | sshpass -p zentra123 ssh -o StrictHostKeyChecking=no root@${FIRST_SIM_IP} 'mkdir -p /root/.ssh && cat >> /root/.ssh/authorized_keys'\""
     fi
 else
     warn "Could not get IP for srv-linux-01 - skipping SSH verification"
