@@ -110,22 +110,69 @@ fi
 # Default environment variables
 # ---------------------------------------------------------------------------
 export POSTGRES_USER="${POSTGRES_USER:-postgres}"
-export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 24)}"
 export POSTGRES_DB="${POSTGRES_DB:-zentra}"
 export POSTGRES_PORT="${POSTGRES_PORT:-5434}"
 export ZENTRA_API_PORT="${ZENTRA_API_PORT:-5006}"
 
-# D02: Auto-generate JWT secret if not provided
+# ---------------------------------------------------------------------------
+# Persistent secrets: saved to PG data volume so they survive restarts and
+# re-installs. Env vars take priority → volume file → auto-generate once.
+# ---------------------------------------------------------------------------
+SECRETS_DIR="/var/lib/postgresql/data/.zentra-secrets"
+mkdir -p "${SECRETS_DIR}" 2>/dev/null || true
+chmod 700 "${SECRETS_DIR}" 2>/dev/null || true
+
+# POSTGRES_PASSWORD — must match what PG was initialized with
+if [ -z "${POSTGRES_PASSWORD:-}" ]; then
+    if [ -f "${SECRETS_DIR}/pg-password" ]; then
+        export POSTGRES_PASSWORD=$(cat "${SECRETS_DIR}/pg-password")
+        echo "[entrypoint] POSTGRES_PASSWORD loaded from persistent volume."
+    else
+        export POSTGRES_PASSWORD=$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 24)
+        echo "${POSTGRES_PASSWORD}" > "${SECRETS_DIR}/pg-password"
+        chmod 400 "${SECRETS_DIR}/pg-password"
+        echo "[entrypoint] POSTGRES_PASSWORD auto-generated and persisted to volume."
+    fi
+else
+    # Env var provided — persist it so it's available even without .env
+    echo "${POSTGRES_PASSWORD}" > "${SECRETS_DIR}/pg-password"
+    chmod 400 "${SECRETS_DIR}/pg-password"
+fi
+
+# D02: JWT secret — must stay the same across restarts or sessions break
 if [ -z "${ZENTRA_JWT_SECRET:-}" ]; then
-    export ZENTRA_JWT_SECRET=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 48)
-    echo "[entrypoint] ZENTRA_JWT_SECRET not set — auto-generated for this session."
+    if [ -f "${SECRETS_DIR}/jwt-secret" ]; then
+        export ZENTRA_JWT_SECRET=$(cat "${SECRETS_DIR}/jwt-secret")
+        echo "[entrypoint] ZENTRA_JWT_SECRET loaded from persistent volume."
+    else
+        export ZENTRA_JWT_SECRET=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 48)
+        echo "${ZENTRA_JWT_SECRET}" > "${SECRETS_DIR}/jwt-secret"
+        chmod 400 "${SECRETS_DIR}/jwt-secret"
+        echo "[entrypoint] ZENTRA_JWT_SECRET auto-generated and persisted to volume."
+    fi
+fi
+# Always persist the active key (in case it came from env and volume is empty)
+if [ ! -f "${SECRETS_DIR}/jwt-secret" ]; then
+    echo "${ZENTRA_JWT_SECRET}" > "${SECRETS_DIR}/jwt-secret"
+    chmod 400 "${SECRETS_DIR}/jwt-secret"
 fi
 export ZENTRA_ALLOW_INSECURE_JWT="${ZENTRA_ALLOW_INSECURE_JWT:-0}"
 
-# Auto-generate ZENTRA_MASTER_KEY if not provided (required for credential encryption)
+# MASTER_KEY — must stay the same or all encrypted credentials become unreadable
 if [ -z "${ZENTRA_MASTER_KEY:-}" ]; then
-    export ZENTRA_MASTER_KEY=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 64)
-    echo "[entrypoint] ZENTRA_MASTER_KEY not set — auto-generated for this session."
+    if [ -f "${SECRETS_DIR}/master-key" ]; then
+        export ZENTRA_MASTER_KEY=$(cat "${SECRETS_DIR}/master-key")
+        echo "[entrypoint] ZENTRA_MASTER_KEY loaded from persistent volume."
+    else
+        export ZENTRA_MASTER_KEY=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 64)
+        echo "${ZENTRA_MASTER_KEY}" > "${SECRETS_DIR}/master-key"
+        chmod 400 "${SECRETS_DIR}/master-key"
+        echo "[entrypoint] ZENTRA_MASTER_KEY auto-generated and persisted to volume."
+    fi
+fi
+if [ ! -f "${SECRETS_DIR}/master-key" ]; then
+    echo "${ZENTRA_MASTER_KEY}" > "${SECRETS_DIR}/master-key"
+    chmod 400 "${SECRETS_DIR}/master-key"
 fi
 export ZENTRA_ALLOW_ORIGINS="${ZENTRA_ALLOW_ORIGINS:-}"
 export ZENTRA_ORG_ID="${ZENTRA_ORG_ID:-00000000-0000-0000-0000-000000000001}"
