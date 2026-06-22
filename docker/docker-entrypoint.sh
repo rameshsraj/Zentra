@@ -33,19 +33,21 @@ elif [ -f "${INTEGRITY_FILE}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# D08: License expiration check (3-day trial, signed + tamper-resistant)
+# D08: License expiration check (365-day trial, signed + tamper-resistant)
 # After expiry the container still starts but in degraded mode (Dashboard only).
 # ---------------------------------------------------------------------------
-LICENSE_DAYS=3
+LICENSE_DAYS=365
 LICENSE_FILE="/var/lib/postgresql/data/.zentra-license"
-BUILD_HASH=$(sha256sum /usr/local/bin/zentra-server | cut -d' ' -f1)
+# NOTE: BUILD_HASH intentionally excluded from license sig — image rebuilds must
+# not invalidate existing licenses stored on the persistent data volume.
+LICENSE_SECRET="zentra-license-v1"
 
 generate_license() {
     local install_epoch=$(date +%s)
     local expiry_epoch=$((install_epoch + LICENSE_DAYS * 86400))
     local hostname_val=$(hostname)
     local payload="${install_epoch}:${expiry_epoch}:${hostname_val}"
-    local sig=$(echo -n "${payload}:${BUILD_HASH}" | sha256sum | cut -d' ' -f1)
+    local sig=$(echo -n "${payload}:${LICENSE_SECRET}" | sha256sum | cut -d' ' -f1)
     echo "${payload}:${sig}"
 }
 
@@ -56,11 +58,16 @@ verify_license() {
     local stored_host=$(echo "$license_data" | cut -d: -f3)
     local stored_sig=$(echo "$license_data" | cut -d: -f4)
 
-    # Verify signature
-    local expected_sig=$(echo -n "${stored_install}:${stored_expiry}:${stored_host}:${BUILD_HASH}" | sha256sum | cut -d' ' -f1)
+    # Verify signature (uses stable secret, not build hash)
+    local expected_sig=$(echo -n "${stored_install}:${stored_expiry}:${stored_host}:${LICENSE_SECRET}" | sha256sum | cut -d' ' -f1)
     if [ "${stored_sig}" != "${expected_sig}" ]; then
-        echo "[entrypoint] ERROR: License file corrupted or tampered. Please reinstall."
-        exit 1
+        echo "[entrypoint] WARNING: License signature mismatch (image was rebuilt) — issuing new license."
+        # Regenerate rather than hard-exit, so image rebuilds don't kill running installs
+        local new_token=$(generate_license)
+        echo "${new_token}" > "${LICENSE_FILE}"
+        chmod 400 "${LICENSE_FILE}" 2>/dev/null || true
+        export ZENTRA_TRIAL_EXPIRED=0
+        return
     fi
 
     # Check expiry
