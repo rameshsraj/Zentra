@@ -25,6 +25,7 @@ $EnvFile       = "C:\zentra\.env"
 
 # GHCR settings (only used if pulling from registry)
 $GhcrImage = "ghcr.io/rameshsraj/zentra:latest"
+$AgentImageName = "zentra-agent:latest"
 
 # ---------------------------------------------------------------------------
 # Helper functions
@@ -112,6 +113,15 @@ if ($oldImages) {
     Write-Ok "Old zentra images removed"
 }
 
+# Remove old agent images
+$oldAgentImages = docker images $AgentImageName -q 2>$null
+if ($oldAgentImages) {
+    Write-Info "Removing old agent image(s)..."
+    docker rmi -f $oldAgentImages 2>$null | Out-Null
+    Start-Sleep -Seconds 2
+    Write-Ok "Old agent images removed"
+}
+
 # Remove stale/dangling images
 $danglingImages = docker images --filter "dangling=true" -q 2>$null
 if ($danglingImages) {
@@ -183,6 +193,35 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Ok "Image ready: $ImageName"
+
+# Load agent image if tarball exists
+$agentTarball = $null
+$agentCandidates = @("zentra-agent-latest.tar.gz")
+$agentCandidates += Get-ChildItem -Path "." -Filter "zentra-agent*.tar.gz" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
+
+foreach ($f in $agentCandidates) {
+    if (Test-Path $f) {
+        $agentTarball = $f
+        break
+    }
+}
+
+if ($agentTarball) {
+    Write-Info "Found agent tarball: $agentTarball - loading..."
+    docker load -i $agentTarball
+    if ($LASTEXITCODE -eq 0) {
+        Write-Ok "Agent image loaded from $agentTarball"
+    } else {
+        Write-Warn "Failed to load agent image - simulation lab will not have a dedicated collector"
+    }
+} else {
+    $agentImgCheck = docker image inspect $AgentImageName 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Ok "Agent image $AgentImageName already exists locally"
+    } else {
+        Write-Warn "No agent tarball found - simulation lab will not have a dedicated collector"
+    }
+}
 
 # ---------------------------------------------------------------------------
 # Step 4: Create .env file

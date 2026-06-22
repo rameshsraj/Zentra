@@ -77,7 +77,7 @@ Write-Host ""
 Write-Info "Stopping and removing existing containers..."
 
 $allContainers = @(
-    "zentra",
+    "zentra", "zentra-agent",
     "srv-linux-01", "srv-linux-02", "srv-win-01", "srv-win-02",
     "sw-core-01", "sw-access-01", "fw-01", "stor-01",
     "mw-nginx-01", "mw-apache-01", "mw-tomcat-01", "db-oracle-01"
@@ -168,134 +168,19 @@ if ($simSuccess) {
 }
 
 # ---------------------------------------------------------------------------
-# Step 5: Ensure SSH tools are available in the Zentra container
+# Step 5: Wait for zentra-agent to be healthy
 # ---------------------------------------------------------------------------
 Write-Host ""
-Write-Info "Checking SSH tools in Zentra container..."
+Write-Info "Waiting for zentra-agent to start and distribute SSH keys..."
 
-# Suppress stderr from docker exec calls (GPG key imports, SSH warnings, test failures)
-# $ErrorActionPreference = "Stop" treats any native stderr as a terminating error
-$prevEAP = $ErrorActionPreference
-$ErrorActionPreference = "SilentlyContinue"
-
-# Check if sshpass is available
-docker exec zentra which sshpass >$null 2>$null
-if ($LASTEXITCODE -ne 0) {
-    Write-Info "Installing openssh-clients and sshpass in Zentra container..."
-    docker exec zentra dnf install -y openssh-clients sshpass 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Ok "SSH tools installed successfully"
-    } else {
-        Write-Warn "Failed to install SSH tools"
-    }
-} else {
-    Write-Ok "SSH tools already available"
-}
-
-# Generate SSH keys for root user (force regenerate to ensure no passphrase)
-$ROOT_SSH_DIR = "/root/.ssh"
-$ROOT_KEY = "$ROOT_SSH_DIR/id_rsa"
-Write-Info "Regenerating SSH key pair for root (ensuring no passphrase)..."
-docker exec zentra rm -f $ROOT_KEY "$ROOT_KEY.pub" >$null 2>$null
-docker exec zentra mkdir -p $ROOT_SSH_DIR
-docker exec zentra chmod 700 $ROOT_SSH_DIR
-docker exec zentra ssh-keygen -t rsa -b 4096 -f $ROOT_KEY -N "" -q
-docker exec zentra sh -c "echo 'Host *' > $ROOT_SSH_DIR/config"
-docker exec zentra sh -c "echo '    StrictHostKeyChecking no' >> $ROOT_SSH_DIR/config"
-docker exec zentra sh -c "echo '    UserKnownHostsFile /dev/null' >> $ROOT_SSH_DIR/config"
-docker exec zentra sh -c "echo '    LogLevel ERROR' >> $ROOT_SSH_DIR/config"
-docker exec zentra sh -c "echo '    GSSAPIAuthentication no' >> $ROOT_SSH_DIR/config"
-docker exec zentra chmod 600 $ROOT_SSH_DIR/config
-if ($LASTEXITCODE -eq 0) {
-    Write-Ok "SSH key pair generated at $ROOT_KEY"
-} else {
-    Write-Warn "Failed to generate SSH key pair"
-}
-
-# Copy root's key to zentra user so zentra-server (running as 'zentra') uses the same key
-$ZENTRA_SSH_DIR = "/opt/zentra/.ssh"
-Write-Info "Copying SSH key to zentra user ($ZENTRA_SSH_DIR)..."
-docker exec zentra mkdir -p $ZENTRA_SSH_DIR
-docker exec zentra cp $ROOT_KEY $ZENTRA_SSH_DIR/id_rsa
-docker exec zentra cp "${ROOT_KEY}.pub" $ZENTRA_SSH_DIR/id_rsa.pub
-docker exec zentra chown zentra:zentra $ZENTRA_SSH_DIR/id_rsa $ZENTRA_SSH_DIR/id_rsa.pub
-docker exec zentra chmod 600 $ZENTRA_SSH_DIR/id_rsa
-docker exec zentra chmod 644 $ZENTRA_SSH_DIR/id_rsa.pub
-# SSH config for zentra user
-docker exec zentra sh -c "echo 'Host *' > $ZENTRA_SSH_DIR/config"
-docker exec zentra sh -c "echo '    StrictHostKeyChecking no' >> $ZENTRA_SSH_DIR/config"
-docker exec zentra sh -c "echo '    UserKnownHostsFile /dev/null' >> $ZENTRA_SSH_DIR/config"
-docker exec zentra sh -c "echo '    LogLevel ERROR' >> $ZENTRA_SSH_DIR/config"
-docker exec zentra sh -c "echo '    GSSAPIAuthentication no' >> $ZENTRA_SSH_DIR/config"
-docker exec zentra chown zentra:zentra $ZENTRA_SSH_DIR/config
-docker exec zentra chmod 600 $ZENTRA_SSH_DIR/config
-if ($LASTEXITCODE -eq 0) {
-    Write-Ok "SSH key copied to zentra user at $ZENTRA_SSH_DIR"
-} else {
-    Write-Warn "Failed to copy SSH key to zentra user"
-}
-
-# ---------------------------------------------------------------------------
-# Step 6: Connect Zentra container to simulation network
-# ---------------------------------------------------------------------------
-Write-Host ""
-Write-Info "Connecting Zentra container to simulation network..."
-
-# Attach zentra to the simulation bridge so it can reach 10.100.0.x nodes
-docker network connect simulation_zentra-dc zentra >$null 2>$null
-if ($LASTEXITCODE -eq 0) {
-    Write-Ok "Zentra connected to simulation network (simulation_zentra-dc)"
-} else {
-    Write-Warn "Could not connect Zentra to simulation network (may already be connected)"
-}
-
-# Verify connectivity
-$firstSimIp = Get-SimIp -Name "srv-linux-01"
-if ($firstSimIp -ne "N/A") {
-    $pingOk = $false
-    for ($attempt = 1; $attempt -le 5; $attempt++) {
-        docker exec zentra ping -c 1 -W 2 $firstSimIp >$null 2>$null
+$agentReady = $false
+for ($wait = 1; $wait -le 30; $wait++) {
+    $agentRunning = docker ps --filter "name=zentra-agent" --filter "status=running" --format '{{.Names}}' 2>$null
+    if ($agentRunning -match "zentra-agent") {
+        # Check if agent process is running inside the container
+        docker exec zentra-agent pgrep -f zentra-agent >$null 2>$null
         if ($LASTEXITCODE -eq 0) {
-            $pingOk = $true
-            break
-        }
-        Start-Sleep -Seconds 2
-    }
-    if ($pingOk) {
-        Write-Ok "Zentra can reach simulation nodes (ping $firstSimIp OK)"
-    } else {
-        Write-Warn "Ping to $firstSimIp failed from Zentra container"
-        Write-Warn "  Debug: docker exec zentra ip addr"
-    }
-} else {
-    Write-Warn "Could not get IP for srv-linux-01 - skipping ping verification"
-}
-
-# Restore ErrorActionPreference after all docker exec blocks
-$ErrorActionPreference = $prevEAP
-
-# ---------------------------------------------------------------------------
-# Step 7: Wait for SSH readiness on simulation nodes
-# ---------------------------------------------------------------------------
-Write-Host ""
-Write-Info "Waiting for SSH daemons to start on simulation nodes..."
-
-$sshTargets = @(
-    "srv-linux-01", "srv-linux-02", "srv-win-01", "srv-win-02",
-    "sw-core-01", "sw-access-01", "fw-01", "stor-01",
-    "mw-nginx-01", "mw-apache-01", "mw-tomcat-01", "db-oracle-01"
-)
-
-# Wait up to 100 seconds for SSH to come up on the first node
-# Simulation containers run setup.sh which installs openssh-server - this takes time
-$sshReady = $false
-for ($wait = 1; $wait -le 20; $wait++) {
-    $firstSimIp = Get-SimIp -Name "srv-linux-01"
-    if ($firstSimIp -ne "N/A") {
-        # Try TCP connect to port 22 via bash /dev/tcp
-        docker exec zentra bash -c "echo > /dev/tcp/$firstSimIp/22" >$null 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            $sshReady = $true
+            $agentReady = $true
             break
         }
     }
@@ -304,98 +189,14 @@ for ($wait = 1; $wait -le 20; $wait++) {
 }
 Write-Host ""
 
-if ($sshReady) {
-    Write-Ok "SSH is ready on simulation nodes"
+if ($agentReady) {
+    Write-Ok "zentra-agent is running and collecting metrics"
 } else {
-    Write-Warn "SSH may not be ready on all nodes yet - will attempt key distribution anyway"
-}
-
-# Extra wait for all containers to fully stabilize (setup.sh finishes installing services)
-if ($sshReady) {
-    Write-Info "SSH detected - waiting 10s for all nodes to finish setup..."
-    Start-Sleep -Seconds 10
-} else {
-    Write-Warn "SSH not detected after 100s - attempting key distribution anyway"
-    Start-Sleep -Seconds 5
+    Write-Warn "zentra-agent may not be fully ready yet — check logs: docker logs zentra-agent"
 }
 
 # ---------------------------------------------------------------------------
-# Step 8: Distribute SSH keys to simulation nodes
-# ---------------------------------------------------------------------------
-Write-Host ""
-Write-Info "Distributing SSH keys to simulation nodes..."
-
-$keyCount = 0
-$failedNodes = @()
-$prevEAP = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
-foreach ($target in $sshTargets) {
-    $targetIp = Get-SimIp -Name $target
-    if ($targetIp -ne "N/A") {
-        $copyOk = $false
-        for ($attempt = 1; $attempt -le 5; $attempt++) {
-            # Direct key push via cat|pipe (avoids < redirect which breaks in PowerShell)
-            docker exec zentra bash -c "cat ${ROOT_KEY}.pub | sshpass -p zentra123 ssh -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no -o ConnectTimeout=8 root@${targetIp} 'mkdir -p /root/.ssh && chmod 700 /root/.ssh && cat >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys'" >$null 2>$null
-            if ($LASTEXITCODE -eq 0) {
-                # Verify key was actually installed
-                docker exec zentra timeout 8 ssh -i $ROOT_KEY -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=no -o GSSAPIAuthentication=no "root@${targetIp}" "echo ok" >$null 2>$null
-                if ($LASTEXITCODE -eq 0) {
-                    $copyOk = $true
-                    break
-                }
-            }
-            Start-Sleep -Seconds 5
-        }
-        if ($copyOk) {
-            $keyCount++
-        } else {
-            $failedNodes += "$target ($targetIp)"
-        }
-    } else {
-        $failedNodes += "$target (no IP)"
-    }
-}
-$ErrorActionPreference = $prevEAP
-
-if ($keyCount -gt 0) {
-    Write-Ok "SSH keys distributed to $keyCount/$($sshTargets.Count) nodes"
-}
-if ($failedNodes.Count -gt 0) {
-    Write-Warn "Failed nodes: $($failedNodes -join ', ')"
-}
-
-# Verify SSH works without password
-Write-Info "Verifying passwordless SSH..."
-$firstSimIp = Get-SimIp -Name "srv-linux-01"
-if ($firstSimIp -ne "N/A") {
-    $prevEAP2 = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    $verifyOk = $false
-    $lastError = ""
-    for ($attempt = 1; $attempt -le 3; $attempt++) {
-        $sshResult = docker exec zentra ssh -i $ROOT_KEY -o BatchMode=yes -o ConnectTimeout=5 -o GSSAPIAuthentication=no -o StrictHostKeyChecking=no "root@${firstSimIp}" hostname 2>&1
-        $lastError = $sshResult
-        if ($LASTEXITCODE -eq 0) {
-            $verifyOk = $true
-            break
-        }
-        Write-Info "  SSH attempt $attempt/3 failed, retrying..."
-        Start-Sleep -Seconds 2
-    }
-    $ErrorActionPreference = $prevEAP2
-    if ($verifyOk) {
-        Write-Ok "Passwordless SSH verified (srv-linux-01: $sshResult)"
-    } else {
-        Write-Warn "Passwordless SSH verification failed"
-        Write-Warn "  Last error: $lastError"
-        Write-Warn "  Manual fix: docker exec zentra sh -c `"cat /root/.ssh/id_rsa.pub | sshpass -p zentra123 ssh -o StrictHostKeyChecking=no root@$firstSimIp 'cat >> /root/.ssh/authorized_keys'`""
-    }
-} else {
-    Write-Warn "Could not get IP for srv-linux-01 - skipping SSH verification"
-}
-
-# ---------------------------------------------------------------------------
-# Step 9: Combined Summary
+# Step 6: Combined Summary
 # ---------------------------------------------------------------------------
 $elapsed = (Get-Date) - $startTime
 $elapsedStr = "{0:mm\:ss}" -f $elapsed

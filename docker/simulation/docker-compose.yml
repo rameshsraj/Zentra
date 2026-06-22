@@ -22,6 +22,38 @@ networks:
 services:
 
   # =========================================================================
+  # ZENTRA AGENT — collects from all sim nodes, pushes to Zentra API
+  # =========================================================================
+  zentra-agent:
+    image: zentra-agent:latest
+    container_name: zentra-agent
+    hostname: zentra-agent
+    restart: unless-stopped
+    networks:
+      zentra-dc:
+        ipv4_address: __IP_AGENT__
+    environment:
+      - AGENT_MODE=remote
+      - API_ENDPOINT=http://__ZENTRA_HOST__:5006
+      - AGENT_API_KEY=sim-agent-collector
+      - DC_NAME=zentra-agent
+      - SSH_PASSWORD=zentra123
+      - SIM_NODES=srv-linux-01:__IP_SRV_LINUX_01__ srv-linux-02:__IP_SRV_LINUX_02__ srv-win-01:__IP_SRV_WIN_01__ srv-win-02:__IP_SRV_WIN_02__ sw-core-01:__IP_SW_CORE_01__ sw-access-01:__IP_SW_ACCESS_01__ fw-01:__IP_FW_01__ stor-01:__IP_STOR_01__ mw-nginx-01:__IP_MW_NGINX_01__ mw-apache-01:__IP_MW_APACHE_01__ mw-tomcat-01:__IP_MW_TOMCAT_01__ db-oracle-01:__IP_DB_ORACLE_01__
+    depends_on:
+      - srv-linux-01
+      - srv-linux-02
+      - srv-win-01
+      - srv-win-02
+      - sw-core-01
+      - sw-access-01
+      - fw-01
+      - stor-01
+      - mw-nginx-01
+      - mw-apache-01
+      - mw-tomcat-01
+      - db-oracle-01
+
+  # =========================================================================
   # LINUX SERVERS
   # =========================================================================
 
@@ -36,13 +68,7 @@ services:
         ipv4_address: __IP_SRV_LINUX_01__
     volumes:
       - ./configs/linux-server/snmpd-rocky.conf:/etc/snmp/snmpd.conf:ro
-      - ./configs/linux-server/setup-linux-agent.sh:/opt/setup.sh:ro
-      - ./bin/zentra-agent:/opt/zentra-agent/zentra-agent:ro
-    environment:
-      - AGENT_MODE=remote
-      - API_ENDPOINT=http://__ZENTRA_HOST__:5006
-      - AGENT_API_KEY=sim-agent-rocky-01
-      - DC_NAME=srv-linux-01
+      - ./configs/linux-server/setup-linux.sh:/opt/setup.sh:ro
     entrypoint: ["/bin/sh", "-c", "tr -d '\\r' < /opt/setup.sh | /bin/bash"]
     cap_add:
       - NET_ADMIN
@@ -58,13 +84,7 @@ services:
         ipv4_address: __IP_SRV_LINUX_02__
     volumes:
       - ./configs/linux-server/snmpd-ubuntu.conf:/etc/snmp/snmpd.conf:ro
-      - ./configs/linux-server/setup-linux-ubuntu-agent.sh:/opt/setup.sh:ro
-      - ./bin/zentra-agent:/opt/zentra-agent/zentra-agent:ro
-    environment:
-      - AGENT_MODE=remote
-      - API_ENDPOINT=http://__ZENTRA_HOST__:5006
-      - AGENT_API_KEY=sim-agent-ubuntu-01
-      - DC_NAME=srv-linux-02
+      - ./configs/linux-server/setup-linux-ubuntu.sh:/opt/setup.sh:ro
     entrypoint: ["/bin/sh", "-c", "tr -d '\\r' < /opt/setup.sh | /bin/bash"]
     cap_add:
       - NET_ADMIN

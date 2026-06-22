@@ -120,6 +120,9 @@ ok "Gateway:   ${HOST_GATEWAY}"
 # ---------------------------------------------------------------------------
 info "Assigning IPs from ${IP_BASE}.${IP_OFFSET_START}+..."
 
+# Agent IP (low address, before sim nodes)
+IP_AGENT="${IP_BASE}.$((IP_OFFSET_START - 1))"
+
 # Node IP assignments (starting from offset)
 IP_SRV_LINUX_01="${IP_BASE}.$((IP_OFFSET_START + 1))"
 IP_SRV_LINUX_02="${IP_BASE}.$((IP_OFFSET_START + 2))"
@@ -137,7 +140,7 @@ IP_DB_ORACLE_01="${IP_BASE}.$((IP_OFFSET_START + 12))"
 # Check for IP conflicts
 info "Checking for IP conflicts..."
 CONFLICT=false
-for ip in ${IP_SRV_LINUX_01} ${IP_SRV_LINUX_02} ${IP_SRV_WIN_01} ${IP_SRV_WIN_02} \
+for ip in ${IP_AGENT} ${IP_SRV_LINUX_01} ${IP_SRV_LINUX_02} ${IP_SRV_WIN_01} ${IP_SRV_WIN_02} \
           ${IP_SW_CORE_01} ${IP_SW_ACCESS_01} ${IP_FW_01} ${IP_STOR_01} \
           ${IP_MW_NGINX_01} ${IP_MW_APACHE_01} ${IP_MW_TOMCAT_01} ${IP_DB_ORACLE_01}; do
     if ping -c 1 -W 1 "${ip}" >/dev/null 2>&1; then
@@ -160,7 +163,7 @@ ok "IP assignments ready"
 # ---------------------------------------------------------------------------
 # Step 4: Stop all running simulation containers
 # ---------------------------------------------------------------------------
-SIM_CONTAINERS="srv-linux-01 srv-linux-02 srv-win-01 srv-win-02 sw-core-01 sw-access-01 fw-01 stor-01 mw-nginx-01 mw-apache-01 mw-tomcat-01 db-oracle-01"
+SIM_CONTAINERS="zentra-agent srv-linux-01 srv-linux-02 srv-win-01 srv-win-02 sw-core-01 sw-access-01 fw-01 stor-01 mw-nginx-01 mw-apache-01 mw-tomcat-01 db-oracle-01"
 
 info "Phase 1/5: Stopping any running simulation containers..."
 
@@ -238,6 +241,7 @@ sed \
     -e "s|__HOST_SUBNET__|${HOST_SUBNET}|g" \
     -e "s|__HOST_GATEWAY__|${HOST_GATEWAY}|g" \
     -e "s|__ZENTRA_HOST__|${HOST_IP}|g" \
+    -e "s|__IP_AGENT__|${IP_AGENT}|g" \
     -e "s|__IP_SRV_LINUX_01__|${IP_SRV_LINUX_01}|g" \
     -e "s|__IP_SRV_LINUX_02__|${IP_SRV_LINUX_02}|g" \
     -e "s|__IP_SRV_WIN_01__|${IP_SRV_WIN_01}|g" \
@@ -308,8 +312,9 @@ echo "======================================================"
 echo ""
 printf "%-20s %-18s %-10s %-30s\n" "COMPONENT" "IP ADDRESS" "PORT(S)" "DESCRIPTION"
 printf "%-20s %-18s %-10s %-30s\n" "--------------------" "------------------" "----------" "------------------------------"
-printf "%-20s %-18s %-10s %-30s\n" "srv-linux-01"   "${IP_SRV_LINUX_01}"   "22,161"   "Rocky Linux 8 (Web+Agent)"
-printf "%-20s %-18s %-10s %-30s\n" "srv-linux-02"   "${IP_SRV_LINUX_02}"   "22,161"   "Ubuntu 22.04 (App+Agent)"
+printf "${CYAN}%-20s %-18s %-10s %-30s${NC}\n" "zentra-agent"   "${IP_AGENT}"         "-"        "Zentra Agent (Collector)"
+printf "%-20s %-18s %-10s %-30s\n" "srv-linux-01"   "${IP_SRV_LINUX_01}"   "22,161"   "Rocky Linux 8 (Web Server)"
+printf "%-20s %-18s %-10s %-30s\n" "srv-linux-02"   "${IP_SRV_LINUX_02}"   "22,161"   "Ubuntu 22.04 (App Server)"
 printf "%-20s %-18s %-10s %-30s\n" "srv-win-01"     "${IP_SRV_WIN_01}"     "22,161"   "Windows Server 2022 (AD/DNS)"
 printf "%-20s %-18s %-10s %-30s\n" "srv-win-02"     "${IP_SRV_WIN_02}"     "22,161"   "Windows Server 2019 (Files)"
 printf "%-20s %-18s %-10s %-30s\n" "sw-core-01"     "${IP_SW_CORE_01}"     "22,161"   "Cisco Catalyst 9300 (Core)"
@@ -324,7 +329,7 @@ echo ""
 echo "------------------------------------------------------"
 echo "  SNMP Community:    public"
 echo "  SSH Credentials:   root / zentra123 (all containers)"
-echo "  Zentra Agents:     srv-linux-01, srv-linux-02 (REMOTE mode → ${HOST_IP}:5006)"
+echo "  Zentra Agent:      zentra-agent (${IP_AGENT}) -> Zentra API at ${HOST_IP}:5006"
 echo "  Tomcat Manager:    zentra / zentra123"
 echo "  Nginx Status:      http://<nginx-ip>:8080/nginx_status"
 echo "  Apache Status:     http://<apache-ip>:8080/server-status"

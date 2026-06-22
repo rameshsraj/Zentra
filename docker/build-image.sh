@@ -26,8 +26,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 IMAGE_NAME="zentra"
+AGENT_IMAGE_NAME="zentra-agent"
 IMAGE_TAG="latest"
 TARBALL="${SCRIPT_DIR}/zentra-latest.tar.gz"
+AGENT_TARBALL="${SCRIPT_DIR}/zentra-agent-latest.tar.gz"
 
 SKIP_FE=false
 SKIP_BE=false
@@ -54,8 +56,9 @@ cleanup_docker() {
     docker ps -q 2>/dev/null | xargs -r docker stop 2>/dev/null || true
     echo "[CLEANUP] Removing all Docker containers..."
     docker ps -aq 2>/dev/null | xargs -r docker rm -f 2>/dev/null || true
-    echo "[CLEANUP] Removing the built image..."
+    echo "[CLEANUP] Removing built images..."
     docker rmi "${IMAGE_NAME}:${IMAGE_TAG}" 2>/dev/null || true
+    docker rmi "${AGENT_IMAGE_NAME}:${IMAGE_TAG}" 2>/dev/null || true
     echo "[CLEANUP] Pruning dangling images, volumes, and networks..."
     docker image prune -f 2>/dev/null || true
     docker volume prune -f 2>/dev/null || true
@@ -95,9 +98,10 @@ if [ "$SKIP_BE" = false ]; then
     echo ""
     echo "[D02] Building Rust backend (release)..."
     cd "${PROJECT_ROOT}"
-    cargo build --release --bin zentra-server 2>&1 | tail -5
+    cargo build --release --bin zentra-server --bin zentra-agent 2>&1 | tail -5
     echo "[D02] Backend build complete."
     ls -lh "${PROJECT_ROOT}/target/release/zentra-server"
+    ls -lh "${PROJECT_ROOT}/target/release/zentra-agent"
 else
     echo "[D02] Skipping backend build (--skip-be)"
 fi
@@ -145,22 +149,50 @@ docker run --rm --entrypoint sh "${IMAGE_NAME}:${IMAGE_TAG}" -c '
     echo "  Build-info: $(cat /opt/zentra/.build-info 2>/dev/null | head -1)"
 '
 
-# ── D08: Export as Tarball ──
+# ── D05: Build Agent Docker Image ──
 echo ""
-echo "[D08] Exporting image as tarball..."
+echo "[D05] Building agent Docker image ${AGENT_IMAGE_NAME}:${IMAGE_TAG}..."
+
+# Copy agent binary to simulation/bin for the Dockerfile context
+if [ -f "${PROJECT_ROOT}/target/release/zentra-agent" ]; then
+    cp "${PROJECT_ROOT}/target/release/zentra-agent" "${PROJECT_ROOT}/docker/simulation/bin/zentra-agent"
+    echo "[D05] Agent binary copied to docker/simulation/bin/"
+fi
+
+if [ ! -f "${PROJECT_ROOT}/docker/simulation/bin/zentra-agent" ]; then
+    echo "[WARN] Agent binary not found — skipping agent image build."
+else
+    cd "${PROJECT_ROOT}"
+    docker build -f docker/agent/Dockerfile -t "${AGENT_IMAGE_NAME}:${IMAGE_TAG}" .
+    echo "[D05] Agent image built."
+    docker images "${AGENT_IMAGE_NAME}:${IMAGE_TAG}" --format "  Image: {{.Repository}}:{{.Tag}}  Size: {{.Size}}  Created: {{.CreatedAt}}"
+fi
+
+# ── D08: Export as Tarballs ──
+echo ""
+echo "[D08] Exporting images as tarballs..."
 docker save "${IMAGE_NAME}:${IMAGE_TAG}" | gzip > "${TARBALL}"
 TARBALL_SIZE=$(ls -lh "${TARBALL}" | awk '{print $5}')
-echo "[D08] Tarball created: ${TARBALL} (${TARBALL_SIZE})"
+echo "[D08] Zentra app tarball: ${TARBALL} (${TARBALL_SIZE})"
+
+AGENT_TARBALL_SIZE="N/A"
+if docker image inspect "${AGENT_IMAGE_NAME}:${IMAGE_TAG}" >/dev/null 2>&1; then
+    docker save "${AGENT_IMAGE_NAME}:${IMAGE_TAG}" | gzip > "${AGENT_TARBALL}"
+    AGENT_TARBALL_SIZE=$(ls -lh "${AGENT_TARBALL}" | awk '{print $5}')
+    echo "[D08] Agent tarball:     ${AGENT_TARBALL} (${AGENT_TARBALL_SIZE})"
+fi
 
 # ── Cleanup happens automatically via EXIT trap ──
-# After tarball is saved, the trap removes all Docker containers, images, volumes, networks.
+# After tarballs are saved, the trap removes all Docker containers, images, volumes, networks.
 
 echo ""
 echo "=============================================="
 echo "  BUILD COMPLETE"
-echo "  Tarball: ${TARBALL} (${TARBALL_SIZE})"
-echo "  Date:    $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "  App tarball:   ${TARBALL} (${TARBALL_SIZE})"
+echo "  Agent tarball: ${AGENT_TARBALL} (${AGENT_TARBALL_SIZE})"
+echo "  Date:          $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo ""
-echo "  Next: copy the tarball to your local machine:"
+echo "  Next: copy tarballs to your local machine:"
 echo "    scp $(hostname):${TARBALL} ./docker/zentra-latest.tar.gz"
+echo "    scp $(hostname):${AGENT_TARBALL} ./docker/zentra-agent-latest.tar.gz"
 echo "=============================================="
