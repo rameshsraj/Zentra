@@ -452,5 +452,40 @@ if [ "${ZENTRA_SKIP_LOCKDOWN:-0}" != "1" ]; then
     echo "[entrypoint] LOCKDOWN COMPLETE — container will be fully sealed in 5s."
 fi
 
+echo "[entrypoint] Injecting runtime environment into supervisord..."
+# supervisord does NOT inherit shell exports — all vars must be declared
+# explicitly in the [program:zentra-server] environment= directive.
+# We generate this at runtime so secrets from .env reach the process.
+SUPERVISORD_RUNTIME_ENV="/etc/supervisord.d/zentra-env.conf"
+mkdir -p /etc/supervisord.d
+
+# Escape any double-quotes in values (supervisord env= uses double-quotes)
+_esc() { printf '%s' "$1" | sed 's/"/\\"/g'; }
+
+cat > "${SUPERVISORD_RUNTIME_ENV}" <<EOFSUP
+[program:zentra-server]
+command=/usr/local/bin/zentra-server
+directory=/opt/zentra
+user=zentra
+autostart=true
+autorestart=true
+priority=20
+startsecs=3
+startretries=10
+stopwaitsecs=15
+stdout_logfile=/opt/zentra/logs/api.log
+stderr_logfile=/opt/zentra/logs/api-error.log
+environment=HOME="/opt/zentra",RUST_LOG="$(_esc "${RUST_LOG:-info}")",DATABASE_URL="$(_esc "${DATABASE_URL}")",ZENTRA_JWT_SECRET="$(_esc "${ZENTRA_JWT_SECRET}")",ZENTRA_MASTER_KEY="$(_esc "${ZENTRA_MASTER_KEY}")",ZENTRA_API_PORT="$(_esc "${ZENTRA_API_PORT:-5006}")",ZENTRA_BIND_ADDR="$(_esc "${ZENTRA_BIND_ADDR:-127.0.0.1}")",ZENTRA_ALLOW_ORIGINS="$(_esc "${ZENTRA_ALLOW_ORIGINS:-}")",ZENTRA_ORG_ID="$(_esc "${ZENTRA_ORG_ID:-00000000-0000-0000-0000-000000000001}")",ZENTRA_ALLOW_INSECURE_JWT="$(_esc "${ZENTRA_ALLOW_INSECURE_JWT:-0}")",ZENTRA_TRIAL_EXPIRED="$(_esc "${ZENTRA_TRIAL_EXPIRED:-0}")"
+EOFSUP
+
+chmod 600 "${SUPERVISORD_RUNTIME_ENV}"
+
+# Patch supervisord.conf to include the runtime env override directory
+if ! grep -q "include.*supervisord.d" /etc/supervisord.conf 2>/dev/null; then
+    echo "" >> /etc/supervisord.conf
+    echo "[include]" >> /etc/supervisord.conf
+    echo "files = /etc/supervisord.d/*.conf" >> /etc/supervisord.conf
+fi
+
 echo "[entrypoint] Starting all services via supervisord..."
 exec "$@"
