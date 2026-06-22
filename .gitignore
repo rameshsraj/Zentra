@@ -29,3 +29,27 @@ Thumbs.db
 # Docker image tarballs (too large for git)
 docker/zentra-latest.tar.gz
 docker/*.tar.gz
+
+# Simulation lab generated files
+docker/simulation/docker-compose.generated.yml
+docker/simulation/bin/
+
+# Internal scratch docs (prompts, diagnostics, audits - not for repo)
+docs/internal/
+
+# Diagnostic / scratch output files
+*.txt
+build_diagnostics.txt
+check_output.txt
+check_db_removal.txt
+api_check*.txt
+full_cargo_check*.txt
+full_check.txt
+last_check.txt
+final_check.txt
+agent_errors.txt
+api_errors.txt
+errors.txt
+errors_only.txt
+last_errors.txt
+error\ list
