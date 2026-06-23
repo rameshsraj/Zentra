@@ -121,7 +121,9 @@ if [ "${IS_DEBIAN}" = true ]; then
         apt-get install -y -qq timescaledb-2-postgresql-16 >> "${LOG_FILE}" 2>&1 || warn "TimescaleDB install failed"
     fi
 
-    PG_SERVICE="postgresql"
+    # On Debian, postgresql.service is a meta-wrapper (ExecStart=/bin/true).
+    # The real cluster service is postgresql@16-main.service.
+    PG_SERVICE="postgresql@16-main"
     PG_BIN="/usr/lib/postgresql/16/bin"
     NGINX_SITES="/etc/nginx/sites-available"
     NGINX_ENABLED="/etc/nginx/sites-enabled"
@@ -162,6 +164,7 @@ info "Initializing PostgreSQL data directory at ${PG_DATA_DIR}..."
 
 # Stop PostgreSQL if running (it may have started with default data dir)
 systemctl stop "${PG_SERVICE}" >> "${LOG_FILE}" 2>&1 || true
+[ "${IS_DEBIAN}" = true ] && pg_ctlcluster 16 main stop >> "${LOG_FILE}" 2>&1 || true
 
 if [ ! -f "${PG_DATA_DIR}/PG_VERSION" ]; then
     mkdir -p "${PG_DATA_DIR}"
@@ -195,14 +198,16 @@ fi
 
 # Override systemd to use the custom data directory
 if [ "${IS_DEBIAN}" = true ]; then
-    # Debian: patch data_directory in the cluster's postgresql.conf (don't replace it)
+    # Debian uses pg_ctlcluster + /etc/postgresql/16/main/postgresql.conf
+    # Patch data_directory to point at our custom location
     DEBIAN_PG_CONF="/etc/postgresql/16/main/postgresql.conf"
     if [ -f "${DEBIAN_PG_CONF}" ]; then
         sed -i "s|^data_directory = .*|data_directory = '${PG_DATA_DIR}'|" "${DEBIAN_PG_CONF}"
-        if ! grep -q "^data_directory" "${DEBIAN_PG_CONF}"; then
+        grep -q "^data_directory" "${DEBIAN_PG_CONF}" || \
             echo "data_directory = '${PG_DATA_DIR}'" >> "${DEBIAN_PG_CONF}"
-        fi
     fi
+    # Also ensure unix_socket_directories points to standard location
+    sed -i "s|^#*unix_socket_directories = .*|unix_socket_directories = '/var/run/postgresql'|" "${DEBIAN_PG_CONF}" || true
 else
     # RHEL: override the systemd service
     mkdir -p /etc/systemd/system/${PG_SERVICE}.service.d
@@ -222,8 +227,8 @@ PG_HBA="${PG_DATA_DIR}/pg_hba.conf"
 # ═══════════════════════════════════════════════════════════════════════════
 info "Step 2/6: Configuring PostgreSQL..."
 
-# Generate password
-PG_PASS=$(openssl rand -hex 16)
+# PostgreSQL password
+PG_PASS="zantaz"
 
 # Configure postgresql.conf
 if [ -f "${PG_CONF}" ]; then
@@ -271,9 +276,20 @@ fi
 # Start PostgreSQL with custom data dir and new config
 systemctl enable "${PG_SERVICE}" >> "${LOG_FILE}" 2>&1
 systemctl restart "${PG_SERVICE}" >> "${LOG_FILE}" 2>&1
-sleep 3
 
-# Set postgres password
+# Wait for PostgreSQL to be ready (up to 30s)
+info "Waiting for PostgreSQL to be ready..."
+for i in $(seq 1 15); do
+    if sudo -u postgres psql -p "${PG_PORT}" -c 'SELECT 1' >/dev/null 2>&1; then
+        ok "PostgreSQL is ready (${i}s)"
+        break
+    fi
+    sleep 2
+done
+sudo -u postgres psql -p "${PG_PORT}" -c 'SELECT 1' >/dev/null 2>&1 \
+    || fail "PostgreSQL did not start — check: journalctl -u ${PG_SERVICE} -n 50"
+
+# Set postgres password (cluster is using trust auth initially from initdb)
 sudo -u postgres psql -p "${PG_PORT}" -c "ALTER USER postgres PASSWORD '${PG_PASS}';" >> "${LOG_FILE}" 2>&1
 export PGPASSWORD="${PG_PASS}"
 
