@@ -1,0 +1,255 @@
+#!/usr/bin/env bash
+# =============================================================================
+# Zentra Agent — Setup Script (Binary-Only Deployment)
+# =============================================================================
+# Run as root on an on-premises Linux server (Debian/Ubuntu or RHEL/Rocky).
+#
+# Expects pre-built artifacts at /store/zentra-agent (cloned from GitHub):
+#   /store/zentra-agent/bin/zentra-agent   — Agent binary (Linux x86_64)
+#
+# What this does:
+#   1.  Installs minimal runtime dependencies (SSH client, SNMP tools)
+#   2.  Creates service user and directories
+#   3.  Prompts for Zentra API endpoint and datacenter name
+#   4.  Generates SSH keys for target collection
+#   5.  Creates systemd service and starts it
+#   6.  Runs connectivity check
+#
+# NO build tools are installed.
+#
+# Usage:
+#   git clone https://github.com/rameshsraj/zentra-agent.git /store/zentra-agent
+#   cd /store/zentra-agent
+#   sudo bash deploy/setup-agent.sh
+# =============================================================================
+set -euo pipefail
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+DEPLOY_DIR="/store/zentra-agent"
+SERVICE_USER="zentra-agent"
+LOG_FILE="/var/log/zentra-agent-setup.log"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+info()  { echo -e "\e[36m[INFO]\e[0m  $*" | tee -a "${LOG_FILE}"; }
+ok()    { echo -e "\e[32m[ OK ]\e[0m  $*" | tee -a "${LOG_FILE}"; }
+warn()  { echo -e "\e[33m[WARN]\e[0m  $*" | tee -a "${LOG_FILE}"; }
+fail()  { echo -e "\e[31m[FAIL]\e[0m  $*" | tee -a "${LOG_FILE}"; exit 1; }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pre-flight
+# ─────────────────────────────────────────────────────────────────────────────
+[ "$(id -u)" -ne 0 ] && fail "Run as root (sudo)"
+[ ! -f "${DEPLOY_DIR}/bin/zentra-agent" ] && fail "Binary not found at ${DEPLOY_DIR}/bin/zentra-agent — clone the repo first."
+mkdir -p "$(dirname "${LOG_FILE}")"
+echo "=== Zentra Agent Setup $(date) ===" > "${LOG_FILE}"
+
+echo ""
+echo "======================================================================"
+echo "  Zentra Agent — On-Premises Setup"
+echo "======================================================================"
+echo "  Deploy: ${DEPLOY_DIR}"
+echo "======================================================================"
+echo ""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Prompt for configuration
+# ─────────────────────────────────────────────────────────────────────────────
+if [ -z "${API_ENDPOINT:-}" ]; then
+    echo -n "Zentra API endpoint (e.g. http://34.68.222.94:5010): "
+    read -r API_ENDPOINT
+fi
+[ -z "${API_ENDPOINT}" ] && fail "API_ENDPOINT is required"
+
+if [ -z "${DC_NAME:-}" ]; then
+    DEFAULT_DC="dc-$(hostname -s 2>/dev/null || echo 'onprem')"
+    echo -n "Datacenter name [${DEFAULT_DC}]: "
+    read -r DC_NAME
+    DC_NAME="${DC_NAME:-${DEFAULT_DC}}"
+fi
+
+if [ -z "${AGENT_API_KEY:-}" ]; then
+    echo -n "Agent API key (starts with isok_): "
+    read -r AGENT_API_KEY
+fi
+[ -z "${AGENT_API_KEY}" ] && fail "AGENT_API_KEY is required"
+
+echo ""
+info "API endpoint: ${API_ENDPOINT}"
+info "DC name:      ${DC_NAME}"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STEP 1 — Install runtime dependencies
+# ═══════════════════════════════════════════════════════════════════════════
+info "Step 1/5: Installing runtime dependencies..."
+
+if [ -f /etc/debian_version ]; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq >> "${LOG_FILE}" 2>&1
+    apt-get install -y -qq \
+        openssh-client sshpass curl \
+        snmp snmp-mibs-downloader \
+        >> "${LOG_FILE}" 2>&1 || apt-get install -y -qq openssh-client sshpass curl >> "${LOG_FILE}" 2>&1
+elif [ -f /etc/redhat-release ]; then
+    dnf install -y \
+        openssh-clients sshpass curl \
+        net-snmp net-snmp-utils \
+        >> "${LOG_FILE}" 2>&1
+fi
+
+ok "Dependencies installed"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STEP 2 — Service user and directories
+# ═══════════════════════════════════════════════════════════════════════════
+info "Step 2/5: Setting up service user and directories..."
+
+if ! id -u "${SERVICE_USER}" >/dev/null 2>&1; then
+    useradd --system --shell /usr/sbin/nologin --home-dir "${DEPLOY_DIR}" "${SERVICE_USER}"
+    ok "Service user '${SERVICE_USER}' created"
+fi
+
+mkdir -p "${DEPLOY_DIR}"/{logs,buffer,.ssh}
+chmod 700 "${DEPLOY_DIR}/.ssh"
+
+# Ensure binary is executable
+chmod 755 "${DEPLOY_DIR}/bin/zentra-agent"
+
+# Create .env
+cat > "${DEPLOY_DIR}/.env" <<ENVEOF
+# Zentra Agent — generated by setup-agent.sh on $(date -u +%Y-%m-%d)
+ZENTRA_AGENT_MODE=remote
+ZENTRA_API_ENDPOINT=${API_ENDPOINT}
+ZENTRA_AGENT_API_KEY=${AGENT_API_KEY}
+ZENTRA_DC_NAME=${DC_NAME}
+ZENTRA_BUFFER_DIR=${DEPLOY_DIR}/buffer
+ZENTRA_LOG_LEVEL=info
+RUST_LOG=info
+HOME=${DEPLOY_DIR}
+ENVEOF
+
+chmod 600 "${DEPLOY_DIR}/.env"
+chown -R "${SERVICE_USER}:${SERVICE_USER}" "${DEPLOY_DIR}"
+ok ".env written to ${DEPLOY_DIR}/.env"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STEP 3 — SSH keys
+# ═══════════════════════════════════════════════════════════════════════════
+info "Step 3/5: Setting up SSH keys..."
+
+if [ ! -f "${DEPLOY_DIR}/.ssh/id_rsa" ]; then
+    ssh-keygen -t rsa -b 4096 -f "${DEPLOY_DIR}/.ssh/id_rsa" -N "" -C "zentra-agent@$(hostname)" >> "${LOG_FILE}" 2>&1
+    ok "SSH key pair generated"
+else
+    ok "SSH key pair already exists"
+fi
+
+cat > "${DEPLOY_DIR}/.ssh/config" <<'SSHCONF'
+Host *
+    StrictHostKeyChecking no
+    UserKnownHostsFile /dev/null
+    LogLevel ERROR
+    ConnectTimeout 10
+SSHCONF
+
+chown -R "${SERVICE_USER}:${SERVICE_USER}" "${DEPLOY_DIR}/.ssh"
+chmod 600 "${DEPLOY_DIR}/.ssh/id_rsa"
+chmod 644 "${DEPLOY_DIR}/.ssh/id_rsa.pub"
+chmod 600 "${DEPLOY_DIR}/.ssh/config"
+
+echo ""
+echo "  ┌─────────────────────────────────────────────────────────────────┐"
+echo "  │ SSH Public Key (distribute to monitored hosts):                │"
+echo "  ├─────────────────────────────────────────────────────────────────┤"
+cat "${DEPLOY_DIR}/.ssh/id_rsa.pub" | sed 's/^/  │ /'
+echo "  └─────────────────────────────────────────────────────────────────┘"
+echo ""
+echo "  Copy this key to each target host:"
+echo "    ssh-copy-id -i ${DEPLOY_DIR}/.ssh/id_rsa.pub root@<TARGET_IP>"
+echo ""
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STEP 4 — Systemd service
+# ═══════════════════════════════════════════════════════════════════════════
+info "Step 4/5: Creating systemd service..."
+
+cat > /etc/systemd/system/zentra-agent.service <<SVCEOF
+[Unit]
+Description=Zentra Monitoring Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${SERVICE_USER}
+Group=${SERVICE_USER}
+WorkingDirectory=${DEPLOY_DIR}
+EnvironmentFile=${DEPLOY_DIR}/.env
+ExecStart=${DEPLOY_DIR}/bin/zentra-agent
+Restart=always
+RestartSec=10
+StandardOutput=append:${DEPLOY_DIR}/logs/agent.log
+StandardError=append:${DEPLOY_DIR}/logs/agent-error.log
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+
+systemctl daemon-reload
+systemctl enable zentra-agent >> "${LOG_FILE}" 2>&1
+systemctl restart zentra-agent
+ok "zentra-agent service started"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STEP 5 — Connectivity check
+# ═══════════════════════════════════════════════════════════════════════════
+info "Step 5/5: Checking connectivity..."
+
+sleep 3
+
+# Test API reachability
+if curl -sf --max-time 10 "${API_ENDPOINT}/api/health" >/dev/null 2>&1; then
+    ok "Zentra API reachable at ${API_ENDPOINT}"
+else
+    warn "Cannot reach Zentra API at ${API_ENDPOINT}"
+    warn "Check firewall rules and ensure the Zentra server is running"
+fi
+
+AGENT_STATUS=$(systemctl is-active zentra-agent 2>/dev/null || echo "unknown")
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Summary
+# ═══════════════════════════════════════════════════════════════════════════
+echo ""
+echo ""
+echo "======================================================================"
+echo "  Zentra Agent — Setup Complete!"
+echo "======================================================================"
+echo ""
+echo "  API endpoint: ${API_ENDPOINT}"
+echo "  DC name:      ${DC_NAME}"
+echo "  Status:       ${AGENT_STATUS}"
+echo ""
+echo "  COMMANDS:"
+echo "    Status:     systemctl status zentra-agent"
+echo "    Logs:       journalctl -u zentra-agent -f"
+echo "    Restart:    systemctl restart zentra-agent"
+echo ""
+echo "  FILES:"
+echo "    Config:     ${DEPLOY_DIR}/.env"
+echo "    Logs:       ${DEPLOY_DIR}/logs/"
+echo "    Binary:     ${DEPLOY_DIR}/bin/zentra-agent"
+echo "    SSH key:    ${DEPLOY_DIR}/.ssh/id_rsa.pub"
+echo "    Setup log:  ${LOG_FILE}"
+echo ""
+echo "  NEXT STEPS:"
+echo "    1. Distribute SSH key to target hosts:"
+echo "       ssh-copy-id -i ${DEPLOY_DIR}/.ssh/id_rsa.pub root@<TARGET_IP>"
+echo "    2. Add targets in the Zentra UI"
+echo "    3. Verify metrics are flowing"
+echo "======================================================================"
+echo ""
