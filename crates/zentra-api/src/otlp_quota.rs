@@ -32,7 +32,7 @@ pub fn new_rpm_counters() -> RpmCounters {
 /// Applies only to OTLP ingest paths (/v1/traces, /v1/metrics, /v1/logs, /v1/profiles).
 pub async fn otlp_quota_middleware(
     State(state): State<AppState>,
-    req: Request,
+    mut req: Request,
     next: Next,
 ) -> Response {
     let path = req.uri().path().to_string();
@@ -53,7 +53,17 @@ pub async fn otlp_quota_middleware(
 
     if let Some(ref key) = api_key {
         // Validate key and get limits
-        if let Ok((_org_id, _perms)) = validate_otlp_key(&state, key).await {
+        if let Ok((org_id, _perms)) = validate_otlp_key(&state, key).await {
+            // Insert AuthContext so downstream OrgId extractor resolves correctly.
+            // OTLP requests authenticate via isok_ keys, not JWT, but handlers
+            // still rely on the AuthContext extension for tenancy scoping.
+            req.extensions_mut().insert(crate::auth_middleware::AuthContext {
+                user_id: uuid::Uuid::nil(),
+                org_id,
+                email: String::new(),
+                role: "otlp-agent".to_string(),
+                jti: String::new(),
+            });
             use sha2::{Sha256, Digest};
             let mut hasher = Sha256::new();
             hasher.update(key.as_bytes());

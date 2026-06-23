@@ -448,6 +448,7 @@ async fn insert_metrics_batch(pool: &PgPool, batch: &[IngestBatch]) -> Result<us
 
     let mut count = 0usize;
     let mut org_ids = Vec::new();
+    let mut target_ids_vec: Vec<uuid::Uuid> = Vec::new();
     let mut metric_names = Vec::new();
     let mut values = Vec::new();
     let mut times: Vec<chrono::DateTime<chrono::Utc>> = Vec::new();
@@ -459,6 +460,10 @@ async fn insert_metrics_batch(pool: &PgPool, batch: &[IngestBatch]) -> Result<us
             for rm in resource_metrics {
                 let resource_attrs = rm.pointer("/resource/attributes").cloned().unwrap_or(serde_json::json!({}));
                 let rid = extract_service_name(&resource_attrs);
+                // Extract zentra.target_id from resource attributes; fall back to nil UUID
+                let target_id = extract_attr_str(&resource_attrs, "zentra.target_id")
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                    .unwrap_or(uuid::Uuid::nil());
 
                 if let Some(scope_metrics) = rm.get("scopeMetrics").and_then(|v| v.as_array()) {
                     for sm in scope_metrics {
@@ -471,6 +476,7 @@ async fn insert_metrics_batch(pool: &PgPool, batch: &[IngestBatch]) -> Result<us
                                     let time = DateTime::from_timestamp_nanos(time_ns);
                                     let labels = otlp_attrs_to_map(dp_attrs);
                                     org_ids.push(item.org_id);
+                                    target_ids_vec.push(target_id);
                                     metric_names.push(mname);
                                     values.push(val);
                                     times.push(time);
@@ -582,8 +588,8 @@ async fn insert_metrics_batch(pool: &PgPool, batch: &[IngestBatch]) -> Result<us
     }
 
     // O03: Fix column names to match real schema — timestamp (not time), tags (not labels)
-    // target_id/plugin_id/resource_type default to 'otlp' for OTLP-sourced metrics
-    let target_ids: Vec<Option<uuid::Uuid>> = vec![None; count];
+    // plugin_id/resource_type default to 'otlp' for OTLP-sourced metrics
+    // target_id is extracted from zentra.target_id resource attribute (nil UUID if absent)
     let plugin_ids: Vec<String> = vec!["otlp".to_string(); count];
     let resource_types: Vec<String> = vec!["otlp".to_string(); count];
     let units: Vec<Option<String>> = vec![None; count];
@@ -596,7 +602,7 @@ async fn insert_metrics_batch(pool: &PgPool, batch: &[IngestBatch]) -> Result<us
     )
     .bind(&times)
     .bind(&org_ids)
-    .bind(&target_ids)
+    .bind(&target_ids_vec)
     .bind(&plugin_ids)
     .bind(&resource_types)
     .bind(&resource_ids)
@@ -842,6 +848,17 @@ fn extract_service_name(attrs: &Value) -> String {
         }
     }
     "unknown".to_string()
+}
+
+fn extract_attr_str<'a>(attrs: &'a Value, key: &str) -> Option<&'a str> {
+    if let Some(arr) = attrs.as_array() {
+        for attr in arr {
+            if attr.get("key").and_then(|k| k.as_str()) == Some(key) {
+                return attr.pointer("/value/stringValue").and_then(|v| v.as_str());
+            }
+        }
+    }
+    None
 }
 
 fn otlp_attrs_to_map(attrs: &Value) -> Value {

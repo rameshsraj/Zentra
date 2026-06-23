@@ -169,7 +169,18 @@ pub async fn heartbeat(
     headers: HeaderMap,
     Json(body): Json<AgentHeartbeatRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let raw_key = extract_agent_key(&headers)?;
+    let raw_key = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .map(|s| s.to_string())
+        .or_else(|| {
+            headers
+                .get(AGENT_KEY_HEADER)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string())
+        })
+        .ok_or_else(|| ApiError::Unauthorized("Missing Authorization header".into()))?;
     let (org_id, _) = validate_otlp_key(&state, &raw_key)
         .await
         .map_err(ApiError::Unauthorized)?;
@@ -209,7 +220,20 @@ pub async fn agent_targets(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    let raw_key = extract_agent_key(&headers)?;
+    // Accept Authorization: Bearer <key> (preferred) or legacy X-Zentra-Key header
+    let raw_key = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .map(|s| s.to_string())
+        .or_else(|| {
+            headers
+                .get(AGENT_KEY_HEADER)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string())
+        })
+        .ok_or_else(|| ApiError::Unauthorized("Missing Authorization header".into()))?;
+
     let (org_id, _) = validate_otlp_key(&state, &raw_key)
         .await
         .map_err(ApiError::Unauthorized)?;
@@ -323,4 +347,119 @@ pub async fn deregister_agent(
         "deregistered": true,
         "agent_id": agent_id,
     })))
+}
+
+// ============================================================================
+// Agent Key Management (Feature 6 — Admin-only isok_ key CRUD)
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct CreateAgentKeyRequest {
+    pub name: String,
+    pub description: Option<String>,
+}
+
+pub async fn list_agent_keys(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<AuthContext>,
+) -> Result<Json<Value>, ApiError> {
+    require_agent_admin(&ctx)?;
+
+    let rows = sqlx::query(
+        "SELECT k.id, k.name, k.key_prefix, k.enabled, k.created_at, k.rate_limit_rpm,
+                f.agent_id, f.datacenter_name, f.status AS agent_status, f.last_seen
+         FROM otlp_api_keys k
+         LEFT JOIN agent_fleet f ON f.otlp_api_key_id = k.id AND f.org_id = k.org_id
+         WHERE k.org_id = $1 AND k.name NOT LIKE 'system-%'
+         ORDER BY k.created_at DESC",
+    )
+    .bind(ctx.org_id)
+    .fetch_all(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let keys: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "id": r.get::<Uuid, _>("id"),
+                "name": r.get::<String, _>("name"),
+                "key_prefix": r.get::<String, _>("key_prefix"),
+                "enabled": r.get::<bool, _>("enabled"),
+                "created_at": r.get::<Option<DateTime<Utc>>, _>("created_at"),
+                "rate_limit_rpm": r.get::<Option<i32>, _>("rate_limit_rpm"),
+                "agent_id": r.get::<Option<Uuid>, _>("agent_id"),
+                "datacenter_name": r.get::<Option<String>, _>("datacenter_name"),
+                "agent_status": r.get::<Option<String>, _>("agent_status"),
+                "last_seen": r.get::<Option<DateTime<Utc>>, _>("last_seen"),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!(keys)))
+}
+
+pub async fn create_agent_key(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<AuthContext>,
+    Json(body): Json<CreateAgentKeyRequest>,
+) -> Result<Json<Value>, ApiError> {
+    require_agent_admin(&ctx)?;
+
+    let name = body.name.trim();
+    if name.is_empty() {
+        return Err(ApiError::BadRequest("name is required".into()));
+    }
+
+    let raw_key = generate_agent_api_key();
+    let key_hash = hash_api_key(&raw_key);
+    let key_prefix = raw_key.chars().take(13).collect::<String>();
+    let key_id = Uuid::now_v7();
+
+    sqlx::query(
+        "INSERT INTO otlp_api_keys
+         (id, org_id, name, key_hash, key_prefix, permissions, rate_limit_rpm, max_payload_bytes, enabled, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, ARRAY['write'], 1000, 5242880, true, NOW(), NOW())",
+    )
+    .bind(key_id)
+    .bind(ctx.org_id)
+    .bind(name)
+    .bind(&key_hash)
+    .bind(&key_prefix)
+    .execute(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    Ok(Json(json!({
+        "id": key_id,
+        "name": name,
+        "api_key": raw_key,
+        "key_prefix": key_prefix,
+        "warning": "Store this key securely — it will not be shown again.",
+    })))
+}
+
+pub async fn revoke_agent_key(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(key_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    require_agent_admin(&ctx)?;
+
+    let key_hash: Option<String> = sqlx::query_scalar(
+        "UPDATE otlp_api_keys SET enabled = false, updated_at = NOW()
+         WHERE id = $1 AND org_id = $2
+         RETURNING key_hash",
+    )
+    .bind(key_id)
+    .bind(ctx.org_id)
+    .fetch_optional(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    if let Some(hash) = key_hash {
+        state.otlp_key_cache.remove(&hash);
+    }
+
+    Ok(Json(json!({ "revoked": true, "id": key_id })))
 }

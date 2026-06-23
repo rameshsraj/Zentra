@@ -93,6 +93,7 @@ const StorageDeepDivePage = lazy(() => import('./pages/StorageDeepDive'))
 // Fleet
 const FleetPage = lazy(() => import('./pages/Fleet'))
 const AgentInstallWizardPage = lazy(() => import('./pages/AgentInstallWizard'))
+const AgentKeysPage = lazy(() => import('./pages/AgentKeys'))
 
 // Billing
 const BillingPage = lazy(() => import('./pages/Billing'))
@@ -196,6 +197,7 @@ export default function App() {
             {/* Fleet */}
             <Route path="fleet" element={<FleetPage />} />
             <Route path="fleet/install" element={<AgentInstallWizardPage />} />
+            <Route path="fleet/keys" element={<AgentKeysPage />} />
 
             {/* Billing */}
             <Route path="billing" element={<BillingPage />} />

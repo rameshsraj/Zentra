@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import ErrorBoundary from './ErrorBoundary'
 import CommandPalette from './CommandPalette'
@@ -39,23 +39,8 @@ import {
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
 import { useQuery } from '@tanstack/react-query'
-import { getMiddlewareDashboard, getLicenseStatus, type MiddlewareServiceStatus } from '@/lib/api'
+import { getLicenseStatus } from '@/lib/api'
 import { LogOut, User, Lock, AlertTriangle } from 'lucide-react'
-
-const MIDDLEWARE_META: Record<string, { label: string; icon: LucideIcon }> = {
-  nginx: { label: 'Nginx', icon: Globe },
-  apache: { label: 'Apache', icon: Globe },
-  tomcat: { label: 'Tomcat', icon: Cpu },
-  haproxy: { label: 'HAProxy', icon: Layers },
-  elasticsearch: { label: 'Elasticsearch', icon: Database },
-  redis: { label: 'Redis', icon: HardDrive },
-  memcached: { label: 'Memcached', icon: HardDrive },
-  rabbitmq: { label: 'RabbitMQ', icon: MessageSquare },
-  kafka: { label: 'Kafka', icon: MessageSquare },
-  docker: { label: 'Docker', icon: Container },
-  kubernetes: { label: 'Kubernetes', icon: Container },
-  phpfpm: { label: 'PHP-FPM', icon: Cpu },
-}
 
 interface NavChild {
   to: string
@@ -108,6 +93,16 @@ const navItems: NavItem[] = [
     icon: Server,
     children: [
       { to: '/middleware', label: 'Dashboard', icon: LayoutDashboard },
+      { to: '/middleware/nginx', label: 'Nginx', icon: Globe },
+      { to: '/middleware/apache', label: 'Apache / httpd', icon: Globe },
+      { to: '/middleware/tomcat', label: 'Tomcat', icon: Cpu },
+      { to: '/middleware/haproxy', label: 'HAProxy', icon: Layers },
+      { to: '/middleware/redis', label: 'Redis', icon: HardDrive },
+      { to: '/middleware/elasticsearch', label: 'Elasticsearch', icon: Database },
+      { to: '/middleware/kafka', label: 'Kafka', icon: MessageSquare },
+      { to: '/middleware/rabbitmq', label: 'RabbitMQ', icon: MessageSquare },
+      { to: '/middleware/docker', label: 'Docker', icon: Container },
+      { to: '/middleware/kubernetes', label: 'Kubernetes', icon: Container },
     ],
   },
   {
@@ -178,6 +173,7 @@ const navItems: NavItem[] = [
     children: [
       { to: '/fleet', label: 'Agents', icon: Server },
       { to: '/fleet/install', label: 'Install Wizard', icon: Cpu },
+      { to: '/fleet/keys', label: 'Agent Keys', icon: Shield },
     ],
   },
   {
@@ -359,7 +355,7 @@ function ThemeOption({ theme: t, isActive, onSelect }: { theme: typeof themeList
       style={{
         backgroundColor: isActive ? t.colors.sidebarActiveBg : 'transparent',
         color: isActive ? t.colors.accent : 'var(--text-secondary)',
-        ringColor: isActive ? t.colors.accent : undefined,
+        outlineColor: isActive ? t.colors.accent : undefined,
       }}
       onMouseEnter={e => { if (!isActive) e.currentTarget.style.backgroundColor = 'var(--sidebar-hover)' }}
       onMouseLeave={e => { if (!isActive) e.currentTarget.style.backgroundColor = 'transparent' }}
@@ -408,13 +404,6 @@ export default function Layout() {
   const [paletteOpen, setPaletteOpen] = useState(false)
   const location = useLocation()
   const { isAdmin: userIsAdmin, hasModule, hasMenuItem } = useAuth()
-
-  const { data: mwDashboard = [] } = useQuery({
-    queryKey: ['middleware-dashboard-nav'],
-    queryFn: getMiddlewareDashboard,
-    staleTime: 60_000,
-    refetchInterval: 120_000,
-  })
 
   const navigate = useNavigate()
 
@@ -522,21 +511,7 @@ export default function Layout() {
     })
   }
 
-  const dynamicNav = useMemo(() => {
-    const activeTypes = [...new Set(mwDashboard.map((s: MiddlewareServiceStatus) => s.service_type))]
-    const middlewareChildren: NavChild[] = [
-      { to: '/middleware', label: 'Dashboard', icon: LayoutDashboard },
-    ]
-    for (const t of activeTypes) {
-      const meta = MIDDLEWARE_META[t]
-      if (meta) {
-        middlewareChildren.push({ to: `/middleware/${t}`, label: meta.label, icon: meta.icon })
-      }
-    }
-    return navItems.map(item =>
-      item.label === 'Middleware' ? { ...item, children: middlewareChildren } : item
-    )
-  }, [mwDashboard])
+  const dynamicNav = navItems
 
   const openPalette = useCallback(() => setPaletteOpen(true), [])
   const closePalette = useCallback(() => setPaletteOpen(false), [])

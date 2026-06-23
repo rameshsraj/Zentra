@@ -94,7 +94,7 @@ impl RemoteTargetFetcher {
         let resp = self
             .client
             .get(&url)
-            .header("X-Zentra-Key", &self.api_key)
+            .header("Authorization", format!("Bearer {}", &self.api_key))
             .send()
             .await
             .map_err(|e| format!("HTTP error: {}", e))?;

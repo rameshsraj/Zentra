@@ -50,6 +50,41 @@ export function deregisterAgent(agentId: string): Promise<{ message: string }> {
   })
 }
 
+export interface AgentKey {
+  id: string
+  name: string
+  key_prefix: string
+  enabled: boolean
+  created_at: string | null
+  rate_limit_rpm: number | null
+  agent_id: string | null
+  datacenter_name: string | null
+  agent_status: string | null
+  last_seen: string | null
+}
+
+export interface CreatedAgentKey extends AgentKey {
+  api_key: string
+  warning: string
+}
+
+export function listAgentKeys(): Promise<AgentKey[]> {
+  return fetchJSON<AgentKey[]>('/agent-keys')
+}
+
+export function createAgentKey(body: { name: string; description?: string }): Promise<CreatedAgentKey> {
+  return fetchJSON<CreatedAgentKey>('/agent-keys', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export function revokeAgentKey(keyId: string): Promise<{ revoked: boolean; id: string }> {
+  return fetchJSON<{ revoked: boolean; id: string }>(`/agent-keys/${keyId}`, {
+    method: 'DELETE',
+  })
+}
+
 export function getOnboardingChecklist(): Promise<OnboardingChecklist> {
   return fetchJSON<OnboardingChecklist>('/onboarding/checklist')
 }
