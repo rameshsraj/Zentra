@@ -378,6 +378,9 @@ ENVEOF
 
 chmod 600 "${DEPLOY_DIR}/.env"
 chown -R "${SERVICE_USER}:${SERVICE_USER}" "${DEPLOY_DIR}"
+# Restore postgres ownership of pgdata — chown -R above would have broken it
+chown -R postgres:postgres "${PG_DATA_DIR}"
+chmod 700 "${PG_DATA_DIR}"
 ok ".env written to ${DEPLOY_DIR}/.env"
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -392,12 +395,18 @@ if [ "${IS_DEBIAN}" = true ]; then
 
     if [ -f "${DEPLOY_DIR}/deploy/nginx.conf" ]; then
         cp "${DEPLOY_DIR}/deploy/nginx.conf" "${NGINX_DEST}"
+        # Fix any hardcoded /opt/zentra paths to the actual deploy dir
+        sed -i "s|/opt/zentra|${DEPLOY_DIR}|g" "${NGINX_DEST}"
     else
-        # Generate minimal config
-        cat > "${NGINX_DEST}" <<NGINXEOF
-limit_req_zone \$binary_remote_addr zone=login_limit:10m rate=5r/m;
-limit_req_zone \$binary_remote_addr zone=api_limit:10m rate=30r/s;
+        # Put http-level directives (limit_req_zone) in conf.d so they are
+        # always inside the http{} block regardless of include order.
+        cat > /etc/nginx/conf.d/zentra-limits.conf <<'LIMITSEOF'
+limit_req_zone $binary_remote_addr zone=login_limit:10m rate=5r/m;
+limit_req_zone $binary_remote_addr zone=api_limit:10m rate=30r/s;
+LIMITSEOF
 
+        # Generate server block (no http-level directives here)
+        cat > "${NGINX_DEST}" <<NGINXEOF
 server {
     listen ${FRONTEND_PORT};
     server_name _;
@@ -460,7 +469,8 @@ else
     rm -f /etc/nginx/conf.d/default.conf
 fi
 
-nginx -t >> "${LOG_FILE}" 2>&1 || fail "Nginx config test failed"
+NGINX_BIN=$(command -v nginx || echo /usr/sbin/nginx)
+"${NGINX_BIN}" -t >> "${LOG_FILE}" 2>&1 || { "${NGINX_BIN}" -t 2>&1 | tee -a "${LOG_FILE}"; fail "Nginx config test failed — see above"; }
 ok "Nginx configured on port ${FRONTEND_PORT}"
 
 # ═══════════════════════════════════════════════════════════════════════════
