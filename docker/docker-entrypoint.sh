@@ -184,7 +184,10 @@ export ZENTRA_BIND_ADDR="${ZENTRA_BIND_ADDR:-127.0.0.1}"
 # zentra_app has DML + CREATE (for migrations) but no superuser/DDL-on-system privileges
 export DATABASE_URL="${DATABASE_URL:-postgresql://zentra_app:${POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/${POSTGRES_DB}}"
 
-PGDATA="/var/lib/postgresql/data"
+# Use a subdirectory under the volume mount for actual PG data.
+# Docker named volumes create a mount point with hidden dot-files,
+# which makes initdb refuse to use the directory directly.
+PGDATA="/var/lib/postgresql/data/pgdata"
 
 echo "=============================================="
 echo "  Zentra — Starting up"

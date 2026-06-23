@@ -86,7 +86,7 @@ RUN rm -f /usr/bin/vi /usr/bin/vim /usr/bin/nano /usr/bin/ed \
 # ---------------------------------------------------------------------------
 # PostgreSQL configuration
 # ---------------------------------------------------------------------------
-ENV PGDATA=/var/lib/postgresql/data
+ENV PGDATA=/var/lib/postgresql/data/pgdata
 ENV PG_MAJOR=16
 ENV PATH="/usr/pgsql-16/bin:$PATH"
 
