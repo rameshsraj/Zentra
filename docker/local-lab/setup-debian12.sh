@@ -198,16 +198,22 @@ fi
 
 # Override systemd to use the custom data directory
 if [ "${IS_DEBIAN}" = true ]; then
-    # Debian uses pg_ctlcluster + /etc/postgresql/16/main/postgresql.conf
-    # Patch data_directory to point at our custom location
+    # On Debian, postgres always loads /etc/postgresql/16/main/postgresql.conf
+    # (passed via -c config_file=). Port, listen_addresses and data_directory
+    # must ALL be set there — not in pgdata/postgresql.conf.
     DEBIAN_PG_CONF="/etc/postgresql/16/main/postgresql.conf"
     if [ -f "${DEBIAN_PG_CONF}" ]; then
+        # data_directory
         sed -i "s|^data_directory = .*|data_directory = '${PG_DATA_DIR}'|" "${DEBIAN_PG_CONF}"
         grep -q "^data_directory" "${DEBIAN_PG_CONF}" || \
             echo "data_directory = '${PG_DATA_DIR}'" >> "${DEBIAN_PG_CONF}"
+        # port
+        sed -i "s|^#*port = .*|port = ${PG_PORT}|" "${DEBIAN_PG_CONF}"
+        # listen on localhost only
+        sed -i "s|^#*listen_addresses = .*|listen_addresses = '127.0.0.1'|" "${DEBIAN_PG_CONF}"
+        # ensure socket directory is standard
+        sed -i "s|^#*unix_socket_directories = .*|unix_socket_directories = '/var/run/postgresql'|" "${DEBIAN_PG_CONF}" || true
     fi
-    # Also ensure unix_socket_directories points to standard location
-    sed -i "s|^#*unix_socket_directories = .*|unix_socket_directories = '/var/run/postgresql'|" "${DEBIAN_PG_CONF}" || true
 else
     # RHEL: override the systemd service
     mkdir -p /etc/systemd/system/${PG_SERVICE}.service.d
@@ -218,8 +224,13 @@ SYSOVER
     systemctl daemon-reload
 fi
 
-# Point conf variables to the custom data dir
-PG_CONF="${PG_DATA_DIR}/postgresql.conf"
+# On Debian, the active config_file is the cluster conf, not pgdata conf.
+# Port/listen already set above; point PG_CONF there for the tuning block.
+if [ "${IS_DEBIAN}" = true ]; then
+    PG_CONF="/etc/postgresql/16/main/postgresql.conf"
+else
+    PG_CONF="${PG_DATA_DIR}/postgresql.conf"
+fi
 PG_HBA="${PG_DATA_DIR}/pg_hba.conf"
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -230,12 +241,13 @@ info "Step 2/6: Configuring PostgreSQL..."
 # PostgreSQL password
 PG_PASS="zantaz"
 
-# Configure postgresql.conf
+# Configure postgresql.conf (port+listen already set for Debian above)
 if [ -f "${PG_CONF}" ]; then
-    # Set port
-    sed -i "s/^#*port = .*/port = ${PG_PORT}/" "${PG_CONF}"
-    # Listen on localhost only
-    sed -i "s/^#*listen_addresses = .*/listen_addresses = '127.0.0.1'/" "${PG_CONF}"
+    # For RHEL: set port and listen_addresses in pgdata conf
+    if [ "${IS_RHEL}" = true ]; then
+        sed -i "s/^#*port = .*/port = ${PG_PORT}/" "${PG_CONF}"
+        sed -i "s/^#*listen_addresses = .*/listen_addresses = '127.0.0.1'/" "${PG_CONF}"
+    fi
 
     # TimescaleDB + tuning (append if not already present)
     if ! grep -q "timescaledb" "${PG_CONF}" 2>/dev/null; then
