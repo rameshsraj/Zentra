@@ -195,13 +195,14 @@ fi
 
 # Override systemd to use the custom data directory
 if [ "${IS_DEBIAN}" = true ]; then
-    # Debian: override the cluster config
-    mkdir -p /etc/postgresql/16/main
-    cat > /etc/postgresql/16/main/postgresql.conf <<PGCONF_OVERRIDE
-data_directory = '${PG_DATA_DIR}'
-hba_file = '${PG_DATA_DIR}/pg_hba.conf'
-ident_file = '${PG_DATA_DIR}/pg_ident.conf'
-PGCONF_OVERRIDE
+    # Debian: patch data_directory in the cluster's postgresql.conf (don't replace it)
+    DEBIAN_PG_CONF="/etc/postgresql/16/main/postgresql.conf"
+    if [ -f "${DEBIAN_PG_CONF}" ]; then
+        sed -i "s|^data_directory = .*|data_directory = '${PG_DATA_DIR}'|" "${DEBIAN_PG_CONF}"
+        if ! grep -q "^data_directory" "${DEBIAN_PG_CONF}"; then
+            echo "data_directory = '${PG_DATA_DIR}'" >> "${DEBIAN_PG_CONF}"
+        fi
+    fi
 else
     # RHEL: override the systemd service
     mkdir -p /etc/systemd/system/${PG_SERVICE}.service.d
