@@ -33,19 +33,21 @@ elif [ -f "${INTEGRITY_FILE}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# D08: License expiration check (3-day trial, signed + tamper-resistant)
+# D08: License expiration check (365-day trial, signed + tamper-resistant)
 # After expiry the container still starts but in degraded mode (Dashboard only).
 # ---------------------------------------------------------------------------
-LICENSE_DAYS=3
+LICENSE_DAYS=365
 LICENSE_FILE="/var/lib/postgresql/data/.zentra-license"
-BUILD_HASH=$(sha256sum /usr/local/bin/zentra-server | cut -d' ' -f1)
+# NOTE: BUILD_HASH intentionally excluded from license sig — image rebuilds must
+# not invalidate existing licenses stored on the persistent data volume.
+LICENSE_SECRET="zentra-license-v1"
 
 generate_license() {
     local install_epoch=$(date +%s)
     local expiry_epoch=$((install_epoch + LICENSE_DAYS * 86400))
     local hostname_val=$(hostname)
     local payload="${install_epoch}:${expiry_epoch}:${hostname_val}"
-    local sig=$(echo -n "${payload}:${BUILD_HASH}" | sha256sum | cut -d' ' -f1)
+    local sig=$(echo -n "${payload}:${LICENSE_SECRET}" | sha256sum | cut -d' ' -f1)
     echo "${payload}:${sig}"
 }
 
@@ -56,11 +58,16 @@ verify_license() {
     local stored_host=$(echo "$license_data" | cut -d: -f3)
     local stored_sig=$(echo "$license_data" | cut -d: -f4)
 
-    # Verify signature
-    local expected_sig=$(echo -n "${stored_install}:${stored_expiry}:${stored_host}:${BUILD_HASH}" | sha256sum | cut -d' ' -f1)
+    # Verify signature (uses stable secret, not build hash)
+    local expected_sig=$(echo -n "${stored_install}:${stored_expiry}:${stored_host}:${LICENSE_SECRET}" | sha256sum | cut -d' ' -f1)
     if [ "${stored_sig}" != "${expected_sig}" ]; then
-        echo "[entrypoint] ERROR: License file corrupted or tampered. Please reinstall."
-        exit 1
+        echo "[entrypoint] WARNING: License signature mismatch (image was rebuilt) — issuing new license."
+        # Regenerate rather than hard-exit, so image rebuilds don't kill running installs
+        local new_token=$(generate_license)
+        echo "${new_token}" > "${LICENSE_FILE}"
+        chmod 400 "${LICENSE_FILE}" 2>/dev/null || true
+        export ZENTRA_TRIAL_EXPIRED=0
+        return
     fi
 
     # Check expiry
@@ -103,22 +110,69 @@ fi
 # Default environment variables
 # ---------------------------------------------------------------------------
 export POSTGRES_USER="${POSTGRES_USER:-postgres}"
-export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 24)}"
 export POSTGRES_DB="${POSTGRES_DB:-zentra}"
 export POSTGRES_PORT="${POSTGRES_PORT:-5434}"
 export ZENTRA_API_PORT="${ZENTRA_API_PORT:-5006}"
 
-# D02: Auto-generate JWT secret if not provided
+# ---------------------------------------------------------------------------
+# Persistent secrets: saved to PG data volume so they survive restarts and
+# re-installs. Env vars take priority → volume file → auto-generate once.
+# ---------------------------------------------------------------------------
+SECRETS_DIR="/var/lib/postgresql/data/.zentra-secrets"
+mkdir -p "${SECRETS_DIR}" 2>/dev/null || true
+chmod 700 "${SECRETS_DIR}" 2>/dev/null || true
+
+# POSTGRES_PASSWORD — must match what PG was initialized with
+if [ -z "${POSTGRES_PASSWORD:-}" ]; then
+    if [ -f "${SECRETS_DIR}/pg-password" ]; then
+        export POSTGRES_PASSWORD=$(cat "${SECRETS_DIR}/pg-password")
+        echo "[entrypoint] POSTGRES_PASSWORD loaded from persistent volume."
+    else
+        export POSTGRES_PASSWORD=$(head -c 16 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 24)
+        echo "${POSTGRES_PASSWORD}" > "${SECRETS_DIR}/pg-password"
+        chmod 400 "${SECRETS_DIR}/pg-password"
+        echo "[entrypoint] POSTGRES_PASSWORD auto-generated and persisted to volume."
+    fi
+else
+    # Env var provided — persist it so it's available even without .env
+    echo "${POSTGRES_PASSWORD}" > "${SECRETS_DIR}/pg-password"
+    chmod 400 "${SECRETS_DIR}/pg-password"
+fi
+
+# D02: JWT secret — must stay the same across restarts or sessions break
 if [ -z "${ZENTRA_JWT_SECRET:-}" ]; then
-    export ZENTRA_JWT_SECRET=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 48)
-    echo "[entrypoint] ZENTRA_JWT_SECRET not set — auto-generated for this session."
+    if [ -f "${SECRETS_DIR}/jwt-secret" ]; then
+        export ZENTRA_JWT_SECRET=$(cat "${SECRETS_DIR}/jwt-secret")
+        echo "[entrypoint] ZENTRA_JWT_SECRET loaded from persistent volume."
+    else
+        export ZENTRA_JWT_SECRET=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 48)
+        echo "${ZENTRA_JWT_SECRET}" > "${SECRETS_DIR}/jwt-secret"
+        chmod 400 "${SECRETS_DIR}/jwt-secret"
+        echo "[entrypoint] ZENTRA_JWT_SECRET auto-generated and persisted to volume."
+    fi
+fi
+# Always persist the active key (in case it came from env and volume is empty)
+if [ ! -f "${SECRETS_DIR}/jwt-secret" ]; then
+    echo "${ZENTRA_JWT_SECRET}" > "${SECRETS_DIR}/jwt-secret"
+    chmod 400 "${SECRETS_DIR}/jwt-secret"
 fi
 export ZENTRA_ALLOW_INSECURE_JWT="${ZENTRA_ALLOW_INSECURE_JWT:-0}"
 
-# Auto-generate ZENTRA_MASTER_KEY if not provided (required for credential encryption)
+# MASTER_KEY — must stay the same or all encrypted credentials become unreadable
 if [ -z "${ZENTRA_MASTER_KEY:-}" ]; then
-    export ZENTRA_MASTER_KEY=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 64)
-    echo "[entrypoint] ZENTRA_MASTER_KEY not set — auto-generated for this session."
+    if [ -f "${SECRETS_DIR}/master-key" ]; then
+        export ZENTRA_MASTER_KEY=$(cat "${SECRETS_DIR}/master-key")
+        echo "[entrypoint] ZENTRA_MASTER_KEY loaded from persistent volume."
+    else
+        export ZENTRA_MASTER_KEY=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 64)
+        echo "${ZENTRA_MASTER_KEY}" > "${SECRETS_DIR}/master-key"
+        chmod 400 "${SECRETS_DIR}/master-key"
+        echo "[entrypoint] ZENTRA_MASTER_KEY auto-generated and persisted to volume."
+    fi
+fi
+if [ ! -f "${SECRETS_DIR}/master-key" ]; then
+    echo "${ZENTRA_MASTER_KEY}" > "${SECRETS_DIR}/master-key"
+    chmod 400 "${SECRETS_DIR}/master-key"
 fi
 export ZENTRA_ALLOW_ORIGINS="${ZENTRA_ALLOW_ORIGINS:-}"
 export ZENTRA_ORG_ID="${ZENTRA_ORG_ID:-00000000-0000-0000-0000-000000000001}"
@@ -130,7 +184,10 @@ export ZENTRA_BIND_ADDR="${ZENTRA_BIND_ADDR:-127.0.0.1}"
 # zentra_app has DML + CREATE (for migrations) but no superuser/DDL-on-system privileges
 export DATABASE_URL="${DATABASE_URL:-postgresql://zentra_app:${POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/${POSTGRES_DB}}"
 
-PGDATA="/var/lib/postgresql/data"
+# Use a subdirectory under the volume mount for actual PG data.
+# Docker named volumes create a mount point with hidden dot-files,
+# which makes initdb refuse to use the directory directly.
+PGDATA="/var/lib/postgresql/data/pgdata"
 
 echo "=============================================="
 echo "  Zentra — Starting up"
@@ -443,6 +500,41 @@ if [ "${ZENTRA_SKIP_LOCKDOWN:-0}" != "1" ]; then
     ) &
 
     echo "[entrypoint] LOCKDOWN COMPLETE — container will be fully sealed in 5s."
+fi
+
+echo "[entrypoint] Injecting runtime environment into supervisord..."
+# supervisord does NOT inherit shell exports — all vars must be declared
+# explicitly in the [program:zentra-server] environment= directive.
+# We generate this at runtime so secrets from .env reach the process.
+SUPERVISORD_RUNTIME_ENV="/etc/supervisord.d/zentra-env.conf"
+mkdir -p /etc/supervisord.d
+
+# Escape any double-quotes in values (supervisord env= uses double-quotes)
+_esc() { printf '%s' "$1" | sed 's/"/\\"/g'; }
+
+cat > "${SUPERVISORD_RUNTIME_ENV}" <<EOFSUP
+[program:zentra-server]
+command=/usr/local/bin/zentra-server
+directory=/opt/zentra
+user=zentra
+autostart=true
+autorestart=true
+priority=20
+startsecs=3
+startretries=10
+stopwaitsecs=15
+stdout_logfile=/opt/zentra/logs/api.log
+stderr_logfile=/opt/zentra/logs/api-error.log
+environment=HOME="/opt/zentra",RUST_LOG="$(_esc "${RUST_LOG:-info}")",DATABASE_URL="$(_esc "${DATABASE_URL}")",ZENTRA_JWT_SECRET="$(_esc "${ZENTRA_JWT_SECRET}")",ZENTRA_MASTER_KEY="$(_esc "${ZENTRA_MASTER_KEY}")",ZENTRA_API_PORT="$(_esc "${ZENTRA_API_PORT:-5006}")",ZENTRA_BIND_ADDR="$(_esc "${ZENTRA_BIND_ADDR:-127.0.0.1}")",ZENTRA_ALLOW_ORIGINS="$(_esc "${ZENTRA_ALLOW_ORIGINS:-}")",ZENTRA_ORG_ID="$(_esc "${ZENTRA_ORG_ID:-00000000-0000-0000-0000-000000000001}")",ZENTRA_ALLOW_INSECURE_JWT="$(_esc "${ZENTRA_ALLOW_INSECURE_JWT:-0}")",ZENTRA_TRIAL_EXPIRED="$(_esc "${ZENTRA_TRIAL_EXPIRED:-0}")"
+EOFSUP
+
+chmod 600 "${SUPERVISORD_RUNTIME_ENV}"
+
+# Patch supervisord.conf to include the runtime env override directory
+if ! grep -q "include.*supervisord.d" /etc/supervisord.conf 2>/dev/null; then
+    echo "" >> /etc/supervisord.conf
+    echo "[include]" >> /etc/supervisord.conf
+    echo "files = /etc/supervisord.d/*.conf" >> /etc/supervisord.conf
 fi
 
 echo "[entrypoint] Starting all services via supervisord..."

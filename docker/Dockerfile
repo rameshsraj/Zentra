@@ -86,7 +86,7 @@ RUN rm -f /usr/bin/vi /usr/bin/vim /usr/bin/nano /usr/bin/ed \
 # ---------------------------------------------------------------------------
 # PostgreSQL configuration
 # ---------------------------------------------------------------------------
-ENV PGDATA=/var/lib/postgresql/data
+ENV PGDATA=/var/lib/postgresql/data/pgdata
 ENV PG_MAJOR=16
 ENV PATH="/usr/pgsql-16/bin:$PATH"
 
@@ -146,12 +146,6 @@ RUN rm -f /etc/nginx/conf.d/default.conf && \
     '    keepalive_timeout 65;' \
     '    server_tokens off;' \
     '    types_hash_max_size 2048;' \
-    '    # Reject requests with undefined Host header' \
-    '    server {' \
-    '        listen 5010 default_server;' \
-    '        server_name "";' \
-    '        return 444;' \
-    '    }' \
     '    include /etc/nginx/conf.d/*.conf;' \
     '}' > /etc/nginx/nginx.conf
 

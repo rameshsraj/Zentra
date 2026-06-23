@@ -23,6 +23,7 @@ ENV_FILE="/opt/zentra/.env"
 
 # GHCR settings (only used if pulling from registry)
 GHCR_IMAGE="ghcr.io/rameshsraj/zentra:latest"
+AGENT_IMAGE_NAME="zentra-agent:latest"
 
 # ---------------------------------------------------------------------------
 # Colors
@@ -104,6 +105,15 @@ if [ -n "${OLD_IMAGES}" ]; then
     ok "Old zentra images removed"
 fi
 
+# Remove old agent images
+OLD_AGENT_IMAGES=$(docker images "${AGENT_IMAGE_NAME}" -q 2>/dev/null)
+if [ -n "${OLD_AGENT_IMAGES}" ]; then
+    info "Removing old agent image(s)..."
+    docker rmi -f ${OLD_AGENT_IMAGES} >/dev/null 2>&1 || true
+    sleep 2
+    ok "Old agent images removed"
+fi
+
 # Remove stale/dangling images
 STALE_IMAGES=$(docker images --filter "dangling=true" -q 2>/dev/null)
 if [ -n "${STALE_IMAGES}" ]; then
@@ -130,6 +140,8 @@ info "Loading Zentra Docker image..."
 # Check if tarball exists in current directory
 TARBALL=""
 for f in zentra-latest.tar.gz zentra*.tar.gz; do
+    # Skip agent tarballs — those are handled separately below
+    case "$f" in *agent*) continue ;; esac
     if [ -f "$f" ]; then
         TARBALL="$f"
         break
@@ -158,6 +170,28 @@ fi
 
 IMAGE_SIZE=$(docker image inspect "${IMAGE_NAME}" --format='{{.Size}}' | awk '{printf "%.0f MB", $1/1024/1024}')
 ok "Image ready: ${IMAGE_NAME} (${IMAGE_SIZE})"
+
+# Load agent image if tarball exists
+AGENT_TARBALL=""
+for f in zentra-agent-latest.tar.gz zentra-agent*.tar.gz; do
+    if [ -f "$f" ]; then
+        AGENT_TARBALL="$f"
+        break
+    fi
+done
+
+if [ -n "${AGENT_TARBALL}" ]; then
+    info "Found agent tarball: ${AGENT_TARBALL} - loading..."
+    if docker load -i "${AGENT_TARBALL}"; then
+        ok "Agent image loaded from ${AGENT_TARBALL}"
+    else
+        warn "Failed to load agent image - simulation lab will not have a dedicated collector"
+    fi
+elif docker image inspect "${AGENT_IMAGE_NAME}" >/dev/null 2>&1; then
+    ok "Agent image ${AGENT_IMAGE_NAME} already exists locally"
+else
+    warn "No agent tarball found - simulation lab will not have a dedicated collector"
+fi
 
 # ---------------------------------------------------------------------------
 # Step 4: Create .env file
