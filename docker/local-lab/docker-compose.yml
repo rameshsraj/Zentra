@@ -1,0 +1,93 @@
+# =============================================================================
+# Zentra — Local Lab (Windows)
+# 3 Linux machines + 1 agent connected to GCP server
+#
+# Containers:
+#   lab-linux-01   — Plain Rocky Linux (SSH + SNMP)
+#   lab-nginx-01   — Nginx reverse proxy (SSH + Nginx)
+#   lab-httpd-01   — Apache HTTP server (SSH + httpd)
+#   zentra-agent   — Collects from above, pushes to GCP Zentra server
+#
+# Usage:
+#   docker compose up -d
+# =============================================================================
+
+networks:
+  lab-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+services:
+
+  # ─────────────────────────────────────────────────────────────────────
+  # 1. Plain Linux server (Rocky Linux 8) — SSH + SNMP
+  # ─────────────────────────────────────────────────────────────────────
+  lab-linux-01:
+    image: rockylinux:8
+    container_name: lab-linux-01
+    hostname: lab-linux-01
+    restart: unless-stopped
+    networks:
+      lab-net:
+        ipv4_address: 172.30.0.10
+    volumes:
+      - ./setup-linux.sh:/opt/setup.sh:ro
+    entrypoint: ["/bin/sh", "-c", "tr -d '\\r' < /opt/setup.sh | /bin/bash"]
+    cap_add:
+      - NET_ADMIN
+
+  # ─────────────────────────────────────────────────────────────────────
+  # 2. Linux with Nginx service (Alpine + Nginx)
+  # ─────────────────────────────────────────────────────────────────────
+  lab-nginx-01:
+    image: nginx:1.25-alpine
+    container_name: lab-nginx-01
+    hostname: lab-nginx-01
+    restart: unless-stopped
+    networks:
+      lab-net:
+        ipv4_address: 172.30.0.11
+    volumes:
+      - ./setup-nginx.sh:/opt/setup.sh:ro
+    entrypoint: ["/bin/sh", "-c", "tr -d '\\r' < /opt/setup.sh | /bin/sh"]
+
+  # ─────────────────────────────────────────────────────────────────────
+  # 3. Linux with Apache HTTP service (Alpine + httpd)
+  # ─────────────────────────────────────────────────────────────────────
+  lab-httpd-01:
+    image: httpd:2.4-alpine
+    container_name: lab-httpd-01
+    hostname: lab-httpd-01
+    restart: unless-stopped
+    networks:
+      lab-net:
+        ipv4_address: 172.30.0.12
+    volumes:
+      - ./setup-httpd.sh:/opt/setup.sh:ro
+    entrypoint: ["/bin/sh", "-c", "tr -d '\\r' < /opt/setup.sh | /bin/sh"]
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Zentra Agent — collects from lab nodes, pushes to GCP
+  # ─────────────────────────────────────────────────────────────────────
+  zentra-agent:
+    image: zentra-agent:latest
+    container_name: zentra-agent
+    hostname: zentra-agent
+    restart: unless-stopped
+    networks:
+      lab-net:
+        ipv4_address: 172.30.0.2
+    environment:
+      - AGENT_MODE=remote
+      - API_ENDPOINT=${API_ENDPOINT:-http://CHANGE_ME:5010}
+      - AGENT_API_KEY=${AGENT_API_KEY:-isok_CHANGE_ME}
+      - DC_NAME=${DC_NAME:-dc-local-lab}
+      - SSH_PASSWORD=zentra123
+      - SIM_NODES=lab-linux-01:172.30.0.10 lab-nginx-01:172.30.0.11 lab-httpd-01:172.30.0.12
+      - RUST_LOG=info
+    depends_on:
+      - lab-linux-01
+      - lab-nginx-01
+      - lab-httpd-01

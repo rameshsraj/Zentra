@@ -38,6 +38,7 @@ PG_HOST="127.0.0.1"
 PG_PORT="5434"
 PG_USER="postgres"
 PG_DB="zentra"
+PG_DATA_DIR="/store/zentra/pgdata"
 
 API_PORT=5006
 FRONTEND_PORT=5010
@@ -121,9 +122,7 @@ if [ "${IS_DEBIAN}" = true ]; then
     fi
 
     PG_SERVICE="postgresql"
-    PG_CONF_DIR="/etc/postgresql/16/main"
-    PG_HBA="${PG_CONF_DIR}/pg_hba.conf"
-    PG_CONF="${PG_CONF_DIR}/postgresql.conf"
+    PG_BIN="/usr/lib/postgresql/16/bin"
     NGINX_SITES="/etc/nginx/sites-available"
     NGINX_ENABLED="/etc/nginx/sites-enabled"
 else
@@ -134,7 +133,6 @@ else
         dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm >> "${LOG_FILE}" 2>&1
         dnf -qy module disable postgresql >> "${LOG_FILE}" 2>&1 || true
         dnf install -y postgresql16-server postgresql16-contrib >> "${LOG_FILE}" 2>&1
-        /usr/pgsql-16/bin/postgresql-16-setup initdb >> "${LOG_FILE}" 2>&1 || true
     fi
 
     # TimescaleDB
@@ -150,9 +148,7 @@ TSREPO
     fi
 
     PG_SERVICE="postgresql-16"
-    PG_CONF_DIR="/var/lib/pgsql/16/data"
-    PG_HBA="${PG_CONF_DIR}/pg_hba.conf"
-    PG_CONF="${PG_CONF_DIR}/postgresql.conf"
+    PG_BIN="/usr/pgsql-16/bin"
     NGINX_SITES="/etc/nginx/conf.d"
     NGINX_ENABLED=""  # RHEL uses conf.d directly
 fi
@@ -160,14 +156,70 @@ fi
 ok "Runtime dependencies installed"
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Initialize PostgreSQL data directory under /store/zentra/pgdata/
+# ═══════════════════════════════════════════════════════════════════════════
+info "Initializing PostgreSQL data directory at ${PG_DATA_DIR}..."
+
+# Stop PostgreSQL if running (it may have started with default data dir)
+systemctl stop "${PG_SERVICE}" >> "${LOG_FILE}" 2>&1 || true
+
+if [ ! -f "${PG_DATA_DIR}/PG_VERSION" ]; then
+    mkdir -p "${PG_DATA_DIR}"
+    chown postgres:postgres "${PG_DATA_DIR}"
+    chmod 700 "${PG_DATA_DIR}"
+
+    # Ensure locale exists (Debian minimal images may not have it)
+    if ! locale -a 2>/dev/null | grep -qi 'en_US.utf8'; then
+        info "Generating en_US.UTF-8 locale..."
+        if [ -f /etc/locale.gen ]; then
+            sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
+            locale-gen >> "${LOG_FILE}" 2>&1 || true
+        fi
+    fi
+
+    # Determine locale to use
+    INIT_LOCALE="en_US.UTF-8"
+    if ! locale -a 2>/dev/null | grep -qi 'en_US.utf8'; then
+        INIT_LOCALE="C.UTF-8"
+        warn "en_US.UTF-8 not available, using C.UTF-8"
+    fi
+
+    # Initialize the cluster in our custom directory
+    info "Running initdb (locale=${INIT_LOCALE})..."
+    sudo -u postgres "${PG_BIN}/initdb" -D "${PG_DATA_DIR}" --encoding=UTF8 --locale="${INIT_LOCALE}" >> "${LOG_FILE}" 2>&1 \
+        || fail "initdb failed — check ${LOG_FILE} for details"
+    ok "PostgreSQL data directory initialized at ${PG_DATA_DIR}"
+else
+    ok "PostgreSQL data directory already exists at ${PG_DATA_DIR}"
+fi
+
+# Override systemd to use the custom data directory
+if [ "${IS_DEBIAN}" = true ]; then
+    # Debian: override the cluster config
+    mkdir -p /etc/postgresql/16/main
+    cat > /etc/postgresql/16/main/postgresql.conf <<PGCONF_OVERRIDE
+data_directory = '${PG_DATA_DIR}'
+hba_file = '${PG_DATA_DIR}/pg_hba.conf'
+ident_file = '${PG_DATA_DIR}/pg_ident.conf'
+PGCONF_OVERRIDE
+else
+    # RHEL: override the systemd service
+    mkdir -p /etc/systemd/system/${PG_SERVICE}.service.d
+    cat > /etc/systemd/system/${PG_SERVICE}.service.d/override.conf <<SYSOVER
+[Service]
+Environment=PGDATA=${PG_DATA_DIR}
+SYSOVER
+    systemctl daemon-reload
+fi
+
+# Point conf variables to the custom data dir
+PG_CONF="${PG_DATA_DIR}/postgresql.conf"
+PG_HBA="${PG_DATA_DIR}/pg_hba.conf"
+
+# ═══════════════════════════════════════════════════════════════════════════
 # STEP 2 — Configure PostgreSQL
 # ═══════════════════════════════════════════════════════════════════════════
 info "Step 2/6: Configuring PostgreSQL..."
-
-# Ensure PostgreSQL is running
-systemctl enable "${PG_SERVICE}" >> "${LOG_FILE}" 2>&1
-systemctl start "${PG_SERVICE}" >> "${LOG_FILE}" 2>&1 || true
-sleep 2
 
 # Generate password
 PG_PASS=$(openssl rand -hex 16)
@@ -215,7 +267,8 @@ host    all       all       ::/0          reject
 HBAEOF
 fi
 
-# Restart PostgreSQL with new config
+# Start PostgreSQL with custom data dir and new config
+systemctl enable "${PG_SERVICE}" >> "${LOG_FILE}" 2>&1
 systemctl restart "${PG_SERVICE}" >> "${LOG_FILE}" 2>&1
 sleep 3
 
