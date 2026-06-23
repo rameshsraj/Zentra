@@ -72,6 +72,7 @@ pub async fn create_target(
     target.description = req.description.clone();
     target.environment = req.environment.clone();
     target.tags = req.tags.clone();
+    target.agent_id = req.agent_id;
 
     if let Some(interval) = req.check_interval_seconds {
         target.check_interval_seconds = interval;

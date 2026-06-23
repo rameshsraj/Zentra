@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { createTarget, verifySsh, setupSsh, crawlServer } from '@/lib/api'
 import type { CrawledComponent, CrawlResult } from '@/lib/api'
-import { X, Plus, Loader2, CheckCircle, XCircle, KeyRound, AlertTriangle, Search, Database, Server, HardDrive, Wifi, Package, Clock } from 'lucide-react'
+import { listAgents, type Agent } from '@/lib/api/fleet'
+import { X, Plus, Loader2, CheckCircle, XCircle, KeyRound, AlertTriangle, Search, Database, Server, HardDrive, Wifi, Package, Clock, Bot, ChevronDown } from 'lucide-react'
 
 interface AddTargetModalProps {
   open: boolean
@@ -58,6 +59,9 @@ export default function AddTargetModal({ open, onClose, defaultType = '', defaul
   const [sshSetupLoading, setSshSetupLoading] = useState(false)
   const [sshSetupResult, setSshSetupResult] = useState<{ success: boolean; message: string } | null>(null)
 
+  // Agent selection (Feature 1 / 3)
+  const [selectedAgentId, setSelectedAgentId] = useState<string>('')
+
   // Crawl state
   const [step, setStep] = useState<ModalStep>('form')
   const [crawlResult, setCrawlResult] = useState<CrawlResult | null>(null)
@@ -69,6 +73,18 @@ export default function AddTargetModal({ open, onClose, defaultType = '', defaul
 
   const isServer = form.target_type === 'server'
 
+  // Fetch active agents for the dropdown
+  const { data: agents = [] } = useQuery<Agent[]>({
+    queryKey: ['agents'],
+    queryFn: listAgents,
+    staleTime: 30_000,
+    enabled: open && isServer,
+  })
+  const activeAgents: Agent[] = agents.filter((a: Agent) => a.status === 'active' || a.status === 'stale')
+  // SSH is only required when server has no agent selected
+  const agentSelected = isServer && !!selectedAgentId
+  const sshRequired = isServer && !agentSelected
+
   const resetAll = () => {
     setForm({ name: '', target_type: defaultType, target_subtype: defaultSubtype, host: '', port: 0, description: '', environment: 'production', username: '', password: '' })
     setError('')
@@ -76,6 +92,7 @@ export default function AddTargetModal({ open, onClose, defaultType = '', defaul
     setVerifyMessage('')
     setShowSshSetup(false)
     setSshSetupResult(null)
+    setSelectedAgentId('')
     setStep('form')
     setCrawlResult(null)
     setCrawlError('')
@@ -101,6 +118,7 @@ export default function AddTargetModal({ open, onClose, defaultType = '', defaul
       environment: form.environment,
       ssl_enabled: false,
       is_active: true,
+      agent_id: selectedAgentId || undefined,
     }),
     onSuccess: (target) => {
       qc.invalidateQueries({ queryKey: ['targets'] })
@@ -227,8 +245,8 @@ export default function AddTargetModal({ open, onClose, defaultType = '', defaul
       setError('Please select a subtype')
       return
     }
-    // For servers, require SSH verification to pass first
-    if (isServer && verifyState !== 'passed') {
+    // SSH verification required only if no agent selected (Feature 3)
+    if (sshRequired && verifyState !== 'passed') {
       doVerify()
       return
     }
@@ -571,8 +589,48 @@ export default function AddTargetModal({ open, onClose, defaultType = '', defaul
             </div>
           </div>
 
-          {/* SSH Verification Status (for server targets) */}
-          {isServer && verifyState !== 'idle' && (
+          {/* Agent Selection (Feature 1/3) — shown only for server targets */}
+          {isServer && (
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5 flex items-center gap-1.5">
+                <Bot className="w-3.5 h-3.5 text-blue-400" />
+                Monitored via Agent
+                <span className="text-slate-600 font-normal">(optional — skips SSH verification)</span>
+              </label>
+              <div className="relative">
+                <select
+                  value={selectedAgentId}
+                  onChange={e => {
+                    setSelectedAgentId(e.target.value)
+                    if (e.target.value) {
+                      setVerifyState('idle')
+                      setVerifyMessage('')
+                    }
+                  }}
+                  className="w-full px-3 py-2.5 pr-9 bg-white/5 border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 [&>option]:bg-slate-900 [&>option]:text-white appearance-none"
+                >
+                  <option value="">— No agent (use SSH) —</option>
+                  {activeAgents.length === 0 && (
+                    <option disabled value="">No active agents in this org</option>
+                  )}
+                  {activeAgents.map((a: Agent) => (
+                    <option key={a.agent_id} value={a.agent_id}>
+                      {a.datacenter_name}{a.region_label ? ` (${a.region_label})` : ''} — {a.ip_address ?? 'IP unknown'}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+              </div>
+              {agentSelected && (
+                <p className="text-[11px] text-blue-400 mt-1 flex items-center gap-1">
+                  <CheckCircle className="w-3 h-3" /> SSH validation skipped — agent will collect metrics directly.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* SSH Verification Status (for server targets without agent) */}
+          {sshRequired && verifyState !== 'idle' && (
             <div className="space-y-3">
               <div className={`px-4 py-3 rounded-xl text-sm flex items-start gap-2.5 border ${
                 verifyState === 'verifying' ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' :
@@ -653,7 +711,7 @@ export default function AddTargetModal({ open, onClose, defaultType = '', defaul
             </div>
           )}
 
-          {isServer && verifyState === 'passed' && (
+          {(agentSelected || (sshRequired && verifyState === 'passed')) && (
             <div className="px-4 py-2.5 bg-blue-500/5 border border-blue-500/10 rounded-xl text-xs text-blue-300">
               After creating the server, Zentra will automatically crawl it to discover databases, middleware, and other components for monitoring.
             </div>
@@ -673,10 +731,11 @@ export default function AddTargetModal({ open, onClose, defaultType = '', defaul
               className="flex items-center gap-2 px-5 py-2.5 bg-brand-600 hover:bg-brand-700 rounded-xl text-sm font-medium transition-colors disabled:opacity-50"
             >
               {mutation.isPending || verifyState === 'verifying' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-              {isServer && verifyState === 'idle' ? 'Verify & Create' :
-               isServer && verifyState === 'verifying' ? 'Verifying...' :
-               isServer && verifyState === 'passed' ? 'Create & Discover' :
-               isServer && verifyState === 'failed' ? 'Verify & Create' :
+              {agentSelected ? 'Create & Discover' :
+               sshRequired && verifyState === 'idle' ? 'Verify SSH & Create' :
+               sshRequired && verifyState === 'verifying' ? 'Verifying...' :
+               sshRequired && verifyState === 'passed' ? 'Create & Discover' :
+               sshRequired && verifyState === 'failed' ? 'Retry SSH & Create' :
                'Create Target'}
             </button>
           </div>

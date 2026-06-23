@@ -14,8 +14,8 @@ pub async fn insert_target(pool: &PgPool, target: &Target) -> Result<(), sqlx::E
         r#"INSERT INTO targets
            (target_id, org_id, name, description, target_type, target_subtype, host, port,
             credentials, connection_options, status, environment, tags, check_interval_seconds,
-            consecutive_failures, created_at, updated_at, is_active)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)"#
+            consecutive_failures, created_at, updated_at, is_active, agent_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)"#
     )
     .bind(target.target_id)
     .bind(target.org_id)
@@ -35,6 +35,7 @@ pub async fn insert_target(pool: &PgPool, target: &Target) -> Result<(), sqlx::E
     .bind(target.created_at)
     .bind(target.updated_at)
     .bind(target.is_active)
+    .bind(target.agent_id)
     .execute(pool)
     .await?;
 
@@ -50,7 +51,7 @@ pub async fn list_targets(
     active_only: bool,
 ) -> Result<Vec<Target>, sqlx::Error> {
     let mut sql = String::from(
-        "SELECT target_id, org_id, name, description, target_type, target_subtype, host, port, credentials, connection_options, status, environment, tags, check_interval_seconds, last_check_at, last_error, consecutive_failures, created_at, updated_at, is_active FROM targets WHERE org_id = $1"
+        "SELECT target_id, org_id, name, description, target_type, target_subtype, host, port, credentials, connection_options, status, environment, tags, check_interval_seconds, last_check_at, last_error, consecutive_failures, created_at, updated_at, is_active, agent_id FROM targets WHERE org_id = $1"
     );
     if active_only {
         sql.push_str(" AND is_active = true");
@@ -72,7 +73,7 @@ pub async fn list_targets(
 #[tracing::instrument(skip(pool), fields(db.system = "postgresql", db.operation = "SELECT", db.sql.table = "targets", otel.kind = "client"))]
 pub async fn get_target(pool: &PgPool, target_id: Uuid) -> Result<Option<Target>, sqlx::Error> {
     let row = sqlx::query_as::<_, TargetRow>(
-        "SELECT target_id, org_id, name, description, target_type, target_subtype, host, port, credentials, connection_options, status, environment, tags, check_interval_seconds, last_check_at, last_error, consecutive_failures, created_at, updated_at, is_active FROM targets WHERE target_id = $1"
+        "SELECT target_id, org_id, name, description, target_type, target_subtype, host, port, credentials, connection_options, status, environment, tags, check_interval_seconds, last_check_at, last_error, consecutive_failures, created_at, updated_at, is_active, agent_id FROM targets WHERE target_id = $1"
     )
     .bind(target_id)
     .fetch_optional(pool)
@@ -84,7 +85,7 @@ pub async fn get_target(pool: &PgPool, target_id: Uuid) -> Result<Option<Target>
 #[tracing::instrument(skip(pool), fields(db.system = "postgresql", db.operation = "SELECT", db.sql.table = "targets", otel.kind = "client"))]
 pub async fn get_target_scoped(pool: &PgPool, target_id: Uuid, org_id: Uuid) -> Result<Option<Target>, sqlx::Error> {
     let row = sqlx::query_as::<_, TargetRow>(
-        "SELECT target_id, org_id, name, description, target_type, target_subtype, host, port, credentials, connection_options, status, environment, tags, check_interval_seconds, last_check_at, last_error, consecutive_failures, created_at, updated_at, is_active FROM targets WHERE target_id = $1 AND org_id = $2"
+        "SELECT target_id, org_id, name, description, target_type, target_subtype, host, port, credentials, connection_options, status, environment, tags, check_interval_seconds, last_check_at, last_error, consecutive_failures, created_at, updated_at, is_active, agent_id FROM targets WHERE target_id = $1 AND org_id = $2"
     )
     .bind(target_id)
     .bind(org_id)
@@ -146,6 +147,7 @@ struct TargetRow {
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     is_active: bool,
+    agent_id: Option<Uuid>,
 }
 
 impl TryFrom<TargetRow> for Target {
@@ -191,6 +193,7 @@ impl TryFrom<TargetRow> for Target {
             created_at: r.created_at,
             updated_at: r.updated_at,
             is_active: r.is_active,
+            agent_id: r.agent_id,
         })
     }
 }
