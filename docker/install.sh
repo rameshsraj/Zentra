@@ -140,6 +140,8 @@ info "Loading Zentra Docker image..."
 # Check if tarball exists in current directory
 TARBALL=""
 for f in zentra-latest.tar.gz zentra*.tar.gz; do
+    # Skip agent tarballs — those are handled separately below
+    case "$f" in *agent*) continue ;; esac
     if [ -f "$f" ]; then
         TARBALL="$f"
         break

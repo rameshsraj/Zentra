@@ -147,7 +147,9 @@ Write-Info "Loading Zentra Docker image..."
 
 $tarball = $null
 $candidates = @("zentra-latest.tar.gz")
-$candidates += Get-ChildItem -Path "." -Filter "zentra*.tar.gz" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
+$candidates += Get-ChildItem -Path "." -Filter "zentra*.tar.gz" -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -notmatch 'agent' } |
+    Select-Object -ExpandProperty Name
 
 foreach ($f in $candidates) {
     if (Test-Path $f) {
