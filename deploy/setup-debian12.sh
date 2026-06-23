@@ -101,6 +101,24 @@ if [ "${IS_DEBIAN}" = true ]; then
     apt-get update -qq >> "${LOG_FILE}" 2>&1
     apt-get install -y -qq curl ca-certificates gnupg lsb-release nginx >> "${LOG_FILE}" 2>&1
 
+    # zentra-server binary links against OpenSSL 1.1 (built on Ubuntu 20.04/Debian 11).
+    # Debian 12 ships OpenSSL 3.x only — install the 1.1 compat package from bullseye.
+    if ! ldconfig -p 2>/dev/null | grep -q 'libssl.so.1.1'; then
+        info "Installing libssl1.1 compatibility package..."
+        LIBSSL_DEB="/tmp/libssl1.1_amd64.deb"
+        curl -fsSL -o "${LIBSSL_DEB}" \
+            "http://security.debian.org/debian-security/pool/updates/main/o/openssl/libssl1.1_1.1.1w-0+deb11u5_amd64.deb" \
+            >> "${LOG_FILE}" 2>&1 \
+        || curl -fsSL -o "${LIBSSL_DEB}" \
+            "http://ftp.debian.org/debian/pool/main/o/openssl/libssl1.1_1.1.1w-0+deb11u1_amd64.deb" \
+            >> "${LOG_FILE}" 2>&1 \
+            || fail "Failed to download libssl1.1 — check network connectivity"
+        dpkg -i "${LIBSSL_DEB}" >> "${LOG_FILE}" 2>&1 \
+            || fail "Failed to install libssl1.1"
+        rm -f "${LIBSSL_DEB}"
+        ok "libssl1.1 installed"
+    fi
+
     # PostgreSQL 16
     if ! command -v psql >/dev/null 2>&1; then
         curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \

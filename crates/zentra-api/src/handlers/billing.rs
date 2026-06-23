@@ -169,7 +169,7 @@ pub async fn create_portal(
         return Err(ApiError::Forbidden("Only Admins can manage billing".into()));
     }
 
-    let customer_id: String = sqlx::query_scalar(
+    let customer_id: String = sqlx::query_scalar::<_, Option<String>>(
         "SELECT stripe_customer_id FROM organizations WHERE org_id = $1",
     )
     .bind(org_id)
