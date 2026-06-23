@@ -1,51 +1,48 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Zentra — Complete Server Setup Script (Debian 12 Bookworm)
+# Zentra — Server Setup Script (Binary-Only Deployment)
 # =============================================================================
-# Run as root on a fresh Debian 12 server with PostgreSQL already installed.
+# Run as root on a fresh Debian 12 / Rocky Linux 8 server.
+#
+# Expects pre-built artifacts at /store/zentra (cloned from GitHub):
+#   /store/zentra/bin/zentra-server     — API binary (Linux x86_64)
+#   /store/zentra/frontend/dist/        — React SPA static files
+#   /store/zentra/migrations/           — SQL files (reference only — embedded in binary)
+#   /store/zentra/deploy/nginx.conf     — Nginx reverse proxy config
 #
 # What this does:
-#   1.  Installs system dependencies (build tools, libssl, libpq, clang, etc.)
-#   2.  Installs Node.js 20.x
-#   3.  Installs Rust stable toolchain + sqlx-cli
-#   4.  Configures PostgreSQL (zentra DB, TimescaleDB, extensions)
-#   5.  Creates deploy directory, service user, .env
-#   6.  Builds the Rust backend (zentra-server)
-#   7.  Builds the React frontend (npm ci + vite build)
-#   8.  Runs database migrations
-#   9.  Configures Nginx reverse proxy (frontend :5010 → API :5006)
-#  10.  Creates systemd services and starts everything
-#  11.  Runs health check
+#   1.  Installs runtime dependencies (PostgreSQL 16, TimescaleDB, Nginx)
+#   2.  Configures PostgreSQL (database, users, extensions)
+#   3.  Creates service user and .env with generated secrets
+#   4.  Configures Nginx reverse proxy (frontend :5010 → API :5006)
+#   5.  Creates systemd services and starts everything
+#   6.  Runs health check
+#
+# NO build tools are installed — no Rust, no Node.js, no cargo, no npm.
+# Migrations are embedded in the zentra-server binary and run on first startup.
 #
 # Usage:
-#   chmod +x /home/rameshsraj/projects/Zentra/deploy/setup-debian12.sh
-#   sudo bash /home/rameshsraj/projects/Zentra/deploy/setup-debian12.sh
+#   git clone https://github.com/rameshsraj/zentra-release.git /store/zentra
+#   cd /store/zentra
+#   sudo bash deploy/setup-debian12.sh
 # =============================================================================
 set -euo pipefail
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Configuration — edit these if your setup differs
+# Configuration
 # ─────────────────────────────────────────────────────────────────────────────
-PROJECT_DIR="/home/rameshsraj/projects/Zentra"
-DEPLOY_DIR="/opt/zentra"
+DEPLOY_DIR="/store/zentra"
 SERVICE_USER="zentra"
 
-EXTERNAL_IP="34.68.222.94"
-INTERNAL_IP="10.128.0.2"
-
 PG_HOST="127.0.0.1"
-PG_PORT="5432"
+PG_PORT="5434"
 PG_USER="postgres"
-PG_PASS="zantaz"
 PG_DB="zentra"
+PG_DATA_DIR="/store/zentra/pgdata"
 
 API_PORT=5006
 FRONTEND_PORT=5010
-AGENT_PORT=5001
 
-BUILD_DIR="/mnt/data/zentra-build"
-
-NODE_MAJOR=20
 LOG_FILE="/var/log/zentra-setup.log"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -60,422 +57,393 @@ fail()  { echo -e "\e[31m[FAIL]\e[0m  $*" | tee -a "${LOG_FILE}"; exit 1; }
 # Pre-flight
 # ─────────────────────────────────────────────────────────────────────────────
 [ "$(id -u)" -ne 0 ] && fail "Run as root (sudo)"
-[ ! -d "${PROJECT_DIR}" ] && fail "Project not found at ${PROJECT_DIR}"
+[ ! -f "${DEPLOY_DIR}/bin/zentra-server" ] && fail "Binary not found at ${DEPLOY_DIR}/bin/zentra-server — clone the repo first."
+[ ! -d "${DEPLOY_DIR}/frontend/dist" ] && fail "Frontend not found at ${DEPLOY_DIR}/frontend/dist/"
 mkdir -p "$(dirname "${LOG_FILE}")"
 echo "=== Zentra Setup $(date) ===" > "${LOG_FILE}"
 
+# Detect server IPs
+EXTERNAL_IP=$(curl -sf --max-time 5 http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip -H "Metadata-Flavor: Google" 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
+INTERNAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "127.0.0.1")
+
 echo ""
 echo "======================================================================"
-echo "  Zentra — Full Setup (Debian 12 Bookworm)"
+echo "  Zentra — Server Setup (Binary-Only)"
 echo "======================================================================"
-echo "  Source:     ${PROJECT_DIR}"
 echo "  Deploy:     ${DEPLOY_DIR}"
 echo "  External:   http://${EXTERNAL_IP}:${FRONTEND_PORT}"
+echo "  Internal:   http://${INTERNAL_IP}:${FRONTEND_PORT}"
 echo "  PostgreSQL: ${PG_USER}@${PG_HOST}:${PG_PORT}/${PG_DB}"
 echo "======================================================================"
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════════
-# STEP 1 — System packages
+# Detect distro (Debian/Ubuntu or RHEL/Rocky)
 # ═══════════════════════════════════════════════════════════════════════════
-info "Step 1/11: Installing system packages..."
-
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq >> "${LOG_FILE}" 2>&1
-apt-get install -y -qq \
-    build-essential pkg-config libssl-dev libpq-dev \
-    curl wget git unzip ca-certificates gnupg lsb-release \
-    libaio1 libclang-dev clang libpcap-dev \
-    nginx \
-    python3 sudo \
-    >> "${LOG_FILE}" 2>&1
-
-ok "System packages installed"
-
-# ═══════════════════════════════════════════════════════════════════════════
-# STEP 2 — Node.js 20.x
-# ═══════════════════════════════════════════════════════════════════════════
-info "Step 2/11: Installing Node.js ${NODE_MAJOR}.x..."
-
-if command -v node >/dev/null 2>&1 && node --version | grep -q "v${NODE_MAJOR}"; then
-    ok "Node.js $(node --version) already present"
+IS_DEBIAN=false
+IS_RHEL=false
+if [ -f /etc/debian_version ]; then
+    IS_DEBIAN=true
+elif [ -f /etc/redhat-release ]; then
+    IS_RHEL=true
 else
-    mkdir -p /etc/apt/keyrings
-    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-        | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg 2>/dev/null || true
-    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
-        > /etc/apt/sources.list.d/nodesource.list
+    warn "Unknown distro — assuming RHEL-like"
+    IS_RHEL=true
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STEP 1 — Install runtime dependencies
+# ═══════════════════════════════════════════════════════════════════════════
+info "Step 1/6: Installing runtime dependencies..."
+
+if [ "${IS_DEBIAN}" = true ]; then
+    export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq >> "${LOG_FILE}" 2>&1
-    apt-get install -y -qq nodejs >> "${LOG_FILE}" 2>&1
-    ok "Node.js $(node --version) installed"
-fi
+    apt-get install -y -qq curl ca-certificates gnupg lsb-release nginx >> "${LOG_FILE}" 2>&1
 
-# ═══════════════════════════════════════════════════════════════════════════
-# STEP 3 — Rust toolchain
-# ═══════════════════════════════════════════════════════════════════════════
-info "Step 3/11: Installing Rust toolchain..."
+    # PostgreSQL 16
+    if ! command -v psql >/dev/null 2>&1; then
+        curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            | gpg --dearmor -o /etc/apt/keyrings/pgdg.gpg 2>/dev/null || true
+        echo "deb [signed-by=/etc/apt/keyrings/pgdg.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            > /etc/apt/sources.list.d/pgdg.list
+        apt-get update -qq >> "${LOG_FILE}" 2>&1
+        apt-get install -y -qq postgresql-16 postgresql-contrib-16 >> "${LOG_FILE}" 2>&1
+    fi
 
-if command -v rustc >/dev/null 2>&1; then
-    ok "Rust $(rustc --version | awk '{print $2}') already present"
+    # TimescaleDB
+    if ! dpkg -l | grep -q timescaledb 2>/dev/null; then
+        curl -fsSL https://packagecloud.io/timescale/timescaledb/gpgkey \
+            | gpg --dearmor -o /etc/apt/keyrings/timescaledb.gpg 2>/dev/null || true
+        echo "deb [signed-by=/etc/apt/keyrings/timescaledb.gpg] https://packagecloud.io/timescale/timescaledb/debian/ $(lsb_release -cs) main" \
+            > /etc/apt/sources.list.d/timescaledb.list
+        apt-get update -qq >> "${LOG_FILE}" 2>&1
+        apt-get install -y -qq timescaledb-2-postgresql-16 >> "${LOG_FILE}" 2>&1 || warn "TimescaleDB install failed"
+    fi
+
+    PG_SERVICE="postgresql"
+    PG_BIN="/usr/lib/postgresql/16/bin"
+    NGINX_SITES="/etc/nginx/sites-available"
+    NGINX_ENABLED="/etc/nginx/sites-enabled"
 else
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --default-toolchain stable >> "${LOG_FILE}" 2>&1
-    ok "Rust installed"
+    # RHEL / Rocky Linux 8
+    dnf install -y dnf-utils curl ca-certificates nginx >> "${LOG_FILE}" 2>&1
+
+    if ! command -v psql >/dev/null 2>&1; then
+        dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm >> "${LOG_FILE}" 2>&1
+        dnf -qy module disable postgresql >> "${LOG_FILE}" 2>&1 || true
+        dnf install -y postgresql16-server postgresql16-contrib >> "${LOG_FILE}" 2>&1
+    fi
+
+    # TimescaleDB
+    if ! rpm -q timescaledb-2-postgresql-16 >/dev/null 2>&1; then
+        cat > /etc/yum.repos.d/timescaledb.repo <<'TSREPO'
+[timescaledb]
+name=TimescaleDB Repository
+baseurl=https://packagecloud.io/timescale/timescaledb/el/8/$basearch
+gpgcheck=0
+enabled=1
+TSREPO
+        dnf install -y timescaledb-2-postgresql-16 >> "${LOG_FILE}" 2>&1 || warn "TimescaleDB install failed"
+    fi
+
+    PG_SERVICE="postgresql-16"
+    PG_BIN="/usr/pgsql-16/bin"
+    NGINX_SITES="/etc/nginx/conf.d"
+    NGINX_ENABLED=""  # RHEL uses conf.d directly
 fi
 
-# Make cargo available for rest of script
-export PATH="${HOME}/.cargo/bin:${PATH}"
-# shellcheck disable=SC1091
-source "${HOME}/.cargo/env" 2>/dev/null || true
-
-if ! command -v sqlx >/dev/null 2>&1; then
-    info "Installing sqlx-cli (for migrations)..."
-    cargo install sqlx-cli --no-default-features --features postgres >> "${LOG_FILE}" 2>&1
-    ok "sqlx-cli installed"
-fi
+ok "Runtime dependencies installed"
 
 # ═══════════════════════════════════════════════════════════════════════════
-# STEP 4 — PostgreSQL: database, TimescaleDB, extensions
+# Initialize PostgreSQL data directory under /store/zentra/pgdata/
 # ═══════════════════════════════════════════════════════════════════════════
-info "Step 4/11: Configuring PostgreSQL..."
+info "Initializing PostgreSQL data directory at ${PG_DATA_DIR}..."
 
-export PGPASSWORD="${PG_PASS}"
+# Stop PostgreSQL if running (it may have started with default data dir)
+systemctl stop "${PG_SERVICE}" >> "${LOG_FILE}" 2>&1 || true
 
-# Test connection
-if ! psql -h "${PG_HOST}" -p "${PG_PORT}" -U "${PG_USER}" -c "SELECT 1;" >/dev/null 2>&1; then
-    fail "Cannot connect to PostgreSQL at ${PG_HOST}:${PG_PORT}"
-fi
-ok "PostgreSQL connection verified"
+if [ ! -f "${PG_DATA_DIR}/PG_VERSION" ]; then
+    mkdir -p "${PG_DATA_DIR}"
+    chown postgres:postgres "${PG_DATA_DIR}"
+    chmod 700 "${PG_DATA_DIR}"
 
-# Install TimescaleDB package if extension is not available
-TSDB_AVAIL=$(psql -h "${PG_HOST}" -p "${PG_PORT}" -U "${PG_USER}" -d postgres -t -c \
-    "SELECT count(*) FROM pg_available_extensions WHERE name='timescaledb';" 2>/dev/null | tr -d ' ')
-if [ "${TSDB_AVAIL:-0}" = "0" ]; then
-    info "Installing TimescaleDB..."
-    PG_MAJOR=$(psql -h "${PG_HOST}" -p "${PG_PORT}" -U "${PG_USER}" -t -c "SHOW server_version;" 2>/dev/null | awk -F. '{print $1}' | tr -d ' ')
-    [ -z "${PG_MAJOR}" ] && PG_MAJOR=16
-
-    # Add TimescaleDB repo
-    curl -fsSL https://packagecloud.io/timescale/timescaledb/gpgkey \
-        | gpg --dearmor -o /etc/apt/keyrings/timescaledb.gpg 2>/dev/null || true
-    echo "deb [signed-by=/etc/apt/keyrings/timescaledb.gpg] https://packagecloud.io/timescale/timescaledb/debian/ $(lsb_release -cs) main" \
-        > /etc/apt/sources.list.d/timescaledb.list
-    apt-get update -qq >> "${LOG_FILE}" 2>&1 || true
-    apt-get install -y -qq "timescaledb-2-postgresql-${PG_MAJOR}" >> "${LOG_FILE}" 2>&1 || {
-        warn "TimescaleDB package install failed — continuing without it"
-    }
-
-    # Add to shared_preload_libraries and restart
-    PG_CONF=$(psql -h "${PG_HOST}" -p "${PG_PORT}" -U "${PG_USER}" -t -c "SHOW config_file;" 2>/dev/null | tr -d ' ')
-    if [ -n "${PG_CONF}" ] && [ -f "${PG_CONF}" ]; then
-        if ! grep -q "timescaledb" "${PG_CONF}" 2>/dev/null; then
-            echo "shared_preload_libraries = 'timescaledb'" >> "${PG_CONF}"
-            echo "timescaledb.telemetry_level = off" >> "${PG_CONF}"
-            systemctl restart postgresql >> "${LOG_FILE}" 2>&1 || true
-            sleep 3
-            info "PostgreSQL restarted with TimescaleDB"
+    # Ensure locale exists (Debian minimal images may not have it)
+    if ! locale -a 2>/dev/null | grep -qi 'en_US.utf8'; then
+        info "Generating en_US.UTF-8 locale..."
+        if [ -f /etc/locale.gen ]; then
+            sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
+            locale-gen >> "${LOG_FILE}" 2>&1 || true
         fi
+    fi
+
+    # Determine locale to use
+    INIT_LOCALE="en_US.UTF-8"
+    if ! locale -a 2>/dev/null | grep -qi 'en_US.utf8'; then
+        INIT_LOCALE="C.UTF-8"
+        warn "en_US.UTF-8 not available, using C.UTF-8"
+    fi
+
+    # Initialize the cluster in our custom directory
+    info "Running initdb (locale=${INIT_LOCALE})..."
+    sudo -u postgres "${PG_BIN}/initdb" -D "${PG_DATA_DIR}" --encoding=UTF8 --locale="${INIT_LOCALE}" >> "${LOG_FILE}" 2>&1 \
+        || fail "initdb failed — check ${LOG_FILE} for details"
+    ok "PostgreSQL data directory initialized at ${PG_DATA_DIR}"
+else
+    ok "PostgreSQL data directory already exists at ${PG_DATA_DIR}"
+fi
+
+# Override systemd to use the custom data directory
+if [ "${IS_DEBIAN}" = true ]; then
+    # Debian: override the cluster config
+    mkdir -p /etc/postgresql/16/main
+    cat > /etc/postgresql/16/main/postgresql.conf <<PGCONF_OVERRIDE
+data_directory = '${PG_DATA_DIR}'
+hba_file = '${PG_DATA_DIR}/pg_hba.conf'
+ident_file = '${PG_DATA_DIR}/pg_ident.conf'
+PGCONF_OVERRIDE
+else
+    # RHEL: override the systemd service
+    mkdir -p /etc/systemd/system/${PG_SERVICE}.service.d
+    cat > /etc/systemd/system/${PG_SERVICE}.service.d/override.conf <<SYSOVER
+[Service]
+Environment=PGDATA=${PG_DATA_DIR}
+SYSOVER
+    systemctl daemon-reload
+fi
+
+# Point conf variables to the custom data dir
+PG_CONF="${PG_DATA_DIR}/postgresql.conf"
+PG_HBA="${PG_DATA_DIR}/pg_hba.conf"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STEP 2 — Configure PostgreSQL
+# ═══════════════════════════════════════════════════════════════════════════
+info "Step 2/6: Configuring PostgreSQL..."
+
+# Generate password
+PG_PASS=$(openssl rand -hex 16)
+
+# Configure postgresql.conf
+if [ -f "${PG_CONF}" ]; then
+    # Set port
+    sed -i "s/^#*port = .*/port = ${PG_PORT}/" "${PG_CONF}"
+    # Listen on localhost only
+    sed -i "s/^#*listen_addresses = .*/listen_addresses = '127.0.0.1'/" "${PG_CONF}"
+
+    # TimescaleDB + tuning (append if not already present)
+    if ! grep -q "timescaledb" "${PG_CONF}" 2>/dev/null; then
+        cat >> "${PG_CONF}" <<'PGTUNING'
+
+# Zentra configuration
+shared_preload_libraries = 'timescaledb'
+timescaledb.telemetry_level = off
+max_connections = 200
+shared_buffers = 256MB
+effective_cache_size = 512MB
+work_mem = 4MB
+maintenance_work_mem = 64MB
+random_page_cost = 1.1
+password_encryption = scram-sha-256
+log_connections = on
+log_disconnections = on
+log_statement = 'ddl'
+log_timezone = 'UTC'
+timezone = 'UTC'
+PGTUNING
     fi
 fi
 
+# Configure pg_hba.conf
+if [ -f "${PG_HBA}" ]; then
+    cat > "${PG_HBA}" <<'HBAEOF'
+# TYPE  DATABASE  USER      ADDRESS       METHOD
+local   all       postgres                peer
+local   all       all                     scram-sha-256
+host    all       all       127.0.0.1/32  scram-sha-256
+host    all       all       ::1/128       scram-sha-256
+host    all       all       0.0.0.0/0     reject
+host    all       all       ::/0          reject
+HBAEOF
+fi
+
+# Start PostgreSQL with custom data dir and new config
+systemctl enable "${PG_SERVICE}" >> "${LOG_FILE}" 2>&1
+systemctl restart "${PG_SERVICE}" >> "${LOG_FILE}" 2>&1
+sleep 3
+
+# Set postgres password
+sudo -u postgres psql -p "${PG_PORT}" -c "ALTER USER postgres PASSWORD '${PG_PASS}';" >> "${LOG_FILE}" 2>&1
+export PGPASSWORD="${PG_PASS}"
+
 # Create database
-DB_EXISTS=$(psql -h "${PG_HOST}" -p "${PG_PORT}" -U "${PG_USER}" -t -c \
+DB_EXISTS=$(sudo -u postgres psql -p "${PG_PORT}" -t -c \
     "SELECT 1 FROM pg_database WHERE datname='${PG_DB}';" 2>/dev/null | tr -d ' ')
 if [ "${DB_EXISTS}" != "1" ]; then
-    psql -h "${PG_HOST}" -p "${PG_PORT}" -U "${PG_USER}" -c \
-        "CREATE DATABASE ${PG_DB} OWNER ${PG_USER};" >> "${LOG_FILE}" 2>&1
+    sudo -u postgres psql -p "${PG_PORT}" -c "CREATE DATABASE ${PG_DB} OWNER ${PG_USER};" >> "${LOG_FILE}" 2>&1
     ok "Database '${PG_DB}' created"
 else
     ok "Database '${PG_DB}' already exists"
 fi
 
 # Enable extensions
-psql -h "${PG_HOST}" -p "${PG_PORT}" -U "${PG_USER}" -d "${PG_DB}" <<'EOSQL' >> "${LOG_FILE}" 2>&1 || true
+sudo -u postgres psql -p "${PG_PORT}" -d "${PG_DB}" <<'EXTSQL' >> "${LOG_FILE}" 2>&1 || true
 CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-EOSQL
+EXTSQL
 ok "Extensions enabled (timescaledb, pg_trgm, uuid-ossp)"
 
+# Create restricted app user
+sudo -u postgres psql -p "${PG_PORT}" -d "${PG_DB}" <<APPSQL >> "${LOG_FILE}" 2>&1 || true
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'zentra_app') THEN
+    CREATE USER zentra_app WITH PASSWORD '${PG_PASS}';
+  ELSE
+    ALTER USER zentra_app WITH PASSWORD '${PG_PASS}';
+  END IF;
+END
+\$\$;
+GRANT CONNECT ON DATABASE ${PG_DB} TO zentra_app;
+GRANT USAGE ON SCHEMA public TO zentra_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO zentra_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO zentra_app;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO zentra_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO zentra_app;
+GRANT CREATE ON SCHEMA public TO zentra_app;
+APPSQL
+
+ok "PostgreSQL configured (port ${PG_PORT}, database ${PG_DB}, user zentra_app)"
+
 # ═══════════════════════════════════════════════════════════════════════════
-# STEP 5 — Deploy directory, service user, .env
+# STEP 3 — Service user and .env
 # ═══════════════════════════════════════════════════════════════════════════
-info "Step 5/11: Setting up deploy directory and .env..."
+info "Step 3/6: Setting up service user and .env..."
 
 if ! id -u "${SERVICE_USER}" >/dev/null 2>&1; then
-    useradd --system --shell /usr/sbin/nologin --home-dir "${DEPLOY_DIR}" --create-home "${SERVICE_USER}"
+    useradd --system --shell /usr/sbin/nologin --home-dir "${DEPLOY_DIR}" "${SERVICE_USER}"
     ok "Service user '${SERVICE_USER}' created"
 fi
 
-mkdir -p "${DEPLOY_DIR}"/{bin,logs,migrations,frontend/dist,backups}
+mkdir -p "${DEPLOY_DIR}"/{logs,.ssh}
+chmod 700 "${DEPLOY_DIR}/.ssh"
 
-# Generate secure secrets
-JWT_SECRET=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 64)
+# Generate secrets
+JWT_SECRET=$(openssl rand -hex 32)
 MASTER_KEY=$(openssl rand -hex 32)
 
 cat > "${DEPLOY_DIR}/.env" <<ENVEOF
-# ─── Zentra Environment (generated by setup-debian12.sh) ───
-POSTGRES_HOST=${PG_HOST}
-POSTGRES_PORT=${PG_PORT}
-POSTGRES_USER=${PG_USER}
-POSTGRES_PASSWORD=${PG_PASS}
-POSTGRES_DATABASE=${PG_DB}
-DATABASE_URL=postgresql://${PG_USER}:${PG_PASS}@${PG_HOST}:${PG_PORT}/${PG_DB}
-DB_POOL_SIZE=10
-
-ZENTRA_API_PORT=${API_PORT}
-ZENTRA_AGENT_PORT=${AGENT_PORT}
-FRONTEND_PORT=${FRONTEND_PORT}
-
+# Zentra Environment — generated by setup-debian12.sh on $(date -u +%Y-%m-%d)
+DATABASE_URL=postgresql://zentra_app:${PG_PASS}@${PG_HOST}:${PG_PORT}/${PG_DB}
 ZENTRA_JWT_SECRET=${JWT_SECRET}
-ZENTRA_ALLOW_INSECURE_JWT=0
-
 ZENTRA_MASTER_KEY=${MASTER_KEY}
-
-ZENTRA_ALLOW_ORIGINS=http://${EXTERNAL_IP}:${FRONTEND_PORT},http://${INTERNAL_IP}:${FRONTEND_PORT},http://localhost:${FRONTEND_PORT}
-ZENTRA_BIND_ADDR=0.0.0.0
-
-ZENTRA_LOG_LEVEL=info
-ZENTRA_COLLECTION_INTERVAL=60
-ZENTRA_DEMO_MODE=false
-
+ZENTRA_ALLOW_INSECURE_JWT=0
+ZENTRA_API_PORT=${API_PORT}
+ZENTRA_BIND_ADDR=127.0.0.1
+ZENTRA_ALLOW_ORIGINS=*
 ZENTRA_ORG_ID=00000000-0000-0000-0000-000000000001
 RUST_LOG=info
+HOME=${DEPLOY_DIR}
 ENVEOF
 
 chmod 600 "${DEPLOY_DIR}/.env"
+chown -R "${SERVICE_USER}:${SERVICE_USER}" "${DEPLOY_DIR}"
 ok ".env written to ${DEPLOY_DIR}/.env"
 
 # ═══════════════════════════════════════════════════════════════════════════
-# STEP 6 — Build Rust backend
+# STEP 4 — Configure Nginx
 # ═══════════════════════════════════════════════════════════════════════════
-info "Step 6/11: Building Rust backend (this may take 5-15 minutes)..."
-info "Build artifacts → ${BUILD_DIR}  (to save space on root volume)"
+info "Step 4/6: Configuring Nginx..."
 
-# Clean previous build artifacts (frees multi-GB of space)
-if [ -d "${DEPLOY_DIR}/target" ]; then
-    info "Removing previous build cache: ${DEPLOY_DIR}/target"
-    rm -rf "${DEPLOY_DIR}/target"
-    ok "Old build cache cleaned (${DEPLOY_DIR}/target)"
-fi
-if [ -d "${BUILD_DIR}" ]; then
-    info "Removing previous build directory: ${BUILD_DIR}"
-    rm -rf "${BUILD_DIR}"
-    ok "Previous build cleaned (${BUILD_DIR})"
-fi
-mkdir -p "${BUILD_DIR}"
-cd "${PROJECT_DIR}"
+# Use the bundled nginx.conf if available, otherwise generate one
+NGINX_DEST=""
+if [ "${IS_DEBIAN}" = true ]; then
+    NGINX_DEST="/etc/nginx/sites-available/zentra"
 
-# Point cargo at /mnt/data so the multi-GB target/ dir stays off root
-export CARGO_TARGET_DIR="${BUILD_DIR}"
-# Set SQLX_OFFLINE so build doesn't need live DB
-export SQLX_OFFLINE=true
-# Source .env for build
-set -a
-# shellcheck disable=SC1090
-source "${DEPLOY_DIR}/.env"
-set +a
-
-cargo build --release --bin zentra-server 2>&1 | tee -a "${LOG_FILE}"
-
-if [ ! -f "${BUILD_DIR}/release/zentra-server" ]; then
-    fail "Backend build failed — zentra-server binary not found"
-fi
-
-cp "${BUILD_DIR}/release/zentra-server" "${DEPLOY_DIR}/bin/zentra-server"
-chmod +x "${DEPLOY_DIR}/bin/zentra-server"
-ok "zentra-server built and copied to ${DEPLOY_DIR}/bin/"
-
-# Also build the agent (non-fatal — server is the critical binary)
-if cargo build --release --bin zentra-agent 2>&1 | tee -a "${LOG_FILE}" || true; then
-    if [ -f "${BUILD_DIR}/release/zentra-agent" ]; then
-        cp "${BUILD_DIR}/release/zentra-agent" "${DEPLOY_DIR}/bin/zentra-agent"
-        chmod +x "${DEPLOY_DIR}/bin/zentra-agent"
-        ok "zentra-agent built and copied"
+    if [ -f "${DEPLOY_DIR}/deploy/nginx.conf" ]; then
+        cp "${DEPLOY_DIR}/deploy/nginx.conf" "${NGINX_DEST}"
     else
-        warn "zentra-agent build failed (non-fatal) — server will still run"
-    fi
-fi
-
-# ═══════════════════════════════════════════════════════════════════════════
-# STEP 7 — Build React frontend
-# ═══════════════════════════════════════════════════════════════════════════
-info "Step 7/11: Building React frontend..."
-
-cd "${PROJECT_DIR}/frontend"
-npm ci --silent 2>&1 | tee -a "${LOG_FILE}" | tail -3
-npm run build 2>&1 | tee -a "${LOG_FILE}" | tail -5
-
-if [ ! -d "${PROJECT_DIR}/frontend/dist" ]; then
-    fail "Frontend build failed — dist/ not found"
-fi
-
-# Copy dist to deploy dir
-rm -rf "${DEPLOY_DIR}/frontend/dist"
-cp -r "${PROJECT_DIR}/frontend/dist" "${DEPLOY_DIR}/frontend/dist"
-ok "Frontend built and copied to ${DEPLOY_DIR}/frontend/dist/"
-
-# ═══════════════════════════════════════════════════════════════════════════
-# STEP 8 — Run database migrations
-# ═══════════════════════════════════════════════════════════════════════════
-info "Step 8/11: Running database migrations..."
-
-cd "${PROJECT_DIR}"
-export DATABASE_URL="postgresql://${PG_USER}:${PG_PASS}@${PG_HOST}:${PG_PORT}/${PG_DB}"
-
-# Copy migrations to deploy dir
-cp -r "${PROJECT_DIR}/migrations" "${DEPLOY_DIR}/"
-
-if command -v sqlx >/dev/null 2>&1; then
-    sqlx migrate run --source ./migrations 2>&1 | tee -a "${LOG_FILE}" | tail -10 || {
-        warn "sqlx migrate returned non-zero (tables may already exist)"
-    }
-    ok "Migrations applied via sqlx"
-else
-    # Fallback: apply SQL files in order directly via psql
-    info "sqlx not found — applying migrations via psql..."
-    for f in $(ls -1 "${PROJECT_DIR}/migrations/"*.sql | sort); do
-        fname=$(basename "$f")
-        info "  Applying: ${fname}"
-        psql -h "${PG_HOST}" -p "${PG_PORT}" -U "${PG_USER}" -d "${PG_DB}" -f "$f" >> "${LOG_FILE}" 2>&1 || true
-    done
-    ok "Migrations applied via psql"
-fi
-
-# ═══════════════════════════════════════════════════════════════════════════
-# STEP 9 — Configure Nginx
-# ═══════════════════════════════════════════════════════════════════════════
-info "Step 9/11: Configuring Nginx reverse proxy..."
-
-cat > /etc/nginx/sites-available/zentra <<NGINXEOF
-# Rate limiting zones
+        # Generate minimal config
+        cat > "${NGINX_DEST}" <<NGINXEOF
 limit_req_zone \$binary_remote_addr zone=login_limit:10m rate=5r/m;
 limit_req_zone \$binary_remote_addr zone=api_limit:10m rate=30r/s;
-limit_req_zone \$binary_remote_addr zone=otlp_limit:10m rate=100r/s;
 
 server {
     listen ${FRONTEND_PORT};
-    server_name ${EXTERNAL_IP} ${INTERNAL_IP} localhost _;
-
+    server_name _;
     root ${DEPLOY_DIR}/frontend/dist;
     index index.html;
-
     server_tokens off;
     client_max_body_size 2m;
 
-    # Security headers
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "DENY" always;
-    add_header X-XSS-Protection "0" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
-    # Frontend SPA
     location / {
         try_files \$uri \$uri/ /index.html;
-
-        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)\$ {
-            expires 1y;
-            add_header Cache-Control "public, immutable";
-        }
-
-        location = /index.html {
-            add_header Cache-Control "no-store, no-cache, must-revalidate";
-        }
     }
 
-    # Block sensitive files
-    location ~ /\.(env|git|gitignore|dockerignore) {
-        deny all;
-        return 404;
-    }
-    location ~ \.(toml|lock|rs|sql|sh|ps1)\$ {
-        deny all;
-        return 404;
-    }
-
-    # Login — strict rate limit
     location = /api/auth/login {
         limit_req zone=login_limit burst=3 nodelay;
-        limit_req_status 429;
         proxy_pass http://127.0.0.1:${API_PORT};
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_read_timeout 10s;
-        proxy_connect_timeout 5s;
     }
 
-    # API proxy
     location /api/ {
         limit_req zone=api_limit burst=60 nodelay;
-        limit_req_status 429;
         proxy_pass http://127.0.0.1:${API_PORT};
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_read_timeout 60s;
-        proxy_connect_timeout 10s;
     }
 
-    # OTLP ingest
     location /v1/ {
-        limit_req zone=otlp_limit burst=200 nodelay;
         proxy_pass http://127.0.0.1:${API_PORT};
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header Content-Type \$http_content_type;
-        proxy_read_timeout 30s;
         client_max_body_size 10m;
     }
 
-    # Metrics (internal only)
-    location /metrics {
-        proxy_pass http://127.0.0.1:${API_PORT};
-        allow 127.0.0.1;
-        allow 10.0.0.0/8;
-        deny all;
-    }
-
     gzip on;
-    gzip_types text/plain text/css application/json application/javascript text/xml;
+    gzip_types text/plain text/css application/json application/javascript;
     gzip_min_length 1024;
-    gzip_vary on;
-
-    access_log ${DEPLOY_DIR}/logs/nginx_access.log;
-    error_log  ${DEPLOY_DIR}/logs/nginx_error.log warn;
 }
 NGINXEOF
+    fi
 
-# Enable site, disable default
-rm -f /etc/nginx/sites-enabled/default
-ln -sf /etc/nginx/sites-available/zentra /etc/nginx/sites-enabled/zentra
+    rm -f /etc/nginx/sites-enabled/default
+    ln -sf "${NGINX_DEST}" /etc/nginx/sites-enabled/zentra
+else
+    # RHEL — use conf.d
+    NGINX_DEST="/etc/nginx/conf.d/zentra.conf"
+    if [ -f "${DEPLOY_DIR}/deploy/nginx.conf" ]; then
+        cp "${DEPLOY_DIR}/deploy/nginx.conf" "${NGINX_DEST}"
+    fi
+    rm -f /etc/nginx/conf.d/default.conf
+fi
 
-# Verify config
 nginx -t >> "${LOG_FILE}" 2>&1 || fail "Nginx config test failed"
 ok "Nginx configured on port ${FRONTEND_PORT}"
 
 # ═══════════════════════════════════════════════════════════════════════════
-# STEP 10 — Systemd services
+# STEP 5 — Systemd services
 # ═══════════════════════════════════════════════════════════════════════════
-info "Step 10/11: Creating systemd services..."
+info "Step 5/6: Creating systemd services..."
 
-# Set ownership
-chown -R "${SERVICE_USER}:${SERVICE_USER}" "${DEPLOY_DIR}"
-
-# ── zentra-api.service ──
 cat > /etc/systemd/system/zentra-api.service <<SVCEOF
 [Unit]
 Description=Zentra API Server
-After=network.target postgresql.service
-Wants=postgresql.service
+After=network.target ${PG_SERVICE}.service
+Requires=${PG_SERVICE}.service
 
 [Service]
 Type=simple
@@ -486,70 +454,40 @@ EnvironmentFile=${DEPLOY_DIR}/.env
 ExecStart=${DEPLOY_DIR}/bin/zentra-server
 Restart=always
 RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=${DEPLOY_DIR}/logs ${DEPLOY_DIR}/.ssh
+PrivateTmp=true
 StandardOutput=append:${DEPLOY_DIR}/logs/api.log
-StandardError=append:${DEPLOY_DIR}/logs/api.log
+StandardError=append:${DEPLOY_DIR}/logs/api-error.log
 LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
 SVCEOF
 
-# ── zentra-agent.service (if binary exists) ──
-if [ -f "${DEPLOY_DIR}/bin/zentra-agent" ]; then
-cat > /etc/systemd/system/zentra-agent.service <<AGENTEOF
-[Unit]
-Description=Zentra Monitoring Agent
-After=network.target zentra-api.service
-Wants=zentra-api.service
-
-[Service]
-Type=simple
-User=${SERVICE_USER}
-Group=${SERVICE_USER}
-WorkingDirectory=${DEPLOY_DIR}
-EnvironmentFile=${DEPLOY_DIR}/.env
-ExecStart=${DEPLOY_DIR}/bin/zentra-agent
-Restart=always
-RestartSec=5
-StandardOutput=append:${DEPLOY_DIR}/logs/agent.log
-StandardError=append:${DEPLOY_DIR}/logs/agent.log
-LimitNOFILE=65536
-
-[Install]
-WantedBy=multi-user.target
-AGENTEOF
-fi
-
 systemctl daemon-reload
-
-# Enable and start services
 systemctl enable zentra-api >> "${LOG_FILE}" 2>&1
 systemctl restart zentra-api
 ok "zentra-api service started"
-
-if [ -f /etc/systemd/system/zentra-agent.service ]; then
-    systemctl enable zentra-agent >> "${LOG_FILE}" 2>&1
-    systemctl restart zentra-agent
-    ok "zentra-agent service started"
-fi
 
 systemctl restart nginx
 ok "Nginx restarted"
 
 # ═══════════════════════════════════════════════════════════════════════════
-# STEP 11 — Health check
+# STEP 6 — Health check
 # ═══════════════════════════════════════════════════════════════════════════
-info "Step 11/11: Running health checks..."
+info "Step 6/6: Running health checks..."
 
 sleep 5
 
 HEALTH_OK=false
-for i in 1 2 3 4 5 6 7 8 9 10; do
+for i in $(seq 1 15); do
     if curl -sf "http://127.0.0.1:${API_PORT}/api/health" >/dev/null 2>&1; then
         HEALTH_OK=true
         break
     fi
-    echo -n "."
+    printf "."
     sleep 3
 done
 echo ""
@@ -557,11 +495,10 @@ echo ""
 if [ "${HEALTH_OK}" = true ]; then
     ok "API health check PASSED"
 else
-    warn "API health check failed — check logs: journalctl -u zentra-api -n 50"
-    warn "Or: cat ${DEPLOY_DIR}/logs/api.log | tail -50"
+    warn "API health check failed — check: journalctl -u zentra-api -n 50"
+    warn "Or: tail -50 ${DEPLOY_DIR}/logs/api.log"
 fi
 
-# Check nginx/frontend
 if curl -sf "http://127.0.0.1:${FRONTEND_PORT}/" >/dev/null 2>&1; then
     ok "Frontend health check PASSED"
 else
@@ -573,6 +510,7 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 API_STATUS=$(systemctl is-active zentra-api 2>/dev/null || echo "unknown")
 NGINX_STATUS=$(systemctl is-active nginx 2>/dev/null || echo "unknown")
+PG_STATUS=$(systemctl is-active "${PG_SERVICE}" 2>/dev/null || echo "unknown")
 
 echo ""
 echo ""
@@ -580,25 +518,26 @@ echo "======================================================================"
 echo "  Zentra — Setup Complete!"
 echo "======================================================================"
 echo ""
-echo "  WEB UI (external):  http://${EXTERNAL_IP}:${FRONTEND_PORT}"
-echo "  WEB UI (internal):  http://${INTERNAL_IP}:${FRONTEND_PORT}"
-echo "  API endpoint:       http://${INTERNAL_IP}:${API_PORT}/api/health"
-echo "  Login:              admin@Zentra.local / changeme"
+echo "  WEB UI:     http://${EXTERNAL_IP}:${FRONTEND_PORT}"
+echo "  Internal:   http://${INTERNAL_IP}:${FRONTEND_PORT}"
+echo "  Login:      admin@Zentra.local / changeme"
 echo ""
 echo "  SERVICES:"
+echo "    postgresql:   ${PG_STATUS}  (port ${PG_PORT})"
 echo "    zentra-api:   ${API_STATUS}"
-echo "    nginx:        ${NGINX_STATUS}"
+echo "    nginx:        ${NGINX_STATUS}  (port ${FRONTEND_PORT})"
 echo ""
 echo "  COMMANDS:"
-echo "    Status:       systemctl status zentra-api"
-echo "    Logs (API):   journalctl -u zentra-api -f"
-echo "    Logs (file):  tail -f ${DEPLOY_DIR}/logs/api.log"
-echo "    Restart:      systemctl restart zentra-api nginx"
-echo "    Rebuild:      cd ${PROJECT_DIR} && cargo build --release --bin zentra-server"
+echo "    Status:     systemctl status zentra-api"
+echo "    Logs:       journalctl -u zentra-api -f"
+echo "    Restart:    systemctl restart zentra-api nginx"
 echo ""
-echo "  CONFIG:           ${DEPLOY_DIR}/.env"
-echo "  NGINX:            /etc/nginx/sites-available/zentra"
-echo "  SETUP LOG:        ${LOG_FILE}"
+echo "  FILES:"
+echo "    Config:     ${DEPLOY_DIR}/.env"
+echo "    Logs:       ${DEPLOY_DIR}/logs/"
+echo "    Binary:     ${DEPLOY_DIR}/bin/zentra-server"
+echo "    Frontend:   ${DEPLOY_DIR}/frontend/dist/"
+echo "    Setup log:  ${LOG_FILE}"
 echo ""
 echo "  IMPORTANT: Change the default admin password after first login!"
 echo "======================================================================"

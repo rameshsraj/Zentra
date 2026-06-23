@@ -28,6 +28,8 @@ Thumbs.db
 
 # Docker image tarballs (too large for git)
 docker/zentra-latest.tar.gz
+docker/local-lab/zentra-agent-latest.tar.gz
+
 docker/*.tar.gz
 
 # Simulation lab generated files
