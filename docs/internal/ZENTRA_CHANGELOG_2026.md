@@ -567,11 +567,95 @@ PASS: GET /api/targets                   → HTTP 200, 0 targets (clean state)
 
 ---
 
+---
+
+## Phase 10 — Feature 4: Agent Network Discovery + User Opt-In
+### *(June 24, 2026)*
+
+### What was built
+
+The agent now scans its local subnet every 10 minutes, discovers reachable hosts
+via TCP port probing, and reports them to the server. Users see the discovered
+hosts in the Fleet page and choose which ones to monitor — the agent never
+automatically starts collecting from an undecided host.
+
+**Database (migration `000082`):**
+- `discovered_hosts` table: `agent_id` FK, `org_id`, `ip_address`, `hostname`,
+  `open_ports` (JSONB), `os_hint`, `first_seen`, `last_seen`, `opted_in`, `ignored`, `target_id` FK
+- Unique constraint on `(agent_id, ip_address)` — upserted on each scan
+
+**Backend (3 new endpoints):**
+- `POST /api/agents/:id/discovered` — agent-authenticated (Bearer); upserts all
+  discovered hosts for that agent in bulk
+- `GET /api/agents/:id/discovered` — user session; returns all discovered hosts
+  for the agent, ordered by opted_in DESC, last_seen DESC
+- `PATCH /api/agents/:id/discovered/:host_id` — user session; sets `opted_in`
+  and/or `ignored` on a single host
+
+**Agent (`network_scan.rs`):**
+- `NetworkScanner` struct spawned in remote mode when `ZENTRA_AGENT_ID` is set
+- Detects local /24 subnets from `/proc/net/fib_trie` (Linux) or `hostname -I`
+- TCP-probes 254 hosts per subnet on ports: 22, 80, 443, 8080, 3306, 5432, 6379,
+  9090, 27017 — 300ms timeout per port, all hosts probed concurrently
+- Infers OS hint: port 22 open → `linux`; port 3389/445/135 → `windows`
+- Attempts reverse DNS lookup (best-effort, 500ms timeout)
+- Reports live hosts to server every 10 minutes
+- Requires `ZENTRA_AGENT_ID` env var (UUID of the registered agent)
+
+**`AppConfig` addition:**
+- `agent_id: Option<Uuid>` — read from `ZENTRA_AGENT_ID` env var
+- Scanner is silently skipped if `ZENTRA_AGENT_ID` is not set (backwards compatible)
+
+**Frontend (`Fleet.tsx` rewrite):**
+- Each agent row is now expandable (chevron toggle)
+- Expanding reveals **Discovered Hosts** panel below the agent row
+- Panel shows summary bar: X new / X monitored / X ignored
+- Host table: IP, hostname, OS (emoji + text), open ports, last seen, status
+- **Monitor** button → sets `opted_in = true`
+- **Ignore** button → sets `ignored = true` (row fades out)
+- **Remove** button → unsets `opted_in` (monitored → new)
+- **Unignore** button → unsets `ignored` (ignored → new)
+- "Show/Hide ignored" toggle in panel header
+- Empty state: explains that scans run every 10 minutes
+- Refreshes every 60 seconds automatically
+
+### Files changed
+- `migrations/20250101000082_discovered_hosts.sql`
+- `crates/zentra-api/src/handlers/agents.rs` — `report_discovered`, `list_discovered`, `update_discovered_host`
+- `crates/zentra-api/src/routes/agents.rs` — 3 new routes
+- `crates/zentra-agent/src/network_scan.rs` — new file
+- `crates/zentra-agent/src/lib.rs` — expose `network_scan` module
+- `crates/zentra-agent/src/main.rs` — spawn `NetworkScanner` in remote mode
+- `crates/zentra-core/src/config/mod.rs` — `agent_id` field + `ZENTRA_AGENT_ID` env
+- `frontend/src/pages/Fleet.tsx` — expandable rows + `DiscoveredHostsPanel` component
+- `frontend/src/lib/api/fleet.ts` — `DiscoveredHost` interface, `listDiscoveredHosts`, `optInHost`
+
+### Original prompt
+> The agent should have an option to skip the IPs which we do not want to monitor.
+> The agent should not collect all the IPs. There should always be a check — ask
+> the user whether to Monitor the server or not.
+
+### Done-when test
+```bash
+# Start agent with ZENTRA_AGENT_ID set — after 10 min:
+curl -H "Authorization: Bearer <token>" \
+  http://10.88.11.162:5006/api/agents/<agent_id>/discovered
+# Returns array of hosts with opted_in/ignored fields
+
+# User opts in a host:
+curl -X PATCH -H "Authorization: Bearer <token>" \
+  -d '{"opted_in":true}' \
+  http://10.88.11.162:5006/api/agents/<agent_id>/discovered/<host_id>
+# Returns {"updated": true}
+```
+
+---
+
 ## Pending Work
 
 | ID | Feature | Status | Notes |
 |----|---------|--------|-------|
-| F4 | Agent target opt-in — user selects which discovered IPs to monitor | 🔲 Pending | Agent discovers IPs in its network, UI lets user opt-in per IP |
+| F4b | Auto-create target when user clicks Monitor (link opted_in → target creation) | 🔲 Nice-to-have | Currently user must still add via Add Server after opting in |
 | GCP | Deploy to GCP (34.61.5.197) | 🔲 User handles | SSH key auth only (no password). Same procedure as smarsh-nexus |
 | SAAS-06 | Automated Cloud Build pipeline | 🔲 Pending | git push → compile → deploy |
 
@@ -596,19 +680,21 @@ PASS: GET /api/targets                   → HTTP 200, 0 targets (clean state)
 | `crates/zentra-agent/src/remote_targets.rs` | Target fetch loop, Bearer fix |
 | `crates/zentra-agent/src/heartbeat.rs` | Heartbeat loop, Bearer fix |
 | `crates/zentra-agent/src/offline_buffer.rs` | Disk-based retry buffer |
+| `crates/zentra-agent/src/network_scan.rs` | TCP subnet scanner + host reporter (new file) |
+| `crates/zentra-core/src/config/mod.rs` | Added `agent_id` field + `ZENTRA_AGENT_ID` env var |
 | `plugins/server-plugin/src/lib.rs` | Removed sysinfo (was reading agent host) |
 
 ### Frontend (React + TypeScript)
 | File | Changes |
 |------|---------|
-| `frontend/src/pages/Fleet.tsx` | Agent list page |
+| `frontend/src/pages/Fleet.tsx` | Agent list page + expandable Discovered Hosts panel |
 | `frontend/src/pages/AgentInstallWizard.tsx` | 4-step install wizard |
 | `frontend/src/pages/AgentKeys.tsx` | Admin key management screen |
 | `frontend/src/pages/Billing.tsx` | Subscription / plan pages |
 | `frontend/src/components/AddTargetModal.tsx` | Agent dropdown, skip-SSH logic |
 | `frontend/src/components/Layout.tsx` | Fleet section, middleware static items, Agent Keys nav |
 | `frontend/src/App.tsx` | Lazy routes for all new pages |
-| `frontend/src/lib/api/fleet.ts` | listAgents, registerAgent, deregisterAgent, agent key CRUD |
+| `frontend/src/lib/api/fleet.ts` | listAgents, registerAgent, deregisterAgent, agent key CRUD, listDiscoveredHosts, optInHost |
 | `frontend/src/lib/api/targets.ts` | CreateTargetInput with agent_id |
 | `frontend/src/lib/api/billing.ts` | Billing API calls |
 
@@ -621,6 +707,7 @@ PASS: GET /api/targets                   → HTTP 200, 0 targets (clean state)
 | `000079_billing_stripe.sql` | Stripe billing tables |
 | `000080_otlp_api_keys_columns.sql` | Missing columns on otlp_api_keys |
 | `000081_targets_agent_id.sql` | agent_id FK on targets table |
+| `000082_discovered_hosts.sql` | Discovered hosts table for agent network scan |
 
 ### Infrastructure / DevOps
 | File | Purpose |
