@@ -1,4 +1,4 @@
-use axum::{Router, routing::{get, post, delete}};
+use axum::{Router, routing::{get, post, delete, put}};
 use crate::state::AppState;
 use crate::handlers;
 
@@ -8,6 +8,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/targets", get(handlers::targets::list_targets))
         .route("/api/targets", post(handlers::targets::create_target))
         .route("/api/targets/:id", get(handlers::targets::get_target))
+        .route("/api/targets/:id", put(handlers::targets::update_target))
         .route("/api/targets/:id", delete(handlers::targets::delete_target))
         .route("/api/targets/:id/test", post(handlers::targets::test_connection))
         .route("/api/targets/test-db-connection", post(handlers::targets::test_db_connection))

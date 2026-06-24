@@ -1,6 +1,6 @@
 use axum::{extract::{State, Path, Json}, http::StatusCode};
 use serde::{Deserialize, Serialize};
-use chrono::{Utc, Duration};
+use chrono::Utc;
 use parking_lot::RwLock;
 use std::sync::OnceLock;
 use crate::state::AppState;
@@ -91,6 +91,9 @@ pub async fn get_status(State(state): State<AppState>, Path(id): Path<String>) -
                     }
                 }
             }
+            let _ = sqlx::query(
+                "INSERT INTO middleware_metrics (instance_id, instance_type, metric_name, value, collected_at) VALUES ($1,'apache','busy_workers',$2,now()),($1,'apache','req_per_sec',$3,now())"
+            ).bind(&id).bind(s.busy_workers as f64).bind(s.req_per_sec).execute(&state.pool).await;
             Ok(Json(s))
         }
         Ok(resp) => {
@@ -104,46 +107,28 @@ pub async fn get_status(State(state): State<AppState>, Path(id): Path<String>) -
     }
 }
 
-pub async fn performance_history(State(state): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<ApacheHistoryPoint>>, ApiError> {
-    let inst = {
-        let insts = instances().read();
-        insts.iter().find(|i| i.id == id).cloned()
-            .ok_or(ApiError::from((StatusCode::NOT_FOUND, "Instance not found".into())))?
-    };
-    let url = format!("http://{}:{}/server-status?auto", inst.host, inst.port);
-    let (busy, idle, rps, bps) = match state.http_client
-        .get(&url).send().await
-    {
-        Ok(resp) if resp.status().is_success() => {
-            let body = resp.text().await.unwrap_or_default();
-            let mut b: u64 = 0; let mut i: u64 = 0; let mut r: f64 = 0.0; let mut bp: f64 = 0.0;
-            for line in body.lines() {
-                if let Some((k, v)) = line.split_once(':') {
-                    let k = k.trim(); let v = v.trim();
-                    match k {
-                        "BusyWorkers" => b = v.parse().unwrap_or(0),
-                        "IdleWorkers" => i = v.parse().unwrap_or(0),
-                        "ReqPerSec" => r = v.parse().unwrap_or(0.0),
-                        "BytesPerSec" => bp = v.parse().unwrap_or(0.0),
-                        _ => {}
-                    }
-                }
-            }
-            (b, i, r, bp)
-        }
-        _ => (0, 0, 0.0, 0.0),
-    };
-    let now = Utc::now();
-    let points: Vec<ApacheHistoryPoint> = (0..60).rev().map(|i| {
-        let ts = now - Duration::minutes(i);
-        let j = (i as f64 * 0.15).sin();
-        let v = 0.15;
+pub async fn performance_history(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<ApacheHistoryPoint>>, ApiError> {
+    if !instances().read().iter().any(|i| i.id == id) {
+        return Err(ApiError::from((StatusCode::NOT_FOUND, "Instance not found".into())));
+    }
+    let rows = sqlx::query(
+        r#"SELECT time_bucket('1 minute', collected_at) AS bucket,
+           avg(CASE WHEN metric_name = 'busy_workers' THEN value END) AS busy_workers,
+           avg(CASE WHEN metric_name = 'req_per_sec' THEN value END) AS req_per_sec
+           FROM middleware_metrics
+           WHERE instance_id = $1 AND instance_type = 'apache'
+             AND collected_at > now() - INTERVAL '1 hour'
+           GROUP BY bucket ORDER BY bucket"#
+    ).bind(&id).fetch_all(&s.pool).await.unwrap_or_default();
+    let points: Vec<ApacheHistoryPoint> = rows.iter().map(|r| {
+        use sqlx::Row;
+        let bucket: chrono::DateTime<Utc> = r.get("bucket");
         ApacheHistoryPoint {
-            timestamp: ts.to_rfc3339(),
-            busy_workers: (busy as f64 * (1.0 + j * v)).max(0.0) as u64,
-            idle_workers: (idle as f64 * (1.0 - j * 0.05)).max(0.0) as u64,
-            req_per_sec: (rps * (1.0 + j * v)).max(0.0),
-            bytes_per_sec: (bps * (1.0 + j * v)).max(0.0),
+            timestamp: bucket.to_rfc3339(),
+            busy_workers: r.get::<Option<f64>, _>("busy_workers").unwrap_or(0.0) as u64,
+            idle_workers: 0,
+            req_per_sec: r.get::<Option<f64>, _>("req_per_sec").unwrap_or(0.0),
+            bytes_per_sec: 0.0,
         }
     }).collect();
     Ok(Json(points))

@@ -1,4 +1,4 @@
-use axum::{extract::State, Json};
+use axum::{extract::{State, Path}, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -6,14 +6,123 @@ use crate::state::AppState;
 use crate::error::ApiError;
 use crate::tenant::OrgId;
 
-fn channel_store() -> &'static parking_lot::RwLock<Vec<Value>> {
-    static INSTANCE: std::sync::OnceLock<parking_lot::RwLock<Vec<Value>>> = std::sync::OnceLock::new();
-    INSTANCE.get_or_init(|| parking_lot::RwLock::new(Vec::new()))
+#[derive(Debug, Deserialize)]
+pub struct CreateChannelRequest {
+    pub name: String,
+    pub channel_type: String,
+    pub config: Value,
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateChannelRequest {
+    pub name: Option<String>,
+    pub config: Option<Value>,
+    pub enabled: Option<bool>,
 }
 
 /// GET /api/notifications/channels — list configured notification channels
-pub async fn list_channels() -> Json<Value> {
-    Json(Value::Array(channel_store().read().clone()))
+pub async fn list_channels(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+) -> Result<Json<Value>, ApiError> {
+    let rows = sqlx::query(
+        "SELECT channel_id, name, channel_type, config, enabled, created_at FROM notification_channels WHERE org_id = $1 ORDER BY name"
+    )
+    .bind(org_id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let channels: Vec<Value> = rows.iter().map(|r| {
+        use sqlx::Row;
+        json!({
+            "channel_id": r.get::<Uuid, _>("channel_id"),
+            "name": r.get::<String, _>("name"),
+            "channel_type": r.get::<String, _>("channel_type"),
+            "config": r.get::<Value, _>("config"),
+            "enabled": r.get::<bool, _>("enabled"),
+            "created_at": r.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
+        })
+    }).collect();
+
+    Ok(Json(Value::Array(channels)))
+}
+
+/// POST /api/notifications/channels — create a notification channel
+pub async fn create_channel(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    Json(req): Json<CreateChannelRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let id = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO notification_channels (channel_id, org_id, name, channel_type, config, enabled) VALUES ($1,$2,$3,$4,$5,$6)"
+    )
+    .bind(id)
+    .bind(org_id)
+    .bind(&req.name)
+    .bind(&req.channel_type)
+    .bind(&req.config)
+    .bind(req.enabled.unwrap_or(true))
+    .execute(&state.pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    Ok(Json(json!({ "channel_id": id, "name": req.name, "status": "created" })))
+}
+
+/// PUT /api/notifications/channels/:id — update a notification channel
+pub async fn update_channel(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    Path(channel_id): Path<Uuid>,
+    Json(req): Json<UpdateChannelRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let result = sqlx::query(
+        r#"UPDATE notification_channels SET
+           name    = COALESCE($1, name),
+           config  = COALESCE($2, config),
+           enabled = COALESCE($3, enabled),
+           updated_at = now()
+           WHERE channel_id = $4 AND org_id = $5"#
+    )
+    .bind(&req.name)
+    .bind(&req.config)
+    .bind(req.enabled)
+    .bind(channel_id)
+    .bind(org_id)
+    .execute(&state.pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound("Channel not found".into()));
+    }
+
+    Ok(Json(json!({ "channel_id": channel_id, "status": "updated" })))
+}
+
+/// DELETE /api/notifications/channels/:id — delete a notification channel
+pub async fn delete_channel(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    Path(channel_id): Path<Uuid>,
+) -> Result<axum::http::StatusCode, ApiError> {
+    let result = sqlx::query(
+        "DELETE FROM notification_channels WHERE channel_id = $1 AND org_id = $2"
+    )
+    .bind(channel_id)
+    .bind(org_id)
+    .execute(&state.pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound("Channel not found".into()));
+    }
+
+    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 /// POST /api/notifications/test — test a notification channel

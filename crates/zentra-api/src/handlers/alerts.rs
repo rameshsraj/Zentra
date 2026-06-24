@@ -177,6 +177,69 @@ pub async fn create_rule(
     Ok(Json(rule))
 }
 
+pub async fn update_rule(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    Path(id): Path<Uuid>,
+    Json(req): Json<serde_json::Value>,
+) -> Result<Json<AlertRule>, ApiError> {
+    let exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM alert_rules WHERE rule_id = $1 AND org_id = $2)"
+    )
+    .bind(id).bind(org_id)
+    .fetch_one(&state.pool).await
+    .unwrap_or(false);
+    if !exists {
+        return Err(ApiError::NotFound("Alert rule not found".into()));
+    }
+
+    sqlx::query(
+        r#"UPDATE alert_rules SET
+           name        = COALESCE($1, name),
+           description = COALESCE($2, description),
+           threshold   = COALESCE($3, threshold),
+           enabled     = COALESCE($4, enabled),
+           updated_at  = now()
+           WHERE rule_id = $5 AND org_id = $6"#
+    )
+    .bind(req.get("name").and_then(|v| v.as_str()))
+    .bind(req.get("description").and_then(|v| v.as_str()))
+    .bind(req.get("threshold").and_then(|v| v.as_f64()))
+    .bind(req.get("enabled").and_then(|v| v.as_bool()))
+    .bind(id)
+    .bind(org_id)
+    .execute(&state.pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let updated = zentra_db::repositories::alerts::get_alert_rule(&state.pool, id, org_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound("Alert rule not found after update".into()))?;
+
+    Ok(Json(updated))
+}
+
+pub async fn delete_rule(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    Path(id): Path<Uuid>,
+) -> Result<axum::http::StatusCode, ApiError> {
+    let result = sqlx::query(
+        "DELETE FROM alert_rules WHERE rule_id = $1 AND org_id = $2"
+    )
+    .bind(id).bind(org_id)
+    .execute(&state.pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound("Alert rule not found".into()));
+    }
+
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
 // ── Alert Silences ──
 
 pub async fn list_silences() -> Json<serde_json::Value> {

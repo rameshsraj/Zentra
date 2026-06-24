@@ -1,6 +1,6 @@
 use axum::{extract::{State, Path, Json}, http::StatusCode};
 use serde::{Deserialize, Serialize};
-use chrono::{Utc, Duration};
+use chrono::Utc;
 use parking_lot::RwLock;
 use std::sync::OnceLock;
 use crate::state::AppState;
@@ -35,57 +35,170 @@ pub fn live_instances() -> &'static RwLock<Vec<K8sInstance>> { instances() }
 
 pub async fn list_instances(State(_s): State<AppState>) -> Result<Json<Vec<K8sInstance>>, ApiError> { Ok(Json(instances().read().clone())) }
 
-pub async fn get_status(State(_s): State<AppState>, Path(id): Path<String>) -> Result<Json<K8sStatus>, ApiError> {
-    let insts = instances().read(); let _inst = insts.iter().find(|i| i.id == id).ok_or((StatusCode::NOT_FOUND, "Not found".into()))?;
-    return Ok(Json(K8sStatus {
-        node_count: 0, nodes_ready: 0, pod_count: 0, pods_running: 0, pods_pending: 0, pods_failed: 0,
-        deployment_count: 0, service_count: 0, namespace_count: 0,
-        cpu_requests_pct: 0.0, cpu_limits_pct: 0.0, mem_requests_pct: 0.0, mem_limits_pct: 0.0,
-        k8s_version: String::new(),
-    }));
+pub async fn get_status(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<K8sStatus>, ApiError> {
+    let inst = {
+        let insts = instances().read();
+        insts.iter().find(|i| i.id == id).cloned()
+            .ok_or(ApiError::from((StatusCode::NOT_FOUND, "Instance not found".into())))?
+    };
+    let empty = K8sStatus { node_count: 0, nodes_ready: 0, pod_count: 0, pods_running: 0, pods_pending: 0, pods_failed: 0, deployment_count: 0, service_count: 0, namespace_count: 0, cpu_requests_pct: 0.0, cpu_limits_pct: 0.0, mem_requests_pct: 0.0, mem_limits_pct: 0.0, k8s_version: String::new() };
+    // K8s API server (unauthenticated /version + /api/v1/nodes)
+    let version_url = format!("http://{}:{}/version", inst.host, inst.port);
+    let nodes_url   = format!("http://{}:{}/api/v1/nodes", inst.host, inst.port);
+    let pods_url    = format!("http://{}:{}/api/v1/pods", inst.host, inst.port);
+    let version = match s.http_client.get(&version_url).send().await {
+        Ok(r) if r.status().is_success() => r.json::<serde_json::Value>().await.ok()
+            .and_then(|v| v.get("gitVersion").and_then(|x| x.as_str()).map(|s| s.to_string()))
+            .unwrap_or_default(),
+        _ => String::new(),
+    };
+    let (node_count, nodes_ready) = match s.http_client.get(&nodes_url).send().await {
+        Ok(r) if r.status().is_success() => {
+            let v: serde_json::Value = r.json().await.unwrap_or_default();
+            let items = v.get("items").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+            let total = items.len() as u32;
+            let ready = items.iter().filter(|n| {
+                n.get("status").and_then(|s| s.get("conditions")).and_then(|c| c.as_array())
+                    .map(|conds| conds.iter().any(|c| c.get("type").and_then(|t| t.as_str()) == Some("Ready") && c.get("status").and_then(|s| s.as_str()) == Some("True")))
+                    .unwrap_or(false)
+            }).count() as u32;
+            (total, ready)
+        }
+        _ => (0, 0),
+    };
+    let (pod_count, pods_running, pods_pending, pods_failed) = match s.http_client.get(&pods_url).send().await {
+        Ok(r) if r.status().is_success() => {
+            let v: serde_json::Value = r.json().await.unwrap_or_default();
+            let items = v.get("items").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+            let total = items.len() as u32;
+            let running = items.iter().filter(|p| p.get("status").and_then(|s| s.get("phase")).and_then(|x| x.as_str()) == Some("Running")).count() as u32;
+            let pending = items.iter().filter(|p| p.get("status").and_then(|s| s.get("phase")).and_then(|x| x.as_str()) == Some("Pending")).count() as u32;
+            let failed  = items.iter().filter(|p| p.get("status").and_then(|s| s.get("phase")).and_then(|x| x.as_str()) == Some("Failed")).count() as u32;
+            (total, running, pending, failed)
+        }
+        _ => (0, 0, 0, 0),
+    };
+    let _ = sqlx::query(
+        "INSERT INTO middleware_metrics (instance_id, instance_type, metric_name, value, collected_at) VALUES ($1,'kubernetes','pods_running',$2,now())"
+    ).bind(&id).bind(pods_running as f64).execute(&s.pool).await;
+    Ok(Json(K8sStatus { node_count, nodes_ready, pod_count, pods_running, pods_pending, pods_failed, deployment_count: 0, service_count: 0, namespace_count: 0, cpu_requests_pct: 0.0, cpu_limits_pct: 0.0, mem_requests_pct: 0.0, mem_limits_pct: 0.0, k8s_version: version }))
 }
 
-pub async fn get_nodes(State(_s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<K8sNode>>, ApiError> {
-    let insts = instances().read(); let _inst = insts.iter().find(|i| i.id == id).ok_or((StatusCode::NOT_FOUND, "Not found".into()))?;
-    Ok(Json(vec![
-        K8sNode { name: "node-01".into(), status: "Ready".into(), role: "control-plane".into(), version: "v1.29.2".into(), os: "Ubuntu 22.04".into(), cpu_cores: 8, memory_gb: 32.0, pods: 12, cpu_pct: 45.2, memory_pct: 62.0 },
-        K8sNode { name: "node-02".into(), status: "Ready".into(), role: "worker".into(), version: "v1.29.2".into(), os: "Ubuntu 22.04".into(), cpu_cores: 16, memory_gb: 64.0, pods: 10, cpu_pct: 68.5, memory_pct: 55.0 },
-        K8sNode { name: "node-03".into(), status: "Ready".into(), role: "worker".into(), version: "v1.29.2".into(), os: "Ubuntu 22.04".into(), cpu_cores: 16, memory_gb: 64.0, pods: 8, cpu_pct: 52.3, memory_pct: 48.0 },
-        K8sNode { name: "node-04".into(), status: "Ready".into(), role: "worker".into(), version: "v1.29.2".into(), os: "Ubuntu 22.04".into(), cpu_cores: 16, memory_gb: 64.0, pods: 7, cpu_pct: 38.1, memory_pct: 42.0 },
-        K8sNode { name: "node-05".into(), status: "Ready".into(), role: "worker".into(), version: "v1.29.2".into(), os: "Ubuntu 22.04".into(), cpu_cores: 16, memory_gb: 64.0, pods: 5, cpu_pct: 25.4, memory_pct: 35.0 },
-    ]))
+pub async fn get_nodes(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<K8sNode>>, ApiError> {
+    let inst = {
+        let insts = instances().read();
+        insts.iter().find(|i| i.id == id).cloned()
+            .ok_or(ApiError::from((StatusCode::NOT_FOUND, "Instance not found".into())))?
+    };
+    let url = format!("http://{}:{}/api/v1/nodes", inst.host, inst.port);
+    match s.http_client.get(&url).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            let v: serde_json::Value = resp.json().await.unwrap_or_default();
+            let items = v.get("items").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+            let nodes = items.iter().map(|n| {
+                let meta    = n.get("metadata").cloned().unwrap_or_default();
+                let status  = n.get("status").cloned().unwrap_or_default();
+                let info    = status.get("nodeInfo").cloned().unwrap_or_default();
+                let name    = meta.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                let version = info.get("kubeletVersion").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                let os      = info.get("osImage").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                let ready   = status.get("conditions").and_then(|c| c.as_array())
+                    .map(|conds| conds.iter().any(|c| c.get("type").and_then(|t| t.as_str()) == Some("Ready") && c.get("status").and_then(|s| s.as_str()) == Some("True")))
+                    .unwrap_or(false);
+                K8sNode { name, status: if ready { "Ready".into() } else { "NotReady".into() }, role: String::new(), version, os, cpu_cores: 0, memory_gb: 0.0, pods: 0, cpu_pct: 0.0, memory_pct: 0.0 }
+            }).collect();
+            Ok(Json(nodes))
+        }
+        _ => Ok(Json(vec![]))
+    }
 }
 
-pub async fn get_pods(State(_s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<K8sPod>>, ApiError> {
-    let insts = instances().read(); let _inst = insts.iter().find(|i| i.id == id).ok_or((StatusCode::NOT_FOUND, "Not found".into()))?;
-    Ok(Json(vec![
-        K8sPod { name: "api-deploy-7b8c9-abc12".into(), namespace: "production".into(), status: "Running".into(), restarts: 0, age: "3d".into(), node: "node-02".into(), cpu_m: 250, memory_mi: 512, ready: "1/1".into() },
-        K8sPod { name: "api-deploy-7b8c9-def34".into(), namespace: "production".into(), status: "Running".into(), restarts: 1, age: "3d".into(), node: "node-03".into(), cpu_m: 280, memory_mi: 480, ready: "1/1".into() },
-        K8sPod { name: "web-deploy-4a5b6-ghi56".into(), namespace: "production".into(), status: "Running".into(), restarts: 0, age: "7d".into(), node: "node-02".into(), cpu_m: 100, memory_mi: 128, ready: "1/1".into() },
-        K8sPod { name: "worker-deploy-1c2d3-jkl78".into(), namespace: "production".into(), status: "Running".into(), restarts: 0, age: "5d".into(), node: "node-04".into(), cpu_m: 500, memory_mi: 1024, ready: "1/1".into() },
-        K8sPod { name: "postgres-sts-0".into(), namespace: "database".into(), status: "Running".into(), restarts: 0, age: "30d".into(), node: "node-03".into(), cpu_m: 1000, memory_mi: 4096, ready: "1/1".into() },
-        K8sPod { name: "redis-sts-0".into(), namespace: "cache".into(), status: "Running".into(), restarts: 0, age: "30d".into(), node: "node-04".into(), cpu_m: 200, memory_mi: 2048, ready: "1/1".into() },
-        K8sPod { name: "migration-job-xyz".into(), namespace: "production".into(), status: "Failed".into(), restarts: 3, age: "1d".into(), node: "node-05".into(), cpu_m: 100, memory_mi: 256, ready: "0/1".into() },
-        K8sPod { name: "pending-pod-abc".into(), namespace: "staging".into(), status: "Pending".into(), restarts: 0, age: "2h".into(), node: "".into(), cpu_m: 500, memory_mi: 1024, ready: "0/1".into() },
-    ]))
+pub async fn get_pods(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<K8sPod>>, ApiError> {
+    let inst = {
+        let insts = instances().read();
+        insts.iter().find(|i| i.id == id).cloned()
+            .ok_or(ApiError::from((StatusCode::NOT_FOUND, "Instance not found".into())))?
+    };
+    let url = format!("http://{}:{}/api/v1/pods", inst.host, inst.port);
+    match s.http_client.get(&url).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            let v: serde_json::Value = resp.json().await.unwrap_or_default();
+            let items = v.get("items").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+            let pods = items.iter().map(|p| {
+                let meta = p.get("metadata").cloned().unwrap_or_default();
+                let spec = p.get("spec").cloned().unwrap_or_default();
+                let status = p.get("status").cloned().unwrap_or_default();
+                let cs: Vec<serde_json::Value> = status.get("containerStatuses").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+                let restarts = cs.iter().map(|c| c.get("restartCount").and_then(|x| x.as_u64()).unwrap_or(0)).sum::<u64>() as u32;
+                K8sPod {
+                    name:      meta.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    namespace: meta.get("namespace").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    status:    status.get("phase").and_then(|x| x.as_str()).unwrap_or("Unknown").to_string(),
+                    restarts, age: String::new(),
+                    node:      spec.get("nodeName").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    cpu_m: 0, memory_mi: 0,
+                    ready: format!("{}/{}", cs.iter().filter(|c| c.get("ready").and_then(|x| x.as_bool()).unwrap_or(false)).count(), cs.len()),
+                }
+            }).collect();
+            Ok(Json(pods))
+        }
+        _ => Ok(Json(vec![]))
+    }
 }
 
-pub async fn get_deployments(State(_s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<K8sDeployment>>, ApiError> {
-    let insts = instances().read(); let _inst = insts.iter().find(|i| i.id == id).ok_or((StatusCode::NOT_FOUND, "Not found".into()))?;
-    Ok(Json(vec![
-        K8sDeployment { name: "api-deploy".into(), namespace: "production".into(), replicas: 3, ready: 3, updated: 3, available: 3, age: "30d".into(), image: "Zentra/api:v2.1".into() },
-        K8sDeployment { name: "web-deploy".into(), namespace: "production".into(), replicas: 2, ready: 2, updated: 2, available: 2, age: "30d".into(), image: "Zentra/web:v2.1".into() },
-        K8sDeployment { name: "worker-deploy".into(), namespace: "production".into(), replicas: 4, ready: 4, updated: 4, available: 4, age: "15d".into(), image: "Zentra/worker:v2.0".into() },
-        K8sDeployment { name: "grafana".into(), namespace: "monitoring".into(), replicas: 1, ready: 1, updated: 1, available: 1, age: "60d".into(), image: "grafana/grafana:10.3".into() },
-        K8sDeployment { name: "prometheus".into(), namespace: "monitoring".into(), replicas: 1, ready: 1, updated: 1, available: 1, age: "60d".into(), image: "prom/prometheus:v2.50".into() },
-    ]))
+pub async fn get_deployments(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<K8sDeployment>>, ApiError> {
+    let inst = {
+        let insts = instances().read();
+        insts.iter().find(|i| i.id == id).cloned()
+            .ok_or(ApiError::from((StatusCode::NOT_FOUND, "Instance not found".into())))?
+    };
+    let url = format!("http://{}:{}/apis/apps/v1/deployments", inst.host, inst.port);
+    match s.http_client.get(&url).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            let v: serde_json::Value = resp.json().await.unwrap_or_default();
+            let items = v.get("items").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+            let deployments = items.iter().map(|d| {
+                let meta   = d.get("metadata").cloned().unwrap_or_default();
+                let spec   = d.get("spec").cloned().unwrap_or_default();
+                let status = d.get("status").cloned().unwrap_or_default();
+                let containers: Vec<serde_json::Value> = spec.get("template").and_then(|t| t.get("spec")).and_then(|s| s.get("containers")).and_then(|c| c.as_array()).cloned().unwrap_or_default();
+                let image = containers.first().and_then(|c| c.get("image")).and_then(|x| x.as_str()).unwrap_or("").to_string();
+                K8sDeployment {
+                    name:      meta.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    namespace: meta.get("namespace").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    replicas:  spec.get("replicas").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
+                    ready:     status.get("readyReplicas").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
+                    updated:   status.get("updatedReplicas").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
+                    available: status.get("availableReplicas").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
+                    age: String::new(), image,
+                }
+            }).collect();
+            Ok(Json(deployments))
+        }
+        _ => Ok(Json(vec![]))
+    }
 }
 
-pub async fn performance_history(State(_s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<K8sHistoryPoint>>, ApiError> {
-    let insts = instances().read(); let _inst = insts.iter().find(|i| i.id == id).ok_or((StatusCode::NOT_FOUND, "Not found".into()))?;
-    let now = Utc::now();
-    let points: Vec<K8sHistoryPoint> = (0..60).rev().map(|i| { let j = (i as f64 * 0.1).sin();
-        K8sHistoryPoint { timestamp: (now - Duration::minutes(i)).to_rfc3339(), pods_running: (38.0 + j * 3.0) as u32, cpu_pct: 55.0 + j * 10.0, memory_pct: 50.0 + j * 8.0, pod_restarts: (j * 2.0).max(0.0) as u32 }
+pub async fn performance_history(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<K8sHistoryPoint>>, ApiError> {
+    if !instances().read().iter().any(|i| i.id == id) {
+        return Err(ApiError::from((StatusCode::NOT_FOUND, "Instance not found".into())));
+    }
+    let rows = sqlx::query(
+        r#"SELECT time_bucket('1 minute', collected_at) AS bucket,
+           avg(CASE WHEN metric_name = 'pods_running' THEN value END) AS pods_running
+           FROM middleware_metrics
+           WHERE instance_id = $1 AND instance_type = 'kubernetes'
+             AND collected_at > now() - INTERVAL '1 hour'
+           GROUP BY bucket ORDER BY bucket"#
+    ).bind(&id).fetch_all(&s.pool).await.unwrap_or_default();
+    let points: Vec<K8sHistoryPoint> = rows.iter().map(|r| {
+        use sqlx::Row;
+        let bucket: chrono::DateTime<Utc> = r.get("bucket");
+        K8sHistoryPoint {
+            timestamp: bucket.to_rfc3339(),
+            pods_running: r.get::<Option<f64>, _>("pods_running").unwrap_or(0.0) as u32,
+            cpu_pct: 0.0, memory_pct: 0.0, pod_restarts: 0,
+        }
     }).collect();
     Ok(Json(points))
 }

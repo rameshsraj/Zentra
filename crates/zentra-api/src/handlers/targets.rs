@@ -190,6 +190,58 @@ fn register_middleware_instance(target: &Target) {
     }
 }
 
+pub async fn update_target(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    Path(id): Path<Uuid>,
+    Json(req): Json<serde_json::Value>,
+) -> Result<Json<Target>, ApiError> {
+    // Verify the target belongs to this org
+    let existing = zentra_db::repositories::targets::get_target_scoped(&state.pool, id, org_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound("Target not found".into()))?;
+
+    let name = req.get("name").and_then(|v| v.as_str()).unwrap_or(&existing.name);
+    let description = req.get("description").and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or(existing.description.clone());
+    let environment = req.get("environment").and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| existing.environment.clone());
+    let check_interval = req.get("check_interval_seconds")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as i32)
+        .unwrap_or(existing.check_interval_seconds as i32);
+    let is_active = req.get("is_active")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(existing.is_active);
+
+    sqlx::query(
+        r#"UPDATE targets SET
+           name = $1, description = $2, environment = $3,
+           check_interval_seconds = $4, is_active = $5, updated_at = now()
+           WHERE target_id = $6 AND org_id = $7"#
+    )
+    .bind(name)
+    .bind(&description)
+    .bind(&environment)
+    .bind(check_interval)
+    .bind(is_active)
+    .bind(id)
+    .bind(org_id)
+    .execute(&state.pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let updated = zentra_db::repositories::targets::get_target_scoped(&state.pool, id, org_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::NotFound("Target not found after update".into()))?;
+
+    Ok(Json(updated))
+}
+
 pub async fn delete_target(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,

@@ -12,6 +12,8 @@ pub fn router() -> Router<AppState> {
         // Alert Rules
         .route("/api/alert-rules", get(handlers::alerts::list_rules))
         .route("/api/alert-rules", post(handlers::alerts::create_rule))
+        .route("/api/alert-rules/:id", put(handlers::alerts::update_rule))
+        .route("/api/alert-rules/:id", delete(handlers::alerts::delete_rule))
 
         // Alert Silences
         .route("/api/alerts/silences", get(handlers::alerts::list_silences))
@@ -40,6 +42,9 @@ pub fn router() -> Router<AppState> {
 
         // Notification Channels
         .route("/api/notifications/channels", get(handlers::notifications::list_channels))
+        .route("/api/notifications/channels", post(handlers::notifications::create_channel))
+        .route("/api/notifications/channels/:id", put(handlers::notifications::update_channel))
+        .route("/api/notifications/channels/:id", delete(handlers::notifications::delete_channel))
         .route("/api/notifications/test", post(handlers::notifications::test_channel))
         .route("/api/notifications/history", get(handlers::notifications::dispatch_history))
 
