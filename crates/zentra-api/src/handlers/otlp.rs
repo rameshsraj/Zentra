@@ -1560,10 +1560,10 @@ pub async fn otel_logs_by_trace(
     Path(trace_id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     let logs = sqlx::query(
-        r#"SELECT timestamp, source, level, message, metadata
+        r#"SELECT timestamp, source, severity AS level, message, parsed_fields AS metadata
            FROM logs
            WHERE org_id = $1
-             AND (metadata->>'trace_id' = $2 OR metadata->>'traceId' = $2)
+             AND (parsed_fields->>'trace_id' = $2 OR parsed_fields->>'traceId' = $2)
            ORDER BY timestamp ASC
            LIMIT 500"#
     )
@@ -1578,7 +1578,7 @@ pub async fn otel_logs_by_trace(
         json!({
             "timestamp": r.get::<DateTime<Utc>, _>("timestamp"),
             "source": r.get::<String, _>("source"),
-            "level": r.get::<String, _>("level"),
+            "level": r.get::<Option<String>, _>("level"),
             "message": r.get::<String, _>("message"),
             "metadata": r.get::<Value, _>("metadata"),
         })

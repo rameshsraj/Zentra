@@ -128,7 +128,7 @@ pub async fn metric_names(
     OrgId(org_id): OrgId,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let names = sqlx::query_scalar::<_, String>(
-        "SELECT DISTINCT metric_name FROM metrics WHERE org_id = $1 AND time > NOW() - INTERVAL '24 hours' ORDER BY metric_name LIMIT 1000"
+        "SELECT DISTINCT metric_name FROM metrics WHERE org_id = $1 AND timestamp > NOW() - INTERVAL '24 hours' ORDER BY metric_name LIMIT 1000"
     )
     .bind(org_id)
     .fetch_all(&state.tsdb_pool)
@@ -145,7 +145,7 @@ pub async fn metric_label_values(
     Query(params): Query<MetricLabelQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let label_keys = sqlx::query_scalar::<_, String>(
-        "SELECT DISTINCT jsonb_object_keys(labels) FROM metrics WHERE org_id = $1 AND metric_name = $2 AND time > NOW() - INTERVAL '24 hours' LIMIT 100"
+        "SELECT DISTINCT jsonb_object_keys(tags) FROM metrics WHERE org_id = $1 AND metric_name = $2 AND timestamp > NOW() - INTERVAL '24 hours' LIMIT 100"
     )
     .bind(org_id)
     .bind(&params.metric)
@@ -158,7 +158,7 @@ pub async fn metric_label_values(
     for key in &label_keys {
         let vals = sqlx::query_scalar::<_, String>(
             &format!(
-                "SELECT DISTINCT labels->>'{}' FROM metrics WHERE org_id = $1 AND metric_name = $2 AND time > NOW() - INTERVAL '24 hours' AND labels ? $3 LIMIT 50",
+                "SELECT DISTINCT tags->>'{}' FROM metrics WHERE org_id = $1 AND metric_name = $2 AND timestamp > NOW() - INTERVAL '24 hours' AND tags ? $3 LIMIT 50",
                 key
             )
         )

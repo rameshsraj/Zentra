@@ -95,8 +95,8 @@ pub async fn anomaly_stats(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let totals = sqlx::query_as::<_, (i64, i64, i64)>(
         "SELECT COUNT(*)::BIGINT,
-                SUM(CASE WHEN acknowledged THEN 1 ELSE 0 END)::BIGINT,
-                SUM(CASE WHEN false_positive THEN 1 ELSE 0 END)::BIGINT
+                COALESCE(SUM(CASE WHEN acknowledged THEN 1 ELSE 0 END), 0)::BIGINT,
+                COALESCE(SUM(CASE WHEN false_positive THEN 1 ELSE 0 END), 0)::BIGINT
          FROM anomaly_detections
          WHERE detected_at >= NOW() - INTERVAL '24 hours'",
     )

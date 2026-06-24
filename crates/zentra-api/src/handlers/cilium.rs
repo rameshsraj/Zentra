@@ -73,7 +73,7 @@ pub async fn cilium_status(
     OrgId(org_id): OrgId,
 ) -> Result<Json<CiliumStatusResponse>, ApiError> {
     let rows = sqlx::query_as::<_, CiliumTargetRow>(
-        r#"SELECT host, port, COALESCE(job_name, 'cilium') AS component, last_scraped_at
+        r#"SELECT host, port, COALESCE(job_name, 'cilium') AS component, NULL::TIMESTAMPTZ AS last_scraped_at
            FROM scrape_targets
            WHERE org_id = $1 AND job_name IN ('cilium-agent', 'cilium-hubble', 'cilium-operator')
            ORDER BY job_name"#

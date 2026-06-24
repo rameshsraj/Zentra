@@ -215,12 +215,12 @@ export default function NetworkPage() {
   const ppsDisplay = ppsVal > 1000 ? `${(ppsVal / 1000).toFixed(1)}K` : String(ppsVal)
 
   const kpis = [
-    { label: 'Inbound', value: inboundVal, icon: ArrowDownRight, color: 'text-blue-400', sparkData: spark(stats?.bps_in ?? 2400), drill: [] },
-    { label: 'Outbound', value: outboundVal, icon: ArrowUpRight, color: 'text-amber-400', sparkData: spark(stats?.bps_out ?? 1800), drill: [] },
-    { label: 'Packets/s', value: ppsDisplay, icon: Zap, color: 'text-purple-400', sparkData: spark(ppsVal || 142), drill: [] },
-    { label: 'Connections', value: String(stats?.active_connections ?? paginatedConns?.total ?? liveConnections.length), icon: Wifi, color: 'text-cyan-400', sparkData: spark(stats?.active_connections ?? 30), drill: [] },
-    { label: 'Hosts', value: String(stats?.unique_src_hosts ?? liveHosts.length), icon: Monitor, color: 'text-emerald-400', sparkData: spark(stats?.unique_src_hosts ?? 15), drill: [] },
-    { label: 'Blacklisted', value: String(bl), icon: Ban, color: bl > 0 ? 'text-red-400' : 'text-emerald-400', sparkData: spark(bl || 2), drill: [] },
+    { label: 'Inbound', value: inboundVal, icon: ArrowDownRight, color: 'text-blue-400', sparkData: spark(stats?.bps_in ?? 0), drill: [] },
+    { label: 'Outbound', value: outboundVal, icon: ArrowUpRight, color: 'text-amber-400', sparkData: spark(stats?.bps_out ?? 0), drill: [] },
+    { label: 'Packets/s', value: ppsDisplay, icon: Zap, color: 'text-purple-400', sparkData: spark(ppsVal), drill: [] },
+    { label: 'Connections', value: String(stats?.active_connections ?? paginatedConns?.total ?? liveConnections.length), icon: Wifi, color: 'text-cyan-400', sparkData: spark(stats?.active_connections ?? 0), drill: [] },
+    { label: 'Hosts', value: String(stats?.unique_src_hosts ?? liveHosts.length), icon: Monitor, color: 'text-emerald-400', sparkData: spark(stats?.unique_src_hosts ?? 0), drill: [] },
+    { label: 'Blacklisted', value: String(bl), icon: Ban, color: bl > 0 ? 'text-red-400' : 'text-emerald-400', sparkData: spark(bl), drill: [] },
   ]
 
   return (
