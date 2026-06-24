@@ -88,3 +88,31 @@ export function revokeAgentKey(keyId: string): Promise<{ revoked: boolean; id: s
 export function getOnboardingChecklist(): Promise<OnboardingChecklist> {
   return fetchJSON<OnboardingChecklist>('/onboarding/checklist')
 }
+
+export interface DiscoveredHost {
+  id: string
+  ip_address: string
+  hostname: string | null
+  open_ports: number[]
+  os_hint: string | null
+  first_seen: string
+  last_seen: string
+  opted_in: boolean
+  ignored: boolean
+  target_id: string | null
+}
+
+export function listDiscoveredHosts(agentId: string): Promise<DiscoveredHost[]> {
+  return fetchJSON<DiscoveredHost[]>(`/agents/${agentId}/discovered`)
+}
+
+export function optInHost(
+  agentId: string,
+  hostId: string,
+  body: { opted_in?: boolean; ignored?: boolean }
+): Promise<{ updated: boolean; id: string }> {
+  return fetchJSON<{ updated: boolean; id: string }>(
+    `/agents/${agentId}/discovered/${hostId}`,
+    { method: 'PATCH', body: JSON.stringify(body) }
+  )
+}

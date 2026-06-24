@@ -4,6 +4,7 @@ use zentra_agent::plugin_manager::create_plugin_for_target;
 use zentra_agent::remote_delivery::RemoteDeliveryService;
 use zentra_agent::heartbeat::HeartbeatLoop;
 use zentra_agent::remote_targets::RemoteTargetFetcher;
+use zentra_agent::network_scan::NetworkScanner;
 use zentra_core::models::metric::MetricBatch;
 use zentra_core::models::log_entry::LogBatch;
 use zentra_db::pool::create_pool;
@@ -242,6 +243,22 @@ async fn run_remote_mode(config: zentra_core::AppConfig) {
     tokio::spawn(async move {
         fetcher.run().await;
     });
+
+    // Network scanner — discovers hosts in local subnets, reports to server (10min interval)
+    if let Some(agent_id) = config.agent_id {
+        let scanner = NetworkScanner::new(
+            config.api_endpoint.clone(),
+            config.agent_api_key.clone(),
+            agent_id,
+            cancel.clone(),
+        );
+        tokio::spawn(async move {
+            scanner.run().await;
+        });
+        info!(agent_id = %agent_id, "Network scanner spawned");
+    } else {
+        tracing::warn!("ZENTRA_AGENT_ID not set — network host discovery disabled");
+    }
 
     // Wait for shutdown
     tokio::signal::ctrl_c().await.ok();

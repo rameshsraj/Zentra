@@ -20,6 +20,8 @@ pub struct AppConfig {
     pub dc_name: String,
     /// Offline buffer directory for remote mode
     pub buffer_dir: String,
+    /// Agent UUID (ZENTRA_AGENT_ID) — required for discovered-host reporting
+    pub agent_id: Option<uuid::Uuid>,
 }
 
 impl Default for AppConfig {
@@ -38,6 +40,7 @@ impl Default for AppConfig {
             agent_api_key: String::new(),
             dc_name: String::new(),
             buffer_dir: String::new(),
+            agent_id: None,
         }
     }
 }
@@ -104,6 +107,13 @@ impl AppConfig {
             config.dc_name = hostname::get()
                 .map(|h| h.to_string_lossy().to_string())
                 .unwrap_or_else(|_| "unknown".into());
+        }
+
+        // Agent UUID for discovered-host reporting
+        if let Ok(v) = std::env::var("ZENTRA_AGENT_ID") {
+            if let Ok(id) = v.parse() {
+                config.agent_id = Some(id);
+            }
         }
 
         // Buffer directory for offline batches in remote mode
