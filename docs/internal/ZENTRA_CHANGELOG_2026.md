@@ -730,87 +730,61 @@ curl -X PATCH -H "Authorization: Bearer <token>" \
 ### What was built
 
 1. **Agent Target Opt-In Feature**
-   - Agents now scan local subnets (TCP connect probes on 22, 80, 443, 8080, 3306, 5432, 6379, 9090, 27017),
-     perform reverse DNS lookups, and report discovered hosts to the server.
-   - Users can review discovered hosts in the Fleet UI, then opt-in a host (creates a monitored target)
-     or ignore it.
-   - New endpoints:
+   - Agents scan local subnets using TCP connect probes on common service ports, perform reverse DNS
+     lookups, and report discovered hosts to the server.
+   - Users can review discovered hosts in the Fleet UI and choose to opt-in a host (creating a monitored
+     target) or ignore it.
+   - New endpoints added:
      - `POST /api/agents/:id/discovered` — agent reports discovered hosts
      - `GET /api/agents/:id/discovered` — user lists discovered hosts
      - `PATCH /api/agents/:id/discovered/:host_id` — user opts-in or ignores a host
-   - `POST /api/agents/:id/discovered` was whitelisted in the auth middleware so it uses the agent
-     `Authorization: Bearer <isok_...>` API key instead of the user JWT.
+   - The agent reporting endpoint was whitelisted in the authentication middleware so it uses the agent
+     API key instead of the user session token.
 
 2. **Agent Fleet UI**
-   - Added `/fleet/keys` (admin-only) for managing `isok_` agent API keys.
+   - Added an admin-only page for managing agent API keys.
    - Added a **Discovered Hosts** tab to the Fleet page showing IP, hostname, OS hint, ports, and actions
      (Opt-in / Ignore).
-   - Agent API key operations: `GET /api/agent-keys`, `POST /api/agent-keys`, `DELETE /api/agent-keys/:key_id`.
+   - Agent API key management endpoints: `GET /api/agent-keys`, `POST /api/agent-keys`,
+     `DELETE /api/agent-keys/:key_id`.
 
 3. **Comprehensive API & Frontend Review**
-   - Enumerated **731 API endpoints** from `crates/zentra-api/src/routes/`.
-   - Created `scripts/smoke_test_all.py` to authenticate and call every GET endpoint, substituting
-     sentinel UUIDs for path parameters. It categorizes 2xx/4xx/5xx/501/empty responses and flags
-     real server errors.
-   - Scanned all frontend pages for mock/fake/hardcoded data and removed two concrete cases.
-   - Deployed and ran the smoke test on `smarsh-nexus`.
+   - Enumerated all API endpoints from the backend route definitions.
+   - Created a smoke test script that authenticates and calls every GET endpoint, substituting sentinel
+     UUIDs for path parameters. It categorizes responses by status code, flags real server errors, and
+     treats intentional "not implemented" responses as expected.
+   - Scanned all frontend pages for mock, fake, or hardcoded data and removed misleading fallback values.
+   - Deployed and ran the smoke test against the staging environment.
 
 ### Bugs fixed during the review
 
-| Endpoint | Error | Fix |
-|----------|-------|-----|
-| `POST /api/agents/:id/discovered` | 401 "invalid token" | Whitelisted path in `auth_middleware.rs` so agent key auth bypasses JWT |
-| `GET /api/admin/licenses/compliance` | 500 SQL decode error: `NUMERIC` → `f64` | Cast `SUM(total_cost)` to `::FLOAT8` |
-| `GET /api/anomalies/stats` | 500 unexpected NULL | `COALESCE(SUM(...), 0)` on empty table |
-| `GET /api/cloud/accounts/:id/metrics` | 500 "future release" | Added `ApiError::NotImplemented`; now returns **501** |
-| `GET /api/cilium/status` | 500 missing column `last_scraped_at` | Use `NULL::TIMESTAMPTZ` in query |
-| `GET /api/otel/alert-rules/evaluate` | 500 missing table `otel_alert_rules` | New migration `00083_otel_alert_rules.sql` |
-| `GET /api/otel/logs-by-trace/:trace_id` | 500 missing columns `level`/`metadata` | Use `severity AS level`, `parsed_fields AS metadata` |
-| `GET /api/query/metrics/names` | 500 missing columns `time`/`labels` | Use `timestamp`, `tags` in metrics table |
-| `GET /api/traces/:traceId` | 500 missing column `events` | Select `'[]'::jsonb AS events` |
+| Area | Symptom | Fix |
+|------|---------|-----|
+| Agent auth middleware | Agent reporting endpoint returned 401 | Whitelisted the path so agent API key auth bypasses user session middleware |
+| License compliance | 500 SQL decode error on cost aggregates | Cast numeric sums to the appropriate floating-point type |
+| Anomaly stats | 500 unexpected NULL on empty table | Wrapped aggregates with zero-default COALESCE |
+| Cloud metrics | 500 returned for unimplemented provider | Mapped to a proper 501 Not Implemented response |
+| Status query | 500 missing column reference | Replaced missing column with a NULL timestamp in the query |
+| Alert rules | 500 missing table | Added migration to create the missing alert rules table |
+| Log correlation | 500 missing columns in logs query | Aliased the correct severity and parsed-fields columns |
+| Metric metadata | 500 missing columns in metrics query | Used the correct timestamp and tags column names |
+| Trace detail | 500 missing events column | Provided an empty JSONB array for the events field |
 
 ### Frontend mock-data cleanup
 
-| File | Mock data removed | Now shows |
+| Area | Mock data removed | Now shows |
 |------|-------------------|-----------|
-| `frontend/src/pages/Dashboard.tsx` | Hardcoded 3 fake IPs (Port Scan, Brute Force, Data Exfil) and 4 hardcoded counts | Real `stats?.threats_detected` with link to Security page |
-| `frontend/src/pages/Network.tsx` | Fake sparkline fallback values (2400, 1800, 142, 30, 15, 2) | Zero or real data; no misleading flat lines |
+| Security dashboard | Hardcoded fake IPs and threat counts | Real threat stats with link to the full security page |
+| Network dashboard | Fake sparkline fallback values | Zero or real data; no misleading flat lines |
 
-### Files changed
-- `crates/zentra-api/src/auth_middleware.rs` — agent discovered whitelist
-- `crates/zentra-api/src/error.rs` — `NotImplemented` variant
-- `crates/zentra-api/src/handlers/anomaly.rs` — NULL-safe aggregates
-- `crates/zentra-api/src/handlers/cilium.rs` — missing column workaround
-- `crates/zentra-api/src/handlers/metrics.rs` — correct metric column names
-- `crates/zentra-api/src/handlers/otlp.rs` — correct log column names
-- `crates/zentra-api/src/handlers/traces.rs` — empty events stub
-- `crates/zentra-db/src/repositories/licenses.rs` — FLOAT8 cast
-- `frontend/src/pages/Dashboard.tsx` — remove mock threat data
-- `frontend/src/pages/Network.tsx` — remove fake sparkline fallbacks
-- `migrations/20250101000083_otel_alert_rules.sql` — new table
-- `scripts/smoke_test_all.py` — new comprehensive smoke test
-- `scripts/api_test_full.sh` — agent opt-in endpoint regression tests
-- `scripts/debug_discovered.sh` — isolated discovered-hosts debugging
+### Verification
 
-### Database Migrations
-| Migration | Feature |
-|-----------|---------|
-| `000082_discovered_hosts.sql` | Discovered hosts table for agent network scan |
-| `000083_otel_alert_rules.sql` | OTel-native alert rules table (review fix) |
+- Created a comprehensive API smoke test and a focused agent opt-in regression test.
+- Ran both against the deployed environment; all agent endpoints and the full GET smoke test passed with
+  zero server errors and only one intentional 501 response.
 
 ### Original prompt
 > "review the project code, and also, make sure that all the APIs and endpoints are tested, and it is not empty. also, None of the pages should have mock/fake data."
-
-### Done-when test
-```bash
-# 1. Agent endpoints
-ssh root@10.88.11.162 'bash /tmp/api_test_full.sh'
-# → ALL TESTS COMPLETE (auth, agents, heartbeat, discovered hosts, agent keys, targets)
-
-# 2. Full API smoke test
-ssh root@10.88.11.162 'python3 /tmp/smoke_test_all.py < /tmp/endpoints_clean.txt'
-# → OK: 316, SERVER 5xx: 0, Not Implemented 501: 1 (cloud metrics, intentional)
-```
 
 ---
 
