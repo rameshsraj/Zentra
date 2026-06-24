@@ -1,13 +1,20 @@
 # Development Prompt Log (May–June 2026)
 
 > Reusable functional prompts for each phase. File paths, product names, and infrastructure details have been removed so the prompts can be reused in other projects.
+> 
+> Each phase follows the same structure:
+> - **Goal** — what was built and why
+> - **Prompt** — the exact instruction that drove the work
+> - **Done-when test** — how to verify the result
 
 ---
 
 ## Phase 0 — Core Foundation
 ### *(Pre-May 2026)*
 
-The starting point was a working multi-tenant infrastructure monitoring platform:
+**Goal:** Establish the baseline platform.
+
+- Multi-tenant infrastructure monitoring platform
 - Rust backend API server
 - React frontend
 - PostgreSQL/TimescaleDB for time-series metrics, traces, and logs
@@ -19,7 +26,8 @@ The starting point was a working multi-tenant infrastructure monitoring platform
 ## Phase 1 — Licensing & Multi-Tenancy
 ### *(~May 25, 2026)*
 
-### What was built
+**Goal:** Add a signed, per-organization licensing layer with quota enforcement.
+
 - Full per-org licensing model with plan tiers (Starter/Professional/Enterprise).
 - License key generation and cryptographic signing.
 - Per-org quota enforcement: max targets, max users, max dashboards.
@@ -28,10 +36,10 @@ The starting point was a working multi-tenant infrastructure monitoring platform
 - Trial period of 365 days (extended from 30 days).
 - License key format: base64-encoded signed payload, verified by the API on every request.
 
-### Original prompt
-> "Add a licensing model. Admins should only be able to use the platform if they have a valid license. Each org has a plan tier. License is signed and verified. Trial period should be 365 days. Do not break any existing functionality."
+**Prompt:**
+> Add a licensing model. Admins should only be able to use the platform if they have a valid license. Each org has a plan tier. License is signed and verified. Trial period should be 365 days. Do not break any existing functionality.
 
-### Done-when test
+**Done-when test:**
 - Login returns a JWT and the license is accepted.
 - Creating resources beyond the plan quota returns a payment-required error.
 
@@ -40,7 +48,8 @@ The starting point was a working multi-tenant infrastructure monitoring platform
 ## Phase 2 — OpenTelemetry Ingest Pipeline
 ### *(~May 30 – June 3, 2026)*
 
-### What was built
+**Goal:** Build a full OTLP ingest pipeline and fix a target-association bug.
+
 - Full OTLP JSON ingest pipeline (metrics, logs, traces, profiles).
 - `POST /otlp/v1/metrics`, `/otlp/v1/logs`, `/otlp/v1/traces`.
 - API key authentication with hashed keys stored in the database.
@@ -49,18 +58,17 @@ The starting point was a working multi-tenant infrastructure monitoring platform
 - Dead-letter queue for failed ingestion.
 - TimescaleDB compression for metrics and traces hypertables.
 - RED metrics materialized view (Rate, Error, Duration).
-- LLM GenAI spans support.
-- Profiles support.
-- Trace aggregates view.
+- LLM GenAI spans support, profiles support, trace aggregates view.
 
-### Key fix
-**Bug: `target_id` was NULL in all ingested metrics.**
-Root cause: the ingest queue was not extracting the target identifier from the OTLP resource attributes. Fixed to parse resource attributes and set `target_id` on every stored metric point.
+**Key fix:**
+- Bug: `target_id` was NULL in all ingested metrics.
+- Root cause: the ingest queue was not extracting the target identifier from the OTLP resource attributes.
+- Fix: parse resource attributes and set `target_id` on every stored metric point.
 
-### Original prompt
-> "The OTLP ingest endpoint exists but target_id is always null in the stored metrics. The agent sends the target identifier as a resource attribute. Fix the ingest queue to extract it correctly."
+**Prompt:**
+> The OTLP ingest endpoint exists but target_id is always null in the stored metrics. The agent sends the target identifier as a resource attribute. Fix the ingest queue to extract it correctly.
 
-### Done-when test
+**Done-when test:**
 ```sql
 SELECT DISTINCT target_id FROM metrics_raw LIMIT 5;
 -- Must return actual UUIDs, not NULLs
@@ -71,10 +79,12 @@ SELECT DISTINCT target_id FROM metrics_raw LIMIT 5;
 ## Phase 3 — SaaS Agent Architecture
 ### *(June 3 – June 13, 2026)*
 
-### What was built
-Converted the agent from a process requiring a direct database connection into a fully standalone remote agent that can run in any customer datacenter.
+**Goal:** Convert the agent from a local DB-connected process into a standalone remote agent that can run in any customer datacenter.
 
-**Fleet Management API (server-side):**
+### 3.1 Fleet Management API
+
+**Goal:** Provide server-side endpoints for agent registration, heartbeat, target fetching, and deregistration.
+
 - `agent_fleet` table: agent_id, org_id, api_key_hash, datacenter_name, agent_version, active_target_count, last_seen, ip_address, os_name, status.
 - `POST /api/agents/register` — creates agent and API key in one transaction.
 - `POST /api/agents/heartbeat` — agent pings every 30 seconds, updates last_seen.
@@ -83,7 +93,15 @@ Converted the agent from a process requiring a direct database connection into a
 - `DELETE /api/agents/:id` — deregisters agent, disables its key.
 - Background job: sweeps agent fleet every 60s, marks agents stale (>5 min) or offline (>15 min).
 
-**Remote Agent — datacenter-to-cloud data collection:**
+**Prompt:**
+> Build the four server-side API endpoints that the remote agent depends on: register, heartbeat, targets, list, and deregister. Add a background sweep for stale/offline status.
+
+---
+
+### 3.2 Remote Agent — Datacenter-to-Cloud Collection
+
+**Goal:** Enable the agent to collect from targets without direct database access and push data over HTTPS with offline resilience.
+
 - Two modes: `local` (direct DB connection) and `remote` (no DB, pushes over HTTPS).
 - Remote mode components:
   - Config: agent mode, API endpoint, agent API key, datacenter name.
@@ -94,14 +112,30 @@ Converted the agent from a process requiring a direct database connection into a
   - Graceful shutdown.
 - All collection plugins remain unchanged; only the delivery mechanism changed.
 
-**Tenant Self-Service Onboarding:**
+**Prompt:**
+> Convert the agent from a process that requires a direct database connection into a standalone binary that runs inside a customer's datacenter, collects infrastructure metrics from every monitored system, and pushes that data to the server over HTTPS — with no database access required and full offline resilience. All plugin code stays the same.
+
+---
+
+### 3.3 Tenant Self-Service Onboarding
+
+**Goal:** Allow new customers to sign up without manual intervention.
+
 - `POST /api/signup` — public endpoint, creates org + admin user + first agent key in one transaction.
 - Email verification token and confirmation endpoint.
 - Onboarding checklist endpoint (agent registered, target added, metric received, dashboard viewed).
 - Quota enforcement on all create operations returning HTTP 402 with plan info.
 - Rate limit: 5 signup attempts per IP per hour.
 
-**Agent Install Wizard (frontend):**
+**Prompt:**
+> A new customer must be able to sign up on their own with no manual intervention. Create org, admin user, and first agent API key in one transaction. Quota enforcement on all create operations returning HTTP 402.
+
+---
+
+### 3.4 Agent Install Wizard
+
+**Goal:** Build a guided frontend flow for installing the remote agent.
+
 - New Fleet section in the sidebar.
 - Fleet page listing all agents with status, last seen, version, target count, and IP.
 - 4-step install wizard:
@@ -111,7 +145,15 @@ Converted the agent from a process requiring a direct database connection into a
   4. Show discovered targets.
 - Onboarding checklist widget on the command center dashboard.
 
-**Billing and Stripe Integration:**
+**Prompt:**
+> Build a 4-step install wizard. Step 1: register datacenter, show key with copy button. Step 2: Linux/Windows install command pre-filled with env vars. Step 3: poll for agent connection, spinner → checkmark. Step 4: show discovered targets. Also build the Fleet page listing all agents.
+
+---
+
+### 3.5 Billing and Stripe Integration
+
+**Goal:** Replace the binary license key model with Stripe subscriptions.
+
 - Stripe subscription model: Starter / Professional / Enterprise.
 - `GET /api/billing/subscription` — plan name, status, period end, feature flags.
 - `POST /api/billing/checkout` — creates Stripe Checkout session.
@@ -121,23 +163,16 @@ Converted the agent from a process requiring a direct database connection into a
 - Access control based on subscription status: active/trialling = full, past_due = grace then read-only, cancelled = login/export only.
 - Removed old binary license-key enforcement.
 
-### Original prompts
-> "Build the four server-side API endpoints that the remote agent depends on: register, heartbeat, targets, list, and deregister. Add a background sweep for stale/offline status."
-
-> "Convert the agent from a process that requires a direct database connection into a standalone binary that runs inside a customer's datacenter, collects infrastructure metrics from every monitored system, and pushes that data to the server over HTTPS — with no database access required and full offline resilience. All plugin code stays the same."
-
-> "A new customer must be able to sign up on their own with no manual intervention. Create org, admin user, and first agent API key in one transaction. Quota enforcement on all create operations returning HTTP 402."
-
-> "Build a 4-step install wizard. Step 1: register datacenter, show key with copy button. Step 2: Linux/Windows install command pre-filled with env vars. Step 3: poll for agent connection, spinner → checkmark. Step 4: show discovered targets. Also build the Fleet page listing all agents."
-
-> "Replace the current binary license key model with Stripe subscriptions. Stripe webhook handles checkout, payment success, payment failure, and cancellation. Access control based on subscription status. No secrets in the codebase."
+**Prompt:**
+> Replace the current binary license key model with Stripe subscriptions. Stripe webhook handles checkout, payment success, payment failure, and cancellation. Access control based on subscription status. No secrets in the codebase.
 
 ---
 
 ## Phase 4 — Docker Local Lab
 ### *(June 18 – June 22, 2026)*
 
-### What was built
+**Goal:** Provide a complete Docker Compose simulation lab that mirrors production.
+
 - Complete local simulation lab via Docker Compose:
   - API server container with full API and database.
   - Agent container running in remote mode, simulating a datacenter.
@@ -150,56 +185,55 @@ Converted the agent from a process requiring a direct database connection into a
 - Operations runbook.
 - Fixed: supervisord env var injection, secrets persistence across container restarts, conflicting nginx default server, initdb failure with mounted data directory, and agent tarball packaging.
 
-### Original prompt
-> "Build a complete local simulation lab using Docker Compose. The agent should run in a separate container in remote mode pointing at the API server container. Include simulated Linux targets the agent can SSH into. Include PowerShell and bash launchers. The setup should match production as closely as possible."
+**Prompt:**
+> Build a complete local simulation lab using Docker Compose. The agent should run in a separate container in remote mode pointing at the API server container. Include simulated Linux targets the agent can SSH into. Include PowerShell and bash launchers. The setup should match production as closely as possible.
 
 ---
 
 ## Phase 5 — Agent Data Collection Fixes
 ### *(June 23, 2026)*
 
-### Bug 1: Agent collecting agent-host metrics instead of target metrics
+**Goal:** Fix two agent authentication and collection bugs.
 
-**Symptom:** All targets showed identical CPU, memory, and disk values that matched the agent's own container.
+### 5.1 Agent collecting agent-host metrics instead of target metrics
 
-**Root cause:** The server plugin used a system-info crate that reads from the local `/proc` filesystem — the agent's own `/proc`, not the remote target's.
+- **Symptom:** All targets showed identical CPU, memory, and disk values that matched the agent's own container.
+- **Root cause:** The server plugin used a system-info crate that reads from the local `/proc` filesystem — the agent's own `/proc`, not the remote target's.
+- **Fix:** Removed the system-info block. The correct collection path is the SSH-based deep collector that runs a collector script remotely on each target.
 
-**Fix:** Removed the system-info block. The correct collection path is the SSH-based deep collector that runs a collector script remotely on each target.
+**Prompt:**
+> The agent is showing 0 for all values. Is it really collecting or just pinging? I'm seeing 0% CPU, 0 memory for all targets. The agent should work like the main server. Look into what it is actually capturing.
 
-### Original prompt
-> "The agent is showing 0 for all values. Is it really collecting or just pinging? I'm seeing 0% CPU, 0 memory for all targets. The agent should work like the main server. Look into what it is actually capturing."
+---
 
-### Bug 2: Auth header mismatch
+### 5.2 Auth header mismatch
 
-**Symptom:** Agent requests to the server were silently rejected with 401.
+- **Symptom:** Agent requests to the server were silently rejected with 401.
+- **Root cause:** The agent used a custom header for its API key while the server expected `Authorization: Bearer`.
+- **Fix:** Updated both agent and server to use `Authorization: Bearer` consistently across all agent endpoints.
 
-**Root cause:** The agent used a custom header for its API key while the server expected `Authorization: Bearer`.
-
-**Fix:** Updated both agent and server to use `Authorization: Bearer` consistently across all agent endpoints.
-
-### Original prompt
-> "Fix agent headers: the agent is using a custom header but it should be Authorization: Bearer everywhere, matching the OTLP endpoints."
+**Prompt:**
+> Fix agent headers: the agent is using a custom header but it should be Authorization: Bearer everywhere, matching the OTLP endpoints.
 
 ---
 
 ## Phase 6 — Middleware Sidebar Static Menu
 ### *(June 23, 2026)*
 
-### What was built
-**Problem:** The Middleware section in the sidebar only showed items when the API returned data. If no middleware targets were registered, the menu collapsed to nothing.
+**Goal:** Make middleware navigation items always visible, regardless of registered targets.
 
-**Fix:** Made all middleware sub-items static and always visible: Nginx, Apache, Elasticsearch, HAProxy, Tomcat, PHP-FPM, RabbitMQ, Kafka, Memcached. Each item links to the filtered middleware page regardless of whether targets exist.
+- Problem: The Middleware section in the sidebar only showed items when the API returned data. If no middleware targets were registered, the menu collapsed to nothing.
+- Fix: Made all middleware sub-items static and always visible: Nginx, Apache, Elasticsearch, HAProxy, Tomcat, PHP-FPM, RabbitMQ, Kafka, Memcached. Each item links to the filtered middleware page regardless of whether targets exist.
 
-### Original prompt
-> "Under Middleware, enable the menu items other than the dashboard. I am not seeing nginx, httpd and one more. Do not make it dynamic."
+**Prompt:**
+> Under Middleware, enable the menu items other than the dashboard. I am not seeing nginx, httpd and one more. Do not make it dynamic.
 
 ---
 
 ## Phase 7 — Agent Key Management Screen
 ### *(June 23, 2026)*
 
-### What was built
-A new admin-only screen for managing agent API keys.
+**Goal:** Add an admin-only screen for managing agent API keys.
 
 **Backend:**
 - `GET /api/agent-keys` — lists all agent keys for the org.
@@ -213,74 +247,64 @@ A new admin-only screen for managing agent API keys.
 - Revoke button per row with confirmation.
 - Empty state with create call-to-action.
 
-### Original prompt
-> "The Administrator of the particular Org should be able to create the agent key. There should be a screen, accessible only by the Admin of that Org, like the Command Center. The admin creates keys, sees them listed, and can revoke them."
+**Prompt:**
+> The Administrator of the particular Org should be able to create the agent key. There should be a screen, accessible only by the Admin of that Org, like the Command Center. The admin creates keys, sees them listed, and can revoke them.
 
 ---
 
 ## Phase 8 — Agent-Aware Add Server
 ### *(June 24, 2026)*
 
-### What was built
-Previously, adding any server target always triggered SSH verification — even for servers in a datacenter already covered by a running agent. The agent can reach those servers directly, so SSH verification from the cloud API server is irrelevant and often impossible.
+**Goal:** Allow servers to be added via an agent without requiring SSH verification from the cloud API.
 
-**Database:**
+- Previously, adding any server target always triggered SSH verification — even for servers in a datacenter already covered by a running agent. The agent can reach those servers directly, so SSH verification from the cloud API server is irrelevant and often impossible.
 - Added `agent_id` foreign key to the `targets` table.
-
-**Backend:**
 - `Target` model and `CreateTargetRequest` include optional `agent_id`.
 - `insert_target` stores the selected agent ID.
 - `create_target` handler reads `agent_id` from the request.
-
-**Frontend:**
-- When target type is Server, show a "Monitored via Agent" dropdown.
-- Dropdown auto-populates from active and stale agents.
-- Each option shows datacenter name, region, and IP address.
-- When an agent is selected, SSH verification is skipped entirely; the button becomes "Create & Discover".
+- Frontend: when target type is Server, show a "Monitored via Agent" dropdown auto-populated from active and stale agents.
+- When an agent is selected, SSH verification is skipped; the button becomes "Create & Discover".
 - When no agent is selected, SSH verification is required as before.
 - Selected `agent_id` is sent in the create-target API call.
 
-### Original prompt
-> "When there is connection via the Agent, we should be aware of the agent name. In the Add Server screen, there should be an AgentName dropdown (auto-populated). If an agent is selected, skip the SSH validation. If the application is in a datacenter without an Agent, SSH validation is required."
+**Prompt:**
+> When there is connection via the Agent, we should be aware of the agent name. In the Add Server screen, there should be an AgentName dropdown (auto-populated). If an agent is selected, skip the SSH validation. If the application is in a datacenter without an Agent, SSH validation is required.
 
 ---
 
 ## Phase 9 — Agent Network Discovery + User Opt-In
 ### *(June 24, 2026)*
 
-### What was built
-The agent scans its local subnet every 10 minutes, discovers reachable hosts via TCP port probing, and reports them to the server. Users see the discovered hosts in the Fleet page and choose which ones to monitor — the agent never automatically starts collecting from an undecided host.
+**Goal:** Let agents discover local hosts and let users decide which ones to monitor.
 
-**Database:**
+- The agent scans its local subnet every 10 minutes, discovers reachable hosts via TCP port probing, and reports them to the server.
+- Users see the discovered hosts in the Fleet page and choose which ones to monitor — the agent never automatically starts collecting from an undecided host.
 - `discovered_hosts` table: agent_id, org_id, ip_address, hostname, open_ports, os_hint, first_seen, last_seen, opted_in, ignored, target_id.
 - Unique constraint on (agent_id, ip_address) — upserted on each scan.
+- New endpoints:
+  - `POST /api/agents/:id/discovered` — agent-authenticated, bulk-upserts discovered hosts.
+  - `GET /api/agents/:id/discovered` — user session, returns all discovered hosts.
+  - `PATCH /api/agents/:id/discovered/:host_id` — user session, sets opted_in and/or ignored on a single host.
+- Agent scanner:
+  - Detects local /24 subnets from system network info.
+  - TCP-probes each host on common service ports with a short timeout, all hosts probed concurrently.
+  - Infers OS hint from open ports (e.g., SSH → Linux, RDP/SMB → Windows).
+  - Attempts reverse DNS lookup with a best-effort timeout.
+  - Reports live hosts to the server every 10 minutes.
+  - Requires an agent ID environment variable; silently skipped if not set.
+- Frontend:
+  - Each agent row is expandable.
+  - Expanding reveals a Discovered Hosts panel with summary bar (new / monitored / ignored).
+  - Host table: IP, hostname, OS, open ports, last seen, status.
+  - Monitor / Ignore / Remove / Unignore actions.
+  - Show/hide ignored toggle.
+  - Empty state explains that scans run every 10 minutes.
+  - Auto-refreshes every 60 seconds.
 
-**Backend (3 new endpoints):**
-- `POST /api/agents/:id/discovered` — agent-authenticated, bulk-upserts discovered hosts.
-- `GET /api/agents/:id/discovered` — user session, returns all discovered hosts.
-- `PATCH /api/agents/:id/discovered/:host_id` — user session, sets opted_in and/or ignored on a single host.
+**Prompt:**
+> The agent should have an option to skip the IPs which we do not want to monitor. The agent should not collect all the IPs. There should always be a check — ask the user whether to Monitor the server or not.
 
-**Agent scanner:**
-- Detects local /24 subnets from system network info.
-- TCP-probes each host on common service ports with a short timeout, all hosts probed concurrently.
-- Infers OS hint from open ports (e.g., SSH → Linux, RDP/SMB → Windows).
-- Attempts reverse DNS lookup with a best-effort timeout.
-- Reports live hosts to the server every 10 minutes.
-- Requires an agent ID environment variable; silently skipped if not set.
-
-**Frontend:**
-- Each agent row is expandable.
-- Expanding reveals a Discovered Hosts panel with summary bar (new / monitored / ignored).
-- Host table: IP, hostname, OS, open ports, last seen, status.
-- Monitor / Ignore / Remove / Unignore actions.
-- Show/hide ignored toggle.
-- Empty state explains that scans run every 10 minutes.
-- Auto-refreshes every 60 seconds.
-
-### Original prompt
-> "The agent should have an option to skip the IPs which we do not want to monitor. The agent should not collect all the IPs. There should always be a check — ask the user whether to Monitor the server or not."
-
-### Done-when test
+**Done-when test:**
 ```bash
 # After the agent runs with its agent ID set for ~10 minutes:
 curl -H "Authorization: Bearer <token>" \
@@ -299,26 +323,31 @@ curl -X PATCH -H "Authorization: Bearer <token>" \
 ## Phase 10 — Production Readiness Review
 ### *(June 24, 2026)*
 
-### What was built
-1. **Agent Target Opt-In Feature**
-   - Agents scan local subnets using TCP connect probes on common service ports, perform reverse DNS lookups, and report discovered hosts to the server.
-   - Users can review discovered hosts in the Fleet UI and choose to opt-in a host (creating a monitored target) or ignore it.
-   - New endpoints added:
-     - `POST /api/agents/:id/discovered` — agent reports discovered hosts
-     - `GET /api/agents/:id/discovered` — user lists discovered hosts
-     - `PATCH /api/agents/:id/discovered/:host_id` — user opts-in or ignores a host
-   - The agent reporting endpoint was whitelisted in the authentication middleware so it uses the agent API key instead of the user session token.
+**Goal:** Review the entire project, ensure every API endpoint is tested and non-empty, and remove all mock/fake data from the frontend.
 
-2. **Agent Fleet UI**
-   - Added an admin-only page for managing agent API keys.
-   - Added a **Discovered Hosts** tab to the Fleet page showing IP, hostname, OS hint, ports, and actions (Opt-in / Ignore).
-   - Agent API key management endpoints: `GET /api/agent-keys`, `POST /api/agent-keys`, `DELETE /api/agent-keys/:key_id`.
+### 10.1 Agent Target Opt-In
 
-3. **Comprehensive API & Frontend Review**
-   - Enumerated all API endpoints from the backend route definitions.
-   - Created a smoke test script that authenticates and calls every GET endpoint, substituting sentinel UUIDs for path parameters. It categorizes responses by status code, flags real server errors, and treats intentional "not implemented" responses as expected.
-   - Scanned all frontend pages for mock, fake, or hardcoded data and removed misleading fallback values.
-   - Deployed and ran the smoke test against the staging environment.
+- Agents scan local subnets using TCP connect probes on common service ports, perform reverse DNS lookups, and report discovered hosts to the server.
+- Users can review discovered hosts in the Fleet UI and choose to opt-in a host (creating a monitored target) or ignore it.
+- New endpoints:
+  - `POST /api/agents/:id/discovered` — agent reports discovered hosts.
+  - `GET /api/agents/:id/discovered` — user lists discovered hosts.
+  - `PATCH /api/agents/:id/discovered/:host_id` — user opts-in or ignores a host.
+- The agent reporting endpoint was whitelisted in the authentication middleware so it uses the agent API key instead of the user session token.
+
+### 10.2 Agent Fleet UI
+
+- Added an admin-only page for managing agent API keys.
+- Added a **Discovered Hosts** tab to the Fleet page showing IP, hostname, OS hint, ports, and actions (Opt-in / Ignore).
+- Agent API key management endpoints: `GET /api/agent-keys`, `POST /api/agent-keys`, `DELETE /api/agent-keys/:key_id`.
+
+### 10.3 Comprehensive API & Frontend Review
+
+- Enumerated all API endpoints from the backend route definitions.
+- Created a smoke test script that authenticates and calls every GET endpoint, substituting sentinel UUIDs for path parameters.
+- Categorizes responses by status code, flags real server errors, and treats intentional "not implemented" responses as expected.
+- Scanned all frontend pages for mock, fake, or hardcoded data and removed misleading fallback values.
+- Deployed and ran the smoke test against the staging environment.
 
 ### Bugs fixed during the review
 
@@ -346,7 +375,7 @@ curl -X PATCH -H "Authorization: Bearer <token>" \
 - Created a comprehensive API smoke test and a focused agent opt-in regression test.
 - Ran both against the deployed environment; all agent endpoints and the full GET smoke test passed with zero server errors and only one intentional 501 response.
 
-### Original prompt
-> "review the project code, and also, make sure that all the APIs and endpoints are tested, and it is not empty. also, None of the pages should have mock/fake data."
+**Prompt:**
+> Review the project code, and also, make sure that all the APIs and endpoints are tested, and it is not empty. Also, none of the pages should have mock/fake data.
 
 ---
