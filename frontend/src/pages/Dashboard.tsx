@@ -294,10 +294,30 @@ export default function DashboardPage() {
                   </h3>
                   <div className="grid grid-cols-2 gap-4">
                     {[
-                      { name: 'CPU Usage', value: '64%', sparkD: spark(64, 20), color: '#3b82f6' },
-                      { name: 'Memory', value: '71%', sparkD: spark(71, 15), color: '#8b5cf6' },
-                      { name: 'Disk I/O', value: '2.4K IOPS', sparkD: spark(2400, 800), color: '#f59e0b' },
-                      { name: 'Network', value: '4.2 Gbps', sparkD: spark(4200, 1000), color: '#22c55e' },
+                      {
+                        name: 'Healthy Targets',
+                        value: totalTargets > 0 ? `${Math.round((healthyTargets / totalTargets) * 100)}%` : '—',
+                        sparkD: spark(totalTargets > 0 ? Math.round((healthyTargets / totalTargets) * 100) : 0),
+                        color: '#22c55e',
+                      },
+                      {
+                        name: 'Active Alerts',
+                        value: hasAnyAlerts ? String(activeAlerts.length) : '—',
+                        sparkD: spark(activeAlerts.length),
+                        color: activeAlerts.length > 0 ? '#ef4444' : '#22c55e',
+                      },
+                      {
+                        name: 'Metrics/min',
+                        value: stats?.metrics_collected ? `${(stats.metrics_collected / 60).toFixed(0)}` : '—',
+                        sparkD: spark(stats?.metrics_collected ? Math.round(stats.metrics_collected / 60) : 0),
+                        color: '#3b82f6',
+                      },
+                      {
+                        name: 'Anomalies',
+                        value: hasAnyAi ? String(predSummary?.active_anomalies ?? 0) : '—',
+                        sparkD: spark(predSummary?.active_anomalies ?? 0),
+                        color: (predSummary?.active_anomalies ?? 0) > 0 ? '#f59e0b' : '#22c55e',
+                      },
                     ].map((m) => (
                       <div key={m.name} className="flex items-center gap-3">
                         <div className="flex-1">

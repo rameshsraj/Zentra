@@ -201,8 +201,9 @@ pub async fn get_config(State(_s): State<AppState>, Path(id): Path<String>) -> R
     let inst = instances.iter().find(|i| i.id == id).ok_or((StatusCode::NOT_FOUND, "Instance not found".into()))?;
     Ok(Json(serde_json::json!({
         "instance": inst.name,
-        "config": "worker_processes auto;\nevents {\n    worker_connections 1024;\n}\nhttp {\n    upstream backend {\n        server 10.88.11.180:8080;\n        server 10.88.11.181:8080;\n    }\n    server {\n        listen 80;\n        server_name _;\n        location / {\n            proxy_pass http://backend;\n        }\n        location /nginx_status {\n            stub_status on;\n            allow 127.0.0.1;\n            deny all;\n        }\n    }\n}",
-        "upstreams": [{"name": "backend", "servers": ["10.88.11.180:8080", "10.88.11.181:8080"]}],
-        "server_blocks": [{"listen": "80", "server_name": "_", "locations": ["/", "/nginx_status"]}]
+        "note": "Config retrieval requires SSH access to the target host. Configure SSH credentials in the target settings to enable remote config fetch.",
+        "config": null,
+        "upstreams": [],
+        "server_blocks": []
     })))
 }
