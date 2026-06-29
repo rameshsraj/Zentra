@@ -6,6 +6,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         // Logs
         .route("/api/logs", get(handlers::logs::search_logs))
+        .route("/api/logs/:log_id/traces", get(handlers::logs::log_traces))
         .route("/api/logs/live", get(handlers::logs::live_logs_ws))
 
         // Log Engine (P10)

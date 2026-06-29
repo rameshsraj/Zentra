@@ -62,6 +62,22 @@ flate2 = "1"
 prost = { workspace = true, optional = true }
 prost-types = { workspace = true, optional = true }
 
+[[test]]
+name = "integration"
+path = "tests/integration_test.rs"
+
+[dev-dependencies]
+axum-test = "15"
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+dotenvy = { workspace = true }
+jsonwebtoken = { workspace = true }
+chrono = { workspace = true }
+bcrypt = { workspace = true }
+sqlx = { workspace = true }
+
 [features]
 default = ["otlp-proto", "grpc"]
 otlp-proto = ["dep:prost", "dep:prost-types"]

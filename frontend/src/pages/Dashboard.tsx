@@ -4,13 +4,13 @@ import {
   getSystemStatus, getEventStats, getAlerts, getTargets,
   getNetworkCapture, getNetworkProtocols,
   getAIInsights, getPredictionSummary, getRecentEvents,
-  getTrafficChart, getNetworkBandwidth,
+  getTrafficChart, getNetworkBandwidth, getOtelStats,
 } from '@/lib/api'
 import { formatUptime } from '@/lib/utils'
 import {
   Activity, Bell, Shield, HardDrive, Network,
   ArrowUpRight, ArrowDownRight, Zap, Brain, TrendingUp,
-  Eye, Server,
+  Eye, Server, Radio,
 } from 'lucide-react'
 import Sparkline from '@/components/charts/Sparkline'
 import DonutChart from '@/components/charts/DonutChart'
@@ -22,6 +22,7 @@ import ProgressBar from '@/components/charts/ProgressBar'
 import StatusGrid from '@/components/charts/StatusGrid'
 import TimelineList from '@/components/charts/TimelineList'
 import PageHeader from '@/components/PageHeader'
+import DashboardToolbar from '@/components/DashboardToolbar'
 import { useAuth } from '@/contexts/AuthContext'
 
 // M10: Flat sparkline from live value — no synthetic Math.sin generation
@@ -42,6 +43,7 @@ export default function DashboardPage() {
   const { data: events } = useQuery({ queryKey: ['recent-events'], queryFn: () => getRecentEvents(20) })
   const { data: trafficChart } = useQuery({ queryKey: ['traffic-chart'], queryFn: () => getTrafficChart('30m', 'bytes'), refetchInterval: 60_000 })
   useQuery({ queryKey: ['net-bandwidth'], queryFn: getNetworkBandwidth, refetchInterval: 30_000 })
+  const { data: otelStats } = useQuery({ queryKey: ['otel-stats'], queryFn: getOtelStats, refetchInterval: 30_000 })
 
   const handleRefresh = useCallback(() => { qc.invalidateQueries() }, [qc])
 
@@ -106,6 +108,7 @@ export default function DashboardPage() {
           <div className="text-xs text-slate-500 font-mono">
             {status ? `Uptime: ${formatUptime(status.uptime_seconds)}` : ''}
           </div>
+          <DashboardToolbar dashboardName="Command Center" />
         </div>
       </PageHeader>
 
@@ -157,6 +160,31 @@ export default function DashboardPage() {
               {hasMenuItem('infrastructure.servers') && <StatCard title="Servers" value={serverCount} icon={Server} iconColor="text-blue-400" subtitle={`${targets?.filter(t => t.target_type === 'server' && t.status === 'healthy').length ?? 0} healthy`} sparkData={spark(serverCount)} sparkColor="#3b82f6" />}
               {hasMenuItem('infrastructure.storage') && <StatCard title="Storage Arrays" value={storageCount} icon={HardDrive} iconColor="text-amber-400" subtitle={`${targets?.filter(t => t.target_type === 'storage' && t.status === 'healthy').length ?? 0} healthy`} sparkData={spark(storageCount)} sparkColor="#f59e0b" />}
               {hasMenuItem('infrastructure.network') && <StatCard title="Network Devices" value={networkCount} icon={Network} iconColor="text-emerald-400" subtitle={`${targets?.filter(t => t.target_type === 'network' && t.status === 'healthy').length ?? 0} healthy`} sparkData={spark(networkCount)} sparkColor="#22c55e" />}
+            </div>
+          )}
+
+          {/* ═══════════ OTEL Signal Health Row ═══════════ */}
+          {hasModule('opentelemetry') && (
+            <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Radio className="w-4 h-4 text-violet-400" />
+                <h3 className="text-sm font-semibold text-white">OTEL Signal Health</h3>
+                <span className="ml-auto text-[10px] text-slate-500">5-min window</span>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                {[
+                  { label: 'Spans/min', value: otelStats?.spans_per_minute?.toFixed(0) ?? '—', color: 'text-violet-400' },
+                  { label: 'Logs/min', value: otelStats?.logs_per_minute?.toFixed(0) ?? '—', color: 'text-blue-400' },
+                  { label: 'Services', value: otelStats?.unique_services?.toString() ?? '—', color: 'text-cyan-400' },
+                  { label: 'Error Rate', value: otelStats ? `${otelStats.error_rate_percent?.toFixed(1)}%` : '—', color: (otelStats?.error_rate_percent ?? 0) > 5 ? 'text-red-400' : 'text-emerald-400' },
+                  { label: 'Avg Span', value: otelStats ? `${otelStats.avg_span_duration_ms?.toFixed(0)}ms` : '—', color: 'text-amber-400' },
+                ].map((s, i) => (
+                  <div key={i} className="bg-white/5 rounded-lg p-3">
+                    <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">{s.label}</div>
+                    <div className={`text-lg font-bold font-mono ${s.color}`}>{s.value}</div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 

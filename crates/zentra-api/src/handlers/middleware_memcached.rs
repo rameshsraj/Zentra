@@ -26,7 +26,16 @@ fn instances() -> &'static RwLock<Vec<MemcachedInstance>> {
 }
 pub fn live_instances() -> &'static RwLock<Vec<MemcachedInstance>> { instances() }
 
-pub async fn list_instances(State(_s): State<AppState>) -> Result<Json<Vec<MemcachedInstance>>, ApiError> { Ok(Json(instances().read().clone())) }
+pub async fn list_instances(State(s): State<AppState>) -> Result<Json<Vec<MemcachedInstance>>, ApiError> {
+    let rows = sqlx::query_as::<_, (String, String, String, i32, String, String)>(
+        "SELECT id, name, host, port, status, created_at::TEXT FROM middleware_instances WHERE instance_type = 'memcached' ORDER BY created_at"
+    ).fetch_all(&s.pool).await.unwrap_or_default();
+    let from_db: Vec<MemcachedInstance> = rows.into_iter().map(|(id, name, host, port, status, created_at)|
+        MemcachedInstance { id, name, host, port: port as u16, status, created_at }
+    ).collect();
+    if !from_db.is_empty() { *instances().write() = from_db.clone(); return Ok(Json(from_db)); }
+    Ok(Json(instances().read().clone()))
+}
 pub async fn get_status(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<MemcachedStatus>, ApiError> {
     let inst = {
         let insts = instances().read();
@@ -101,11 +110,15 @@ pub async fn performance_history(State(s): State<AppState>, Path(id): Path<Strin
     }).collect();
     Ok(Json(points))
 }
-pub async fn create_instance(State(_s): State<AppState>, Json(req): Json<CreateMemcachedRequest>) -> Result<Json<MemcachedInstance>, ApiError> {
+pub async fn create_instance(State(s): State<AppState>, Json(req): Json<CreateMemcachedRequest>) -> Result<Json<MemcachedInstance>, ApiError> {
     let inst = MemcachedInstance { id: crate::error::short_id("memcached"), name: req.name, host: req.host, port: req.port.unwrap_or(11211), status: "unknown".into(), created_at: Utc::now().to_rfc3339() };
+    let _ = sqlx::query(
+        "INSERT INTO middleware_instances (id, instance_type, name, host, port) VALUES ($1, 'memcached', $2, $3, $4) ON CONFLICT (id) DO NOTHING"
+    ).bind(&inst.id).bind(&inst.name).bind(&inst.host).bind(inst.port as i32).execute(&s.pool).await;
     instances().write().push(inst.clone()); Ok(Json(inst))
 }
-pub async fn delete_instance(State(_s): State<AppState>, Path(id): Path<String>) -> Result<Json<serde_json::Value>, ApiError> {
+pub async fn delete_instance(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<serde_json::Value>, ApiError> {
+    let _ = sqlx::query("DELETE FROM middleware_instances WHERE id = $1 AND instance_type = 'memcached'").bind(&id).execute(&s.pool).await;
     let mut insts = instances().write(); let b = insts.len(); insts.retain(|i| i.id != id);
     if insts.len() < b { Ok(Json(serde_json::json!({"deleted": id}))) } else { Err(ApiError::from((StatusCode::NOT_FOUND, "Not found".into()))) }
 }

@@ -60,7 +60,14 @@ pub fn live_instances() -> &'static RwLock<Vec<NginxInstance>> {
     instances()
 }
 
-pub async fn list_instances(State(_s): State<AppState>) -> Result<Json<Vec<NginxInstance>>, ApiError> {
+pub async fn list_instances(State(s): State<AppState>) -> Result<Json<Vec<NginxInstance>>, ApiError> {
+    let rows = sqlx::query_as::<_, (String, String, String, i32, String, String, String)>(
+        "SELECT id, name, host, port, status, created_at::TEXT, coalesce(extra->>'stub_status_path', '/nginx_status') FROM middleware_instances WHERE instance_type = 'nginx' ORDER BY created_at"
+    ).fetch_all(&s.pool).await.unwrap_or_default();
+    let from_db: Vec<NginxInstance> = rows.into_iter().map(|(id, name, host, port, status, created_at, path)|
+        NginxInstance { id, name, host, port: port as u16, stub_status_path: path, status, created_at }
+    ).collect();
+    if !from_db.is_empty() { *instances().write() = from_db.clone(); return Ok(Json(from_db)); }
     Ok(Json(instances().read().clone()))
 }
 
@@ -164,18 +171,24 @@ pub async fn performance_history(State(s): State<AppState>, Path(id): Path<Strin
     Ok(Json(points))
 }
 
-pub async fn create_instance(State(_s): State<AppState>, Json(req): Json<CreateNginxRequest>) -> Result<Json<NginxInstance>, ApiError> {
+pub async fn create_instance(State(s): State<AppState>, Json(req): Json<CreateNginxRequest>) -> Result<Json<NginxInstance>, ApiError> {
+    let path = req.stub_status_path.unwrap_or("/nginx_status".into());
     let inst = NginxInstance {
         id: crate::error::short_id("nginx"),
         name: req.name, host: req.host, port: req.port.unwrap_or(80),
-        stub_status_path: req.stub_status_path.unwrap_or("/nginx_status".into()),
+        stub_status_path: path.clone(),
         status: "unknown".into(), created_at: Utc::now().to_rfc3339(),
     };
+    let extra = serde_json::json!({"stub_status_path": path});
+    let _ = sqlx::query(
+        "INSERT INTO middleware_instances (id, instance_type, name, host, port, extra) VALUES ($1, 'nginx', $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING"
+    ).bind(&inst.id).bind(&inst.name).bind(&inst.host).bind(inst.port as i32).bind(extra).execute(&s.pool).await;
     instances().write().push(inst.clone());
     Ok(Json(inst))
 }
 
-pub async fn delete_instance(State(_s): State<AppState>, Path(id): Path<String>) -> Result<Json<serde_json::Value>, ApiError> {
+pub async fn delete_instance(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<serde_json::Value>, ApiError> {
+    let _ = sqlx::query("DELETE FROM middleware_instances WHERE id = $1 AND instance_type = 'nginx'").bind(&id).execute(&s.pool).await;
     let mut insts = instances().write();
     let before = insts.len();
     insts.retain(|i| i.id != id);

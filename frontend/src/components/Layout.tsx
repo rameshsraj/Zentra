@@ -30,9 +30,7 @@ import {
   Server,
   RotateCcw,
   Users,
-  Container,
   Layers,
-  MessageSquare,
   Building2,
   type LucideIcon,
 } from 'lucide-react'
@@ -95,14 +93,7 @@ const navItems: NavItem[] = [
       { to: '/middleware', label: 'Dashboard', icon: LayoutDashboard },
       { to: '/middleware/nginx', label: 'Nginx', icon: Globe },
       { to: '/middleware/apache', label: 'Apache / httpd', icon: Globe },
-      { to: '/middleware/tomcat', label: 'Tomcat', icon: Cpu },
       { to: '/middleware/haproxy', label: 'HAProxy', icon: Layers },
-      { to: '/middleware/redis', label: 'Redis', icon: HardDrive },
-      { to: '/middleware/elasticsearch', label: 'Elasticsearch', icon: Database },
-      { to: '/middleware/kafka', label: 'Kafka', icon: MessageSquare },
-      { to: '/middleware/rabbitmq', label: 'RabbitMQ', icon: MessageSquare },
-      { to: '/middleware/docker', label: 'Docker', icon: Container },
-      { to: '/middleware/kubernetes', label: 'Kubernetes', icon: Container },
     ],
   },
   {
@@ -164,6 +155,7 @@ const navItems: NavItem[] = [
       { to: '/otel-span-metrics', label: 'Span Metrics (RED)', icon: Activity },
       { to: '/otel-alert-rules', label: 'Signal Alerts', icon: Bell },
       { to: '/otel-security', label: 'OTLP Security', icon: Shield },
+      { to: '/slo', label: 'SLO / SLI', icon: Activity },
     ],
   },
   {

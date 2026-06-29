@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::state::AppState;
-
+use crate::tenant::OrgId;
 use crate::error::ApiError;
 
 #[derive(Debug, Deserialize)]
@@ -78,12 +78,56 @@ pub async fn chat_history(
     return Ok(Json(vec![]));
 }
 
-/// GET /api/ai/insights — get AI-generated insights
+/// GET /api/ai/insights — get AI-generated insights derived from OTEL trace errors
 pub async fn insights(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
 ) -> Result<Json<Vec<AIInsightEntry>>, ApiError> {
     let now = Utc::now();
-    return Ok(Json(vec![]));
+
+    #[derive(sqlx::FromRow)]
+    struct ErrorRow {
+        service_name: String,
+        operation_name: String,
+        error_count: i64,
+    }
+
+    let rows = sqlx::query_as::<_, ErrorRow>(
+        "SELECT service_name, operation_name, COUNT(*) AS error_count \
+         FROM traces \
+         WHERE status = 'error' AND org_id = $1 \
+           AND started_at > NOW() - INTERVAL '1 hour' \
+         GROUP BY service_name, operation_name \
+         ORDER BY error_count DESC \
+         LIMIT 10"
+    )
+    .bind(org_id)
+    .fetch_all(&state.tsdb_pool)
+    .await
+    .unwrap_or_default();
+
+    let insights: Vec<AIInsightEntry> = rows.into_iter().map(|r| {
+        let severity = if r.error_count > 50 { "critical" } else if r.error_count > 10 { "warning" } else { "info" };
+        AIInsightEntry {
+            id: Uuid::now_v7().to_string(),
+            category: "trace_errors".into(),
+            title: format!("High error rate in {}", r.service_name),
+            description: format!(
+                "Operation '{}' on service '{}' produced {} errors in the last hour.",
+                r.operation_name, r.service_name, r.error_count
+            ),
+            severity: severity.into(),
+            confidence: 0.95,
+            metric_data: Some([("error_count".into(), r.error_count as f64)].into()),
+            recommendation: format!(
+                "Investigate recent deployments or dependency failures for '{}'.",
+                r.service_name
+            ),
+            created_at: now.to_rfc3339(),
+        }
+    }).collect();
+
+    Ok(Json(insights))
 }
 
 // ============================================================================

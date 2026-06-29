@@ -30,16 +30,7 @@ const CiliumMonitoringPage = lazy(() => import('./pages/CiliumMonitoring'))
 const MiddlewareMonitoringPage = lazy(() => import('./pages/MiddlewareMonitoring'))
 const NginxMonitoringPage = lazy(() => import('./pages/middleware/NginxMonitoring'))
 const ApacheMonitoringPage = lazy(() => import('./pages/middleware/ApacheMonitoring'))
-const TomcatMonitoringPage = lazy(() => import('./pages/middleware/TomcatMonitoring'))
 const HAProxyMonitoringPage = lazy(() => import('./pages/middleware/HAProxyMonitoring'))
-const ElasticsearchMonitoringPage = lazy(() => import('./pages/middleware/ElasticsearchMonitoring'))
-const RedisMonitoringPage = lazy(() => import('./pages/middleware/RedisMonitoring'))
-const MemcachedMonitoringPage = lazy(() => import('./pages/middleware/MemcachedMonitoring'))
-const RabbitMQMonitoringPage = lazy(() => import('./pages/middleware/RabbitMQMonitoring'))
-const KafkaMonitoringPage = lazy(() => import('./pages/middleware/KafkaMonitoring'))
-const DockerMonitoringPage = lazy(() => import('./pages/middleware/DockerMonitoring'))
-const KubernetesMonitoringPage = lazy(() => import('./pages/middleware/KubernetesMonitoring'))
-const PhpFpmMonitoringPage = lazy(() => import('./pages/middleware/PhpFpmMonitoring'))
 
 // Security
 const SecurityDashboardPage = lazy(() => import('./pages/security/SecurityDashboard'))
@@ -83,6 +74,9 @@ const OTelPipelinePage = lazy(() => import('./pages/OTelPipeline'))
 const OTelSpanMetricsPage = lazy(() => import('./pages/OTelSpanMetrics'))
 const OTelAlertRulesPage = lazy(() => import('./pages/OTelAlertRules'))
 const OTelSecurityPage = lazy(() => import('./pages/OTelSecurity'))
+
+// SLO/SLI Dashboard (G-11)
+const SLODashboardPage = lazy(() => import('./pages/SLODashboard'))
 
 // Cloud Monitoring (P10)
 const CloudMonitoringPage = lazy(() => import('./pages/CloudMonitoring'))
@@ -134,16 +128,7 @@ export default function App() {
             <Route path="middleware" element={<MiddlewareMonitoringPage />} />
             <Route path="middleware/nginx" element={<NginxMonitoringPage />} />
             <Route path="middleware/apache" element={<ApacheMonitoringPage />} />
-            <Route path="middleware/tomcat" element={<TomcatMonitoringPage />} />
             <Route path="middleware/haproxy" element={<HAProxyMonitoringPage />} />
-            <Route path="middleware/elasticsearch" element={<ElasticsearchMonitoringPage />} />
-            <Route path="middleware/redis" element={<RedisMonitoringPage />} />
-            <Route path="middleware/memcached" element={<MemcachedMonitoringPage />} />
-            <Route path="middleware/rabbitmq" element={<RabbitMQMonitoringPage />} />
-            <Route path="middleware/kafka" element={<KafkaMonitoringPage />} />
-            <Route path="middleware/docker" element={<DockerMonitoringPage />} />
-            <Route path="middleware/kubernetes" element={<KubernetesMonitoringPage />} />
-            <Route path="middleware/phpfpm" element={<PhpFpmMonitoringPage />} />
 
             {/* Security */}
             <Route path="security/dashboard" element={<SecurityDashboardPage />} />
@@ -187,6 +172,9 @@ export default function App() {
             <Route path="otel-span-metrics" element={<OTelSpanMetricsPage />} />
             <Route path="otel-alert-rules" element={<OTelAlertRulesPage />} />
             <Route path="otel-security" element={<OTelSecurityPage />} />
+
+            {/* SLO / SLI (G-11) */}
+            <Route path="slo" element={<SLODashboardPage />} />
 
             {/* Cloud Monitoring (P10) */}
             <Route path="cloud-monitoring" element={<CloudMonitoringPage />} />

@@ -3,10 +3,7 @@ use serde::Serialize;
 use chrono::Utc;
 use crate::state::AppState;
 use crate::handlers::{
-    middleware_nginx, middleware_apache, middleware_elasticsearch,
-    middleware_haproxy, middleware_tomcat, middleware_phpfpm,
-    middleware_rabbitmq, middleware_kafka, middleware_memcached,
-    middleware_redis, middleware_docker, middleware_kubernetes,
+    middleware_nginx, middleware_apache, middleware_haproxy,
 };
 
 use crate::error::ApiError;
@@ -91,104 +88,24 @@ pub async fn dashboard(
         }
     }
 
-    // Elasticsearch instances
-    for inst in middleware_elasticsearch::live_instances().read().iter() {
-        services.push(MiddlewareServiceStatus {
-            service_type: "elasticsearch".into(), name: inst.name.clone(),
-            host: inst.host.clone(), port: inst.port,
-            status: inst.status.clone(), key_metric_1: "Cluster node".into(), key_metric_2: "".into(),
-            last_checked: now.clone(),
-        });
-    }
-
     // HAProxy instances
-    for inst in middleware_haproxy::live_instances().read().iter() {
-        services.push(MiddlewareServiceStatus {
-            service_type: "haproxy".into(), name: inst.name.clone(),
-            host: inst.host.clone(), port: inst.port,
-            status: inst.status.clone(), key_metric_1: "Load balancer".into(), key_metric_2: "".into(),
-            last_checked: now.clone(),
-        });
-    }
-
-    // Tomcat instances
-    for inst in middleware_tomcat::live_instances().read().iter() {
-        services.push(MiddlewareServiceStatus {
-            service_type: "tomcat".into(), name: inst.name.clone(),
-            host: inst.host.clone(), port: inst.port,
-            status: inst.status.clone(), key_metric_1: "App server".into(), key_metric_2: "".into(),
-            last_checked: now.clone(),
-        });
-    }
-
-    // PHP-FPM instances
-    for inst in middleware_phpfpm::live_instances().read().iter() {
-        services.push(MiddlewareServiceStatus {
-            service_type: "phpfpm".into(), name: inst.name.clone(),
-            host: inst.host.clone(), port: inst.port,
-            status: inst.status.clone(), key_metric_1: "Process manager".into(), key_metric_2: "".into(),
-            last_checked: now.clone(),
-        });
-    }
-
-    // RabbitMQ instances
-    for inst in middleware_rabbitmq::live_instances().read().iter() {
-        services.push(MiddlewareServiceStatus {
-            service_type: "rabbitmq".into(), name: inst.name.clone(),
-            host: inst.host.clone(), port: inst.port,
-            status: inst.status.clone(), key_metric_1: "Message broker".into(), key_metric_2: "".into(),
-            last_checked: now.clone(),
-        });
-    }
-
-    // Kafka instances
-    for inst in middleware_kafka::live_instances().read().iter() {
-        services.push(MiddlewareServiceStatus {
-            service_type: "kafka".into(), name: inst.name.clone(),
-            host: inst.host.clone(), port: inst.port,
-            status: inst.status.clone(), key_metric_1: "Stream broker".into(), key_metric_2: "".into(),
-            last_checked: now.clone(),
-        });
-    }
-
-    // Redis instances
-    for inst in middleware_redis::live_instances().read().iter() {
-        services.push(MiddlewareServiceStatus {
-            service_type: "redis".into(), name: inst.name.clone(),
-            host: inst.host.clone(), port: inst.port,
-            status: inst.status.clone(), key_metric_1: "Cache store".into(), key_metric_2: "".into(),
-            last_checked: now.clone(),
-        });
-    }
-
-    // Memcached instances
-    for inst in middleware_memcached::live_instances().read().iter() {
-        services.push(MiddlewareServiceStatus {
-            service_type: "memcached".into(), name: inst.name.clone(),
-            host: inst.host.clone(), port: inst.port,
-            status: inst.status.clone(), key_metric_1: "Cache store".into(), key_metric_2: "".into(),
-            last_checked: now.clone(),
-        });
-    }
-
-    // Docker instances
-    for inst in middleware_docker::live_instances().read().iter() {
-        services.push(MiddlewareServiceStatus {
-            service_type: "docker".into(), name: inst.name.clone(),
-            host: inst.host.clone(), port: inst.port,
-            status: inst.status.clone(), key_metric_1: "Container runtime".into(), key_metric_2: "".into(),
-            last_checked: now.clone(),
-        });
-    }
-
-    // Kubernetes instances
-    for inst in middleware_kubernetes::live_instances().read().iter() {
-        services.push(MiddlewareServiceStatus {
-            service_type: "kubernetes".into(), name: inst.name.clone(),
-            host: inst.host.clone(), port: inst.port,
-            status: inst.status.clone(), key_metric_1: "Orchestrator".into(), key_metric_2: "".into(),
-            last_checked: now.clone(),
-        });
+    {
+        let insts = middleware_haproxy::live_instances().read().clone();
+        for inst in &insts {
+            let url = format!("http://{}:{}/stats;csv", inst.host, inst.port);
+            let (status, m1, m2) = match client.get(&url).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    ("healthy".into(), "Stats available".into(), "".into())
+                }
+                _ => ("unknown".into(), "Pending check".into(), "".into()),
+            };
+            services.push(MiddlewareServiceStatus {
+                service_type: "haproxy".into(), name: inst.name.clone(),
+                host: inst.host.clone(), port: inst.port,
+                status, key_metric_1: m1, key_metric_2: m2,
+                last_checked: now.clone(),
+            });
+        }
     }
 
     Ok(Json(services))

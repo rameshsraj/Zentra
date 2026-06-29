@@ -65,6 +65,59 @@ pub async fn search_logs(
     })))
 }
 
+/// GET /api/logs/:log_id/traces — return OTEL spans correlated with a log entry's trace_id
+pub async fn log_traces(
+    State(state): State<AppState>,
+    OrgId(org_id): OrgId,
+    axum::extract::Path(log_id): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let trace_id: Option<String> = sqlx::query_scalar(
+        "SELECT trace_id FROM log_entries WHERE id = $1 AND org_id = $2 LIMIT 1"
+    )
+    .bind(&log_id)
+    .bind(org_id)
+    .fetch_optional(&state.tsdb_pool)
+    .await
+    .unwrap_or(None)
+    .flatten();
+
+    let trace_id = match trace_id {
+        Some(t) if !t.is_empty() => t,
+        _ => return Err(ApiError::NotFound("No trace_id associated with this log entry".into())),
+    };
+
+    let spans: Vec<serde_json::Value> = sqlx::query(
+        "SELECT span_id, trace_id, parent_span_id, operation_name, service_name, duration_us, started_at, status
+         FROM traces WHERE trace_id = $1 AND org_id = $2 ORDER BY started_at ASC"
+    )
+    .bind(&trace_id)
+    .bind(org_id)
+    .fetch_all(&state.tsdb_pool)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|r| {
+        use sqlx::Row;
+        serde_json::json!({
+            "span_id": r.get::<String, _>("span_id"),
+            "trace_id": r.get::<String, _>("trace_id"),
+            "parent_span_id": r.get::<Option<String>, _>("parent_span_id"),
+            "operation_name": r.get::<String, _>("operation_name"),
+            "service_name": r.get::<String, _>("service_name"),
+            "duration_us": r.get::<i64, _>("duration_us"),
+            "started_at": r.get::<chrono::DateTime<Utc>, _>("started_at"),
+            "status": r.get::<String, _>("status"),
+        })
+    })
+    .collect();
+
+    Ok(Json(serde_json::json!({
+        "trace_id": trace_id,
+        "span_count": spans.len(),
+        "spans": spans,
+    })))
+}
+
 /// WebSocket endpoint for live log streaming
 pub async fn live_logs_ws(
     State(state): State<AppState>,

@@ -5,6 +5,7 @@
 # Environment files (credentials)
 .env
 .env.local
+.env.test
 deploy/deploy.env
 .claude
 

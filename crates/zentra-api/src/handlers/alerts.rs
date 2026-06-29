@@ -110,6 +110,12 @@ pub struct CreateRuleRequest {
     pub window_seconds: u32,
     pub severity: String,
     pub tags: Option<Vec<String>>,
+    /// When set, the alert evaluator queries OTEL data instead of infra metrics.
+    /// Supported values: "otlp_metrics", "traces"
+    pub otel_source: Option<String>,
+    /// JSONB label filter applied when otel_source is "otlp_metrics".
+    /// e.g. {"service.name": "checkout", "http.status_code": "500"}
+    pub labels_filter: Option<std::collections::HashMap<String, String>>,
 }
 
 pub async fn create_rule(
@@ -161,7 +167,18 @@ pub async fn create_rule(
         window_seconds: req.window_seconds,
         severity,
         enabled: true,
-        tags: req.tags.unwrap_or_default(),
+        tags: {
+            let mut t = req.tags.unwrap_or_default();
+            if let Some(src) = &req.otel_source {
+                t.push(format!("otel_source:{}", src));
+            }
+            if let Some(lf) = &req.labels_filter {
+                if let Ok(j) = serde_json::to_string(lf) {
+                    t.push(format!("labels_filter:{}", j));
+                }
+            }
+            t
+        },
         created_at: now,
         updated_at: now,
         for_duration_seconds: 0,

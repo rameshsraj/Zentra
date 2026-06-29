@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Server, Activity, Database, MessageSquare, Container, Globe, HardDrive, Cpu, Layers } from 'lucide-react'
+import { Server, Activity, Globe, Layers } from 'lucide-react'
 import { getMiddlewareDashboard, getMiddlewareInstances, getMiddlewareStatus, getMiddlewareHistory, type MiddlewareServiceStatus } from '@/lib/api'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 
-const SERVICE_ICONS: Record<string, any> = { nginx: Globe, apache: Globe, haproxy: Layers, tomcat: Cpu, phpfpm: Cpu, rabbitmq: MessageSquare, kafka: MessageSquare, elasticsearch: Database, redis: HardDrive, memcached: HardDrive, docker: Container, kubernetes: Container }
-const SERVICE_COLORS: Record<string, string> = { nginx: 'text-green-400', apache: 'text-red-400', haproxy: 'text-cyan-400', tomcat: 'text-orange-400', phpfpm: 'text-purple-400', rabbitmq: 'text-orange-300', kafka: 'text-blue-300', elasticsearch: 'text-yellow-400', redis: 'text-red-300', memcached: 'text-green-300', docker: 'text-blue-400', kubernetes: 'text-blue-500' }
+const SERVICE_ICONS: Record<string, any> = { nginx: Globe, apache: Globe, haproxy: Layers }
+const SERVICE_COLORS: Record<string, string> = { nginx: 'text-green-400', apache: 'text-red-400', haproxy: 'text-cyan-400' }
 const STATUS_COLORS: Record<string, string> = { healthy: 'bg-green-500', warning: 'bg-yellow-500', critical: 'bg-red-500', unknown: 'bg-gray-500' }
 
 export default function MiddlewareMonitoringPage() {

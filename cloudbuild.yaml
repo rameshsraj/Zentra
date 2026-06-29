@@ -10,9 +10,62 @@ options:
   logging: CLOUD_LOGGING_ONLY
 
 steps:
+  # ── Step 0: Integration tests ───────────────────────────────────────────
+  # Spin up a TimescaleDB container, run migrations, execute all integration
+  # tests, then tear down. Fails the build if any test fails.
+  - id: integration-tests
+    name: rust:1.82-bookworm
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        export CARGO_HOME=/workspace/.cargo-cache
+
+        echo "==> Starting TimescaleDB container"
+        apt-get update -qq && apt-get install -y -qq docker.io curl
+
+        PGPASSWORD=zentra_test
+        PGUSER=zentra_test
+        PGDB=zentra_test
+        PGPORT=15432
+
+        docker run -d \
+          --name tsdb-test \
+          -e POSTGRES_USER=$$PGUSER \
+          -e POSTGRES_PASSWORD=$$PGPASSWORD \
+          -e POSTGRES_DB=$$PGDB \
+          -p $$PGPORT:5432 \
+          timescale/timescaledb:latest-pg16
+
+        echo "==> Waiting for TimescaleDB to be ready..."
+        for i in $(seq 1 30); do
+          if docker exec tsdb-test pg_isready -U $$PGUSER -d $$PGDB -q 2>/dev/null; then
+            echo "   TimescaleDB ready after $$i tries"
+            break
+          fi
+          sleep 2
+        done
+
+        export DATABASE_URL_TEST="postgres://$$PGUSER:$$PGPASSWORD@localhost:$$PGPORT/$$PGDB"
+
+        echo "==> Running integration tests"
+        cargo test --test integration \
+          --no-default-features \
+          --features otlp-proto \
+          -p zentra-api \
+          -- --test-threads=1
+
+        echo "==> Tearing down TimescaleDB container"
+        docker rm -f tsdb-test || true
+    volumes:
+      - name: cargo-cache
+        path: /workspace/.cargo-cache
+
   # ── Step 1: Compile Rust binaries ──────────────────────────────────────
   - id: compile-rust
     name: rust:1.82-bookworm
+    waitFor: [integration-tests]
     entrypoint: bash
     args:
       - -c
