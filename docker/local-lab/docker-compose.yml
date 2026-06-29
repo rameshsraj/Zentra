@@ -80,10 +80,16 @@ services:
       lab-net:
         ipv4_address: 172.30.0.2
     environment:
+      # Used by agent-entrypoint.sh
       - AGENT_MODE=remote
       - API_ENDPOINT=${API_ENDPOINT:-http://CHANGE_ME:5010}
       - AGENT_API_KEY=${AGENT_API_KEY:-isok_CHANGE_ME}
       - DC_NAME=${DC_NAME:-dc-local-lab}
+      # Required by the zentra-agent binary itself
+      - ZENTRA_AGENT_MODE=remote
+      - ZENTRA_API_ENDPOINT=${API_ENDPOINT:-http://CHANGE_ME:5010}
+      - ZENTRA_AGENT_API_KEY=${AGENT_API_KEY:-isok_CHANGE_ME}
+      - ZENTRA_DC_NAME=${DC_NAME:-dc-local-lab}
       - SSH_PASSWORD=zentra123
       - SIM_NODES=lab-linux-01:172.30.0.10 lab-nginx-01:172.30.0.11 lab-httpd-01:172.30.0.12
       - RUST_LOG=info

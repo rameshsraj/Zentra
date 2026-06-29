@@ -322,8 +322,8 @@ pub async fn get_compliance_summary(pool: &PgPool, org_id: Uuid) -> Result<Compl
            COALESCE((SELECT COUNT(*) FROM license_seats ls WHERE ls.org_id = $1 AND ls.is_active = true AND ls.assigned_to IS NULL), 0) as free_seats,
            0::bigint as over_licensed,
            0::bigint as under_licensed,
-           COALESCE(SUM(total_cost), 0) as total_cost_sum,
-           COALESCE(SUM(CASE WHEN license_type = 'subscription' THEN total_cost ELSE 0 END), 0) as annual_cost
+           COALESCE(SUM(total_cost), 0)::FLOAT8 as total_cost_sum,
+           COALESCE(SUM(CASE WHEN license_type = 'subscription' THEN total_cost ELSE 0 END), 0)::FLOAT8 as annual_cost
            FROM licenses WHERE org_id = $1"#
     )
     .bind(org_id)

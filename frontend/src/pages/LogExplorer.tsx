@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { FileText, Search, Bell, BarChart2, Database, Trash2, Plus, Download, Play } from 'lucide-react'
+import { FileText, Search, Bell, BarChart2, Database, Trash2, Plus, Download, Play, GitBranch } from 'lucide-react'
 import { queryLogs, getLogLabels, getLogStreams, getLogAlerts, createLogAlert, deleteLogAlert, getLogAnalytics, exportLogs, type LogQueryResult, type LogStreamInfo, type LogAlert, type LogAnalyticsData } from '@/lib/api'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 
@@ -9,6 +10,7 @@ const PIE_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6']
 
 export default function LogExplorerPage() {
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const [tab, setTab] = useState<'explorer' | 'streams' | 'alerts' | 'analytics'>('explorer')
   const [query, setQuery] = useState('{}')
   const [searchTriggered, setSearchTriggered] = useState(false)
@@ -57,10 +59,21 @@ export default function LogExplorerPage() {
                   {stream.entries.map((entry, ei) => {
                     const level = stream.labels.level || ''
                     const cls = LEVEL_COLORS[level] || 'text-gray-300'
+                    const traceId = (entry as any).trace_id || stream.labels.trace_id
                     return (
-                      <div key={ei} className={`px-4 py-1 font-mono text-xs border-b border-gray-700/30 hover:bg-gray-700/20 ${cls}`}>
-                        <span className="text-gray-500 mr-3">{new Date(entry.timestamp).toLocaleTimeString()}</span>
-                        {entry.line}
+                      <div key={ei} className={`px-4 py-1 font-mono text-xs border-b border-gray-700/30 hover:bg-gray-700/20 flex items-start gap-2 ${cls}`}>
+                        <span className="text-gray-500 shrink-0">{new Date(entry.timestamp).toLocaleTimeString()}</span>
+                        <span className="flex-1">{entry.line}</span>
+                        {traceId && (
+                          <button
+                            onClick={() => navigate(`/traces?trace_id=${traceId}`)}
+                            className="shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-300 hover:bg-violet-500/40 text-[10px] transition-colors"
+                            title={`View trace: ${traceId}`}
+                          >
+                            <GitBranch className="w-2.5 h-2.5" />
+                            Trace
+                          </button>
+                        )}
                       </div>
                     )
                   })}

@@ -97,4 +97,11 @@ pub fn router() -> Router<AppState> {
         .route("/api/storage-arrays/:id/volumes", get(handlers::storage_arrays::list_volumes))
         .route("/api/storage-arrays/:id/metrics/history", get(handlers::storage_arrays::get_array_metrics_history))
         .route("/api/storage-arrays/:id/metrics/latest", get(handlers::storage_arrays::get_array_metrics_latest))
+
+        // SLO / SLI (G-11)
+        .route("/api/slo/services", get(handlers::slo::slo_services))
+        .route("/api/slo/targets", get(handlers::slo::list_slo_targets))
+        .route("/api/slo/targets", post(handlers::slo::create_slo_target))
+        .route("/api/slo/targets/:id", delete(handlers::slo::delete_slo_target))
+        .route("/api/slo/budget/:service_name", get(handlers::slo::slo_budget))
 }

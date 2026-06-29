@@ -147,7 +147,7 @@ pub async fn get_trace(
     Path(trace_id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     let traces = sqlx::query_as::<_, DbSpanRow>(
-        "SELECT span_id, trace_id, parent_span_id, operation_name, service_name, duration_us, started_at, status, tags, events
+        "SELECT span_id, trace_id, parent_span_id, operation_name, service_name, duration_us, started_at, status, tags, '[]'::jsonb AS events
          FROM traces WHERE trace_id = $1 AND org_id = $2 ORDER BY started_at ASC"
     )
     .bind(&trace_id)
@@ -338,7 +338,7 @@ pub async fn tempo_trace(
 ) -> Result<Json<Value>, ApiError> {
     // Query spans from DB
     let traces = sqlx::query_as::<_, DbSpanRow>(
-        "SELECT span_id, trace_id, parent_span_id, operation_name, service_name, duration_us, started_at, status, tags, events FROM traces WHERE trace_id = $1 ORDER BY started_at"
+        "SELECT span_id, trace_id, parent_span_id, operation_name, service_name, duration_us, started_at, status, tags, '[]'::jsonb AS events FROM traces WHERE trace_id = $1 ORDER BY started_at"
     )
     .bind(&trace_id)
     .fetch_all(&state.tsdb_pool)

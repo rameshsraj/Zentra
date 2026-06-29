@@ -198,6 +198,9 @@ pub struct Target {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub is_active: bool,
+    /// If set, this target is monitored by the given agent (SSH validation skipped).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -252,6 +255,7 @@ impl Target {
             created_at: now,
             updated_at: now,
             is_active: true,
+            agent_id: None,
         }
     }
 
@@ -308,6 +312,8 @@ pub struct CreateTargetRequest {
     #[serde(default)]
     pub tags: BTreeMap<String, String>,
     pub check_interval_seconds: Option<u32>,
+    /// If set, target is monitored by this agent — SSH validation is skipped.
+    pub agent_id: Option<Uuid>,
 }
 
 fn default_environment() -> String { "production".to_string() }

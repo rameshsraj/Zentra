@@ -65,7 +65,7 @@ impl HeartbeatLoop {
             match self
                 .client
                 .post(&url)
-                .header("X-Zentra-Key", &self.api_key)
+                .header("Authorization", format!("Bearer {}", &self.api_key))
                 .json(&body)
                 .send()
                 .await

@@ -67,6 +67,15 @@ pub fn is_public_path(method: &Method, path: &str) -> bool {
     }
     if (*method == Method::POST && path == "/api/agents/heartbeat")
         || (*method == Method::GET && path == "/api/agents/targets")
+        || (*method == Method::POST && path.starts_with("/api/agents/") && path.ends_with("/discovered"))
+    {
+        return true;
+    }
+    // OTLP ingest endpoints use isok_ API key auth (validated inside the
+    // handler via validate_otlp_key). They must bypass the JWT middleware,
+    // otherwise the Bearer isok_... is rejected as an invalid JWT.
+    if *method == Method::POST
+        && matches!(path, "/v1/traces" | "/v1/metrics" | "/v1/logs" | "/v1/profiles")
     {
         return true;
     }

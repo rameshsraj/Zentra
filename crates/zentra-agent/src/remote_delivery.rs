@@ -101,7 +101,7 @@ impl RemoteDeliveryService {
             .client
             .post(url)
             .header("Content-Type", "application/json")
-            .header("X-Zentra-Key", &self.api_key)
+            .header("Authorization", format!("Bearer {}", &self.api_key))
             .json(payload)
             .send()
             .await;
@@ -154,7 +154,7 @@ impl RemoteDeliveryService {
                 .client
                 .post(&url)
                 .header("Content-Type", "application/json")
-                .header("X-Zentra-Key", &self.api_key)
+                .header("Authorization", format!("Bearer {}", &self.api_key))
                 .json(&payload)
                 .send()
                 .await;
@@ -197,7 +197,7 @@ impl RemoteDeliveryService {
                     .client
                     .post(&url)
                     .header("Content-Type", "application/json")
-                    .header("X-Zentra-Key", &self.api_key)
+                    .header("Authorization", format!("Bearer {}", &self.api_key))
                     .json(&payload)
                     .send()
                     .await;

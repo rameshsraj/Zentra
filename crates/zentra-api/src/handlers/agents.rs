@@ -169,7 +169,18 @@ pub async fn heartbeat(
     headers: HeaderMap,
     Json(body): Json<AgentHeartbeatRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let raw_key = extract_agent_key(&headers)?;
+    let raw_key = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .map(|s| s.to_string())
+        .or_else(|| {
+            headers
+                .get(AGENT_KEY_HEADER)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string())
+        })
+        .ok_or_else(|| ApiError::Unauthorized("Missing Authorization header".into()))?;
     let (org_id, _) = validate_otlp_key(&state, &raw_key)
         .await
         .map_err(ApiError::Unauthorized)?;
@@ -209,7 +220,20 @@ pub async fn agent_targets(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    let raw_key = extract_agent_key(&headers)?;
+    // Accept Authorization: Bearer <key> (preferred) or legacy X-Zentra-Key header
+    let raw_key = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .map(|s| s.to_string())
+        .or_else(|| {
+            headers
+                .get(AGENT_KEY_HEADER)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string())
+        })
+        .ok_or_else(|| ApiError::Unauthorized("Missing Authorization header".into()))?;
+
     let (org_id, _) = validate_otlp_key(&state, &raw_key)
         .await
         .map_err(ApiError::Unauthorized)?;
@@ -323,4 +347,289 @@ pub async fn deregister_agent(
         "deregistered": true,
         "agent_id": agent_id,
     })))
+}
+
+// ============================================================================
+// Agent Key Management (Feature 6 — Admin-only isok_ key CRUD)
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct CreateAgentKeyRequest {
+    pub name: String,
+    pub description: Option<String>,
+}
+
+pub async fn list_agent_keys(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<AuthContext>,
+) -> Result<Json<Value>, ApiError> {
+    require_agent_admin(&ctx)?;
+
+    let rows = sqlx::query(
+        "SELECT k.id, k.name, k.key_prefix, k.enabled, k.created_at, k.rate_limit_rpm,
+                f.agent_id, f.datacenter_name, f.status AS agent_status, f.last_seen
+         FROM otlp_api_keys k
+         LEFT JOIN agent_fleet f ON f.otlp_api_key_id = k.id AND f.org_id = k.org_id
+         WHERE k.org_id = $1 AND k.name NOT LIKE 'system-%'
+         ORDER BY k.created_at DESC",
+    )
+    .bind(ctx.org_id)
+    .fetch_all(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let keys: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "id": r.get::<Uuid, _>("id"),
+                "name": r.get::<String, _>("name"),
+                "key_prefix": r.get::<String, _>("key_prefix"),
+                "enabled": r.get::<bool, _>("enabled"),
+                "created_at": r.get::<Option<DateTime<Utc>>, _>("created_at"),
+                "rate_limit_rpm": r.get::<Option<i32>, _>("rate_limit_rpm"),
+                "agent_id": r.get::<Option<Uuid>, _>("agent_id"),
+                "datacenter_name": r.get::<Option<String>, _>("datacenter_name"),
+                "agent_status": r.get::<Option<String>, _>("agent_status"),
+                "last_seen": r.get::<Option<DateTime<Utc>>, _>("last_seen"),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!(keys)))
+}
+
+pub async fn create_agent_key(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<AuthContext>,
+    Json(body): Json<CreateAgentKeyRequest>,
+) -> Result<Json<Value>, ApiError> {
+    require_agent_admin(&ctx)?;
+
+    let name = body.name.trim();
+    if name.is_empty() {
+        return Err(ApiError::BadRequest("name is required".into()));
+    }
+
+    let raw_key = generate_agent_api_key();
+    let key_hash = hash_api_key(&raw_key);
+    let key_prefix = raw_key.chars().take(13).collect::<String>();
+    let key_id = Uuid::now_v7();
+
+    sqlx::query(
+        "INSERT INTO otlp_api_keys
+         (id, org_id, name, key_hash, key_prefix, permissions, rate_limit_rpm, max_payload_bytes, enabled, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, ARRAY['write'], 1000, 5242880, true, NOW(), NOW())",
+    )
+    .bind(key_id)
+    .bind(ctx.org_id)
+    .bind(name)
+    .bind(&key_hash)
+    .bind(&key_prefix)
+    .execute(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    Ok(Json(json!({
+        "id": key_id,
+        "name": name,
+        "api_key": raw_key,
+        "key_prefix": key_prefix,
+        "warning": "Store this key securely — it will not be shown again.",
+    })))
+}
+
+pub async fn revoke_agent_key(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(key_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    require_agent_admin(&ctx)?;
+
+    let key_hash: Option<String> = sqlx::query_scalar(
+        "UPDATE otlp_api_keys SET enabled = false, updated_at = NOW()
+         WHERE id = $1 AND org_id = $2
+         RETURNING key_hash",
+    )
+    .bind(key_id)
+    .bind(ctx.org_id)
+    .fetch_optional(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    if let Some(hash) = key_hash {
+        state.otlp_key_cache.remove(&hash);
+    }
+
+    Ok(Json(json!({ "revoked": true, "id": key_id })))
+}
+
+// ============================================================================
+// Discovered Hosts (Feature 4 — Agent network scan + user opt-in)
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct DiscoveredHostEntry {
+    pub ip_address: String,
+    pub hostname: Option<String>,
+    pub open_ports: Option<Vec<u16>>,
+    pub os_hint: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReportDiscoveredRequest {
+    pub hosts: Vec<DiscoveredHostEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OptInHostRequest {
+    pub opted_in: Option<bool>,
+    pub ignored: Option<bool>,
+}
+
+/// Called by the agent to report newly discovered hosts in its network.
+/// POST /api/agents/:agent_id/discovered  (agent auth: Authorization: Bearer)
+pub async fn report_discovered(
+    State(state): State<AppState>,
+    Path(agent_id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(body): Json<ReportDiscoveredRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let raw_key = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .map(|s| s.to_string())
+        .ok_or_else(|| ApiError::Unauthorized("Missing Authorization header".into()))?;
+
+    let (org_id, _) = validate_otlp_key(&state, &raw_key)
+        .await
+        .map_err(ApiError::Unauthorized)?;
+
+    // Verify the agent_id belongs to this org
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM agent_fleet WHERE agent_id = $1 AND org_id = $2)"
+    )
+    .bind(agent_id)
+    .bind(org_id)
+    .fetch_one(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    if !exists {
+        return Err(ApiError::Forbidden("Agent not found for this org".into()));
+    }
+
+    let mut upserted = 0usize;
+    for host in &body.hosts {
+        let ip = host.ip_address.trim();
+        if ip.is_empty() {
+            continue;
+        }
+        let ports = serde_json::to_value(host.open_ports.as_deref().unwrap_or(&[]))
+            .unwrap_or(serde_json::Value::Array(vec![]));
+
+        sqlx::query(
+            "INSERT INTO discovered_hosts
+             (agent_id, org_id, ip_address, hostname, open_ports, os_hint, first_seen, last_seen)
+             VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+             ON CONFLICT (agent_id, ip_address) DO UPDATE
+             SET hostname  = COALESCE(EXCLUDED.hostname, discovered_hosts.hostname),
+                 open_ports = EXCLUDED.open_ports,
+                 os_hint   = COALESCE(EXCLUDED.os_hint, discovered_hosts.os_hint),
+                 last_seen  = NOW()"
+        )
+        .bind(agent_id)
+        .bind(org_id)
+        .bind(ip)
+        .bind(host.hostname.as_deref())
+        .bind(&ports)
+        .bind(host.os_hint.as_deref())
+        .execute(&state.tsdb_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+        upserted += 1;
+    }
+
+    Ok(Json(json!({ "upserted": upserted })))
+}
+
+/// Returns discovered hosts for an agent (user-facing).
+/// GET /api/agents/:agent_id/discovered  (user session auth)
+pub async fn list_discovered(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(agent_id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    require_agent_admin(&ctx)?;
+
+    let rows = sqlx::query(
+        "SELECT id, ip_address, hostname, open_ports, os_hint, first_seen, last_seen,
+                opted_in, ignored, target_id
+         FROM discovered_hosts
+         WHERE agent_id = $1 AND org_id = $2
+         ORDER BY opted_in DESC, last_seen DESC"
+    )
+    .bind(agent_id)
+    .bind(ctx.org_id)
+    .fetch_all(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let hosts: Vec<Value> = rows.iter().map(|r| {
+        json!({
+            "id":          r.get::<Uuid, _>("id"),
+            "ip_address":  r.get::<String, _>("ip_address"),
+            "hostname":    r.get::<Option<String>, _>("hostname"),
+            "open_ports":  r.get::<serde_json::Value, _>("open_ports"),
+            "os_hint":     r.get::<Option<String>, _>("os_hint"),
+            "first_seen":  r.get::<DateTime<Utc>, _>("first_seen"),
+            "last_seen":   r.get::<DateTime<Utc>, _>("last_seen"),
+            "opted_in":    r.get::<bool, _>("opted_in"),
+            "ignored":     r.get::<bool, _>("ignored"),
+            "target_id":   r.get::<Option<Uuid>, _>("target_id"),
+        })
+    }).collect();
+
+    Ok(Json(json!(hosts)))
+}
+
+/// User opts in or ignores a discovered host.
+/// PATCH /api/agents/:agent_id/discovered/:host_id
+pub async fn update_discovered_host(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<AuthContext>,
+    Path((agent_id, host_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<OptInHostRequest>,
+) -> Result<Json<Value>, ApiError> {
+    require_agent_admin(&ctx)?;
+
+    // Build update dynamically — only set fields that were provided
+    let opted_in = body.opted_in;
+    let ignored = body.ignored;
+
+    let updated: bool = sqlx::query_scalar(
+        "UPDATE discovered_hosts
+         SET opted_in = COALESCE($3, opted_in),
+             ignored  = COALESCE($4, ignored)
+         WHERE id = $1 AND agent_id = $2
+           AND org_id = (SELECT org_id FROM agent_fleet WHERE agent_id = $2 AND org_id = $5 LIMIT 1)
+         RETURNING TRUE"
+    )
+    .bind(host_id)
+    .bind(agent_id)
+    .bind(opted_in)
+    .bind(ignored)
+    .bind(ctx.org_id)
+    .fetch_optional(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?
+    .unwrap_or(false);
+
+    if !updated {
+        return Err(ApiError::NotFound("Discovered host not found".into()));
+    }
+
+    Ok(Json(json!({ "updated": true, "id": host_id })))
 }

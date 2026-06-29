@@ -57,3 +57,13 @@ export const getDrilldown = (params: Record<string, string>) => {
 // Search
 export const globalSearch = (query: string) =>
   fetchJSON<SearchResult[]>(`/search?q=${encodeURIComponent(query)}`)
+
+// OTEL stats for Command Center
+export const getOtelStats = () =>
+  fetchJSON<{
+    spans_per_minute: number
+    logs_per_minute: number
+    unique_services: number
+    error_rate_percent: number
+    avg_span_duration_ms: number
+  }>('/otel/stats')

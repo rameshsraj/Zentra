@@ -1,6 +1,6 @@
 use axum::{extract::{State, Path, Json}, http::StatusCode};
 use serde::{Deserialize, Serialize};
-use chrono::{Utc, Duration};
+use chrono::Utc;
 use parking_lot::RwLock;
 use std::sync::OnceLock;
 use crate::state::AppState;
@@ -33,47 +33,143 @@ fn instances() -> &'static RwLock<Vec<DockerInstance>> {
 }
 pub fn live_instances() -> &'static RwLock<Vec<DockerInstance>> { instances() }
 
-pub async fn list_instances(State(_s): State<AppState>) -> Result<Json<Vec<DockerInstance>>, ApiError> { Ok(Json(instances().read().clone())) }
-
-pub async fn get_status(State(_s): State<AppState>, Path(id): Path<String>) -> Result<Json<DockerStatus>, ApiError> {
-    let insts = instances().read(); let _inst = insts.iter().find(|i| i.id == id).ok_or((StatusCode::NOT_FOUND, "Not found".into()))?;
-    return Ok(Json(DockerStatus {
-        containers_running: 0, containers_stopped: 0, containers_paused: 0,
-        images: 0, volumes: 0, networks: 0,
-        cpu_pct: 0.0, memory_used_mb: 0.0, memory_total_mb: 0.0,
-        docker_version: String::new(), storage_driver: String::new(),
-    }));
+pub async fn list_instances(State(s): State<AppState>) -> Result<Json<Vec<DockerInstance>>, ApiError> {
+    let rows = sqlx::query_as::<_, (String, String, String, i32, String, String)>(
+        "SELECT id, name, host, port, status, created_at::TEXT FROM middleware_instances WHERE instance_type = 'docker' ORDER BY created_at"
+    ).fetch_all(&s.pool).await.unwrap_or_default();
+    let from_db: Vec<DockerInstance> = rows.into_iter().map(|(id, name, host, port, status, created_at)|
+        DockerInstance { id, name, host, port: port as u16, status, created_at }
+    ).collect();
+    if !from_db.is_empty() {
+        *instances().write() = from_db.clone();
+        return Ok(Json(from_db));
+    }
+    Ok(Json(instances().read().clone()))
 }
 
-pub async fn get_containers(State(_s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<DockerContainer>>, ApiError> {
-    let insts = instances().read(); let _inst = insts.iter().find(|i| i.id == id).ok_or((StatusCode::NOT_FOUND, "Not found".into()))?;
-    let containers = vec![
-        DockerContainer { container_id: "a1b2c3d4e5f6".into(), name: "nginx-proxy".into(), image: "nginx:1.25".into(), status: "Up 15 days".into(), state: "running".into(), cpu_pct: 2.1, memory_mb: 128.0, memory_limit_mb: 512.0, net_rx_mb: 4500.0, net_tx_mb: 12000.0, block_read_mb: 45.0, block_write_mb: 12.0, restart_count: 0, created: (Utc::now() - Duration::days(15)).to_rfc3339(), ports: vec!["80:80".into(), "443:443".into()] },
-        DockerContainer { container_id: "b2c3d4e5f6a7".into(), name: "api-server".into(), image: "Zentra/api:latest".into(), status: "Up 3 days".into(), state: "running".into(), cpu_pct: 8.5, memory_mb: 512.0, memory_limit_mb: 2048.0, net_rx_mb: 2200.0, net_tx_mb: 8500.0, block_read_mb: 120.0, block_write_mb: 85.0, restart_count: 1, created: (Utc::now() - Duration::days(3)).to_rfc3339(), ports: vec!["7001:7001".into()] },
-        DockerContainer { container_id: "c3d4e5f6a7b8".into(), name: "postgres-db".into(), image: "postgres:16".into(), status: "Up 30 days".into(), state: "running".into(), cpu_pct: 5.2, memory_mb: 1024.0, memory_limit_mb: 4096.0, net_rx_mb: 850.0, net_tx_mb: 3200.0, block_read_mb: 8500.0, block_write_mb: 4200.0, restart_count: 0, created: (Utc::now() - Duration::days(30)).to_rfc3339(), ports: vec!["5432:5432".into()] },
-        DockerContainer { container_id: "d4e5f6a7b8c9".into(), name: "redis-cache".into(), image: "redis:7.2".into(), status: "Up 30 days".into(), state: "running".into(), cpu_pct: 1.8, memory_mb: 2048.0, memory_limit_mb: 4096.0, net_rx_mb: 1200.0, net_tx_mb: 4500.0, block_read_mb: 25.0, block_write_mb: 180.0, restart_count: 0, created: (Utc::now() - Duration::days(30)).to_rfc3339(), ports: vec!["6379:6379".into()] },
-        DockerContainer { container_id: "e5f6a7b8c9d0".into(), name: "grafana".into(), image: "grafana/grafana:10.3".into(), status: "Up 7 days".into(), state: "running".into(), cpu_pct: 3.1, memory_mb: 256.0, memory_limit_mb: 1024.0, net_rx_mb: 120.0, net_tx_mb: 450.0, block_read_mb: 35.0, block_write_mb: 8.0, restart_count: 0, created: (Utc::now() - Duration::days(7)).to_rfc3339(), ports: vec!["3000:3000".into()] },
-        DockerContainer { container_id: "f6a7b8c9d0e1".into(), name: "prometheus".into(), image: "prom/prometheus:v2.50".into(), status: "Up 7 days".into(), state: "running".into(), cpu_pct: 4.5, memory_mb: 1536.0, memory_limit_mb: 4096.0, net_rx_mb: 3500.0, net_tx_mb: 850.0, block_read_mb: 12000.0, block_write_mb: 8500.0, restart_count: 0, created: (Utc::now() - Duration::days(7)).to_rfc3339(), ports: vec!["9090:9090".into()] },
-        DockerContainer { container_id: "a7b8c9d0e1f2".into(), name: "alertmanager".into(), image: "prom/alertmanager:v0.27".into(), status: "Up 7 days".into(), state: "running".into(), cpu_pct: 0.3, memory_mb: 64.0, memory_limit_mb: 256.0, net_rx_mb: 25.0, net_tx_mb: 12.0, block_read_mb: 2.0, block_write_mb: 1.0, restart_count: 0, created: (Utc::now() - Duration::days(7)).to_rfc3339(), ports: vec!["9093:9093".into()] },
-        DockerContainer { container_id: "b8c9d0e1f2a3".into(), name: "old-migration".into(), image: "migrate:v1".into(), status: "Exited (0) 5 days ago".into(), state: "exited".into(), cpu_pct: 0.0, memory_mb: 0.0, memory_limit_mb: 512.0, net_rx_mb: 0.0, net_tx_mb: 0.0, block_read_mb: 0.5, block_write_mb: 0.1, restart_count: 0, created: (Utc::now() - Duration::days(10)).to_rfc3339(), ports: vec![] },
-    ];
-    Ok(Json(containers))
+pub async fn get_status(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<DockerStatus>, ApiError> {
+    let inst = {
+        let insts = instances().read();
+        insts.iter().find(|i| i.id == id).cloned()
+            .ok_or(ApiError::from((StatusCode::NOT_FOUND, "Instance not found".into())))?
+    };
+    let url = format!("http://{}:{}/v1.24/info", inst.host, inst.port);
+    match s.http_client.get(&url).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            let v: serde_json::Value = resp.json().await.unwrap_or_default();
+            let containers = v.get("Containers").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+            let running  = v.get("ContainersRunning").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+            let stopped  = v.get("ContainersStopped").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+            let paused   = v.get("ContainersPaused").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+            let images   = v.get("Images").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+            let _ = containers;
+            let mem_total = v.get("MemTotal").and_then(|x| x.as_u64()).unwrap_or(0) as f64 / 1_048_576.0;
+            let version = v.get("ServerVersion").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let driver  = v.get("Driver").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            // Store metrics snapshot for history
+            let now = Utc::now();
+            let _ = sqlx::query(
+                "INSERT INTO middleware_metrics (instance_id, instance_type, metric_name, value, collected_at) VALUES ($1,'docker','containers_running',$2,$3)"
+            ).bind(&id).bind(running as f64).bind(now).execute(&s.pool).await;
+            Ok(Json(DockerStatus {
+                containers_running: running, containers_stopped: stopped, containers_paused: paused,
+                images, volumes: 0, networks: 0,
+                cpu_pct: 0.0, memory_used_mb: 0.0, memory_total_mb: mem_total,
+                docker_version: version, storage_driver: driver,
+            }))
+        }
+        Ok(resp) => {
+            tracing::warn!(url=%url, status=%resp.status(), "Docker info endpoint error");
+            Ok(Json(DockerStatus { containers_running: 0, containers_stopped: 0, containers_paused: 0, images: 0, volumes: 0, networks: 0, cpu_pct: 0.0, memory_used_mb: 0.0, memory_total_mb: 0.0, docker_version: String::new(), storage_driver: String::new() }))
+        }
+        Err(e) => {
+            tracing::warn!(url=%url, err=%e, "Failed to reach Docker endpoint");
+            Ok(Json(DockerStatus { containers_running: 0, containers_stopped: 0, containers_paused: 0, images: 0, volumes: 0, networks: 0, cpu_pct: 0.0, memory_used_mb: 0.0, memory_total_mb: 0.0, docker_version: String::new(), storage_driver: String::new() }))
+        }
+    }
 }
 
-pub async fn performance_history(State(_s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<DockerHistoryPoint>>, ApiError> {
-    let insts = instances().read(); let _inst = insts.iter().find(|i| i.id == id).ok_or((StatusCode::NOT_FOUND, "Not found".into()))?;
-    let now = Utc::now();
-    let points: Vec<DockerHistoryPoint> = (0..60).rev().map(|i| { let j = (i as f64 * 0.1).sin();
-        DockerHistoryPoint { timestamp: (now - Duration::minutes(i)).to_rfc3339(), containers_running: (18.0 + j * 2.0) as u32, cpu_pct: 34.5 + j * 8.0, memory_used_mb: 8192.0 + j * 500.0, net_rx_mb: (4500.0 + j * 500.0), net_tx_mb: (12000.0 + j * 1500.0) }
+pub async fn get_containers(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<DockerContainer>>, ApiError> {
+    let inst = {
+        let insts = instances().read();
+        insts.iter().find(|i| i.id == id).cloned()
+            .ok_or(ApiError::from((StatusCode::NOT_FOUND, "Instance not found".into())))?
+    };
+    let url = format!("http://{}:{}/v1.24/containers/json?all=1", inst.host, inst.port);
+    match s.http_client.get(&url).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            let v: Vec<serde_json::Value> = resp.json().await.unwrap_or_default();
+            let containers = v.iter().map(|c| {
+                let names: Vec<String> = c.get("Names").and_then(|n| n.as_array())
+                    .map(|arr| arr.iter().filter_map(|s| s.as_str()).map(|s| s.trim_start_matches('/').to_string()).collect())
+                    .unwrap_or_default();
+                let name = names.first().cloned().unwrap_or_default();
+                let ports: Vec<String> = c.get("Ports").and_then(|p| p.as_array())
+                    .map(|arr| arr.iter().filter_map(|p| {
+                        let pub_port = p.get("PublicPort").and_then(|v| v.as_u64())?;
+                        let priv_port = p.get("PrivatePort").and_then(|v| v.as_u64())?;
+                        Some(format!("{}:{}", pub_port, priv_port))
+                    }).collect())
+                    .unwrap_or_default();
+                DockerContainer {
+                    container_id: c.get("Id").and_then(|v| v.as_str()).unwrap_or("").chars().take(12).collect(),
+                    name,
+                    image: c.get("Image").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    status: c.get("Status").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    state: c.get("State").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    cpu_pct: 0.0, memory_mb: 0.0, memory_limit_mb: 0.0,
+                    net_rx_mb: 0.0, net_tx_mb: 0.0, block_read_mb: 0.0, block_write_mb: 0.0,
+                    restart_count: 0,
+                    created: c.get("Created").and_then(|v| v.as_i64())
+                        .map(|ts| chrono::DateTime::from_timestamp(ts, 0).map(|d| d.to_rfc3339()).unwrap_or_default())
+                        .unwrap_or_default(),
+                    ports,
+                }
+            }).collect();
+            Ok(Json(containers))
+        }
+        _ => Ok(Json(vec![]))
+    }
+}
+
+pub async fn performance_history(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<DockerHistoryPoint>>, ApiError> {
+    if !instances().read().iter().any(|i| i.id == id) {
+        return Err(ApiError::from((StatusCode::NOT_FOUND, "Instance not found".into())));
+    }
+    let rows = sqlx::query(
+        r#"SELECT time_bucket('1 minute', collected_at) AS bucket,
+           avg(CASE WHEN metric_name = 'containers_running' THEN value END) AS containers_running
+           FROM middleware_metrics
+           WHERE instance_id = $1 AND instance_type = 'docker'
+             AND collected_at > now() - INTERVAL '1 hour'
+           GROUP BY bucket ORDER BY bucket"#
+    )
+    .bind(&id)
+    .fetch_all(&s.pool)
+    .await
+    .unwrap_or_default();
+    let points: Vec<DockerHistoryPoint> = rows.iter().map(|r| {
+        use sqlx::Row;
+        let bucket: chrono::DateTime<Utc> = r.get("bucket");
+        DockerHistoryPoint {
+            timestamp: bucket.to_rfc3339(),
+            containers_running: r.get::<Option<f64>, _>("containers_running").unwrap_or(0.0) as u32,
+            cpu_pct: 0.0, memory_used_mb: 0.0, net_rx_mb: 0.0, net_tx_mb: 0.0,
+        }
     }).collect();
     Ok(Json(points))
 }
 
-pub async fn create_instance(State(_s): State<AppState>, Json(req): Json<CreateDockerRequest>) -> Result<Json<DockerInstance>, ApiError> {
+pub async fn create_instance(State(s): State<AppState>, Json(req): Json<CreateDockerRequest>) -> Result<Json<DockerInstance>, ApiError> {
     let inst = DockerInstance { id: crate::error::short_id("docker"), name: req.name, host: req.host, port: req.port.unwrap_or(2375), status: "unknown".into(), created_at: Utc::now().to_rfc3339() };
-    instances().write().push(inst.clone()); Ok(Json(inst))
+    let _ = sqlx::query(
+        "INSERT INTO middleware_instances (id, instance_type, name, host, port) VALUES ($1, 'docker', $2, $3, $4) ON CONFLICT (id) DO NOTHING"
+    ).bind(&inst.id).bind(&inst.name).bind(&inst.host).bind(inst.port as i32).execute(&s.pool).await;
+    instances().write().push(inst.clone());
+    Ok(Json(inst))
 }
-pub async fn delete_instance(State(_s): State<AppState>, Path(id): Path<String>) -> Result<Json<serde_json::Value>, ApiError> {
+pub async fn delete_instance(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<serde_json::Value>, ApiError> {
+    let _ = sqlx::query("DELETE FROM middleware_instances WHERE id = $1 AND instance_type = 'docker'").bind(&id).execute(&s.pool).await;
     let mut insts = instances().write(); let b = insts.len(); insts.retain(|i| i.id != id);
     if insts.len() < b { Ok(Json(serde_json::json!({"deleted": id}))) } else { Err(ApiError::from((StatusCode::NOT_FOUND, "Not found".into()))) }
 }

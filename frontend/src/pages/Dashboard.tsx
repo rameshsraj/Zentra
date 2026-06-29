@@ -4,13 +4,13 @@ import {
   getSystemStatus, getEventStats, getAlerts, getTargets,
   getNetworkCapture, getNetworkProtocols,
   getAIInsights, getPredictionSummary, getRecentEvents,
-  getTrafficChart, getNetworkBandwidth,
+  getTrafficChart, getNetworkBandwidth, getOtelStats,
 } from '@/lib/api'
 import { formatUptime } from '@/lib/utils'
 import {
-  Activity, Bell, Shield, HardDrive, Network, Database,
+  Activity, Bell, Shield, HardDrive, Network,
   ArrowUpRight, ArrowDownRight, Zap, Brain, TrendingUp,
-  AlertTriangle, Eye, Server, Wifi, Lock, Globe,
+  Eye, Server, Radio,
 } from 'lucide-react'
 import Sparkline from '@/components/charts/Sparkline'
 import DonutChart from '@/components/charts/DonutChart'
@@ -22,7 +22,7 @@ import ProgressBar from '@/components/charts/ProgressBar'
 import StatusGrid from '@/components/charts/StatusGrid'
 import TimelineList from '@/components/charts/TimelineList'
 import PageHeader from '@/components/PageHeader'
-import OnboardingChecklist from '@/components/OnboardingChecklist'
+import DashboardToolbar from '@/components/DashboardToolbar'
 import { useAuth } from '@/contexts/AuthContext'
 
 // M10: Flat sparkline from live value — no synthetic Math.sin generation
@@ -43,6 +43,7 @@ export default function DashboardPage() {
   const { data: events } = useQuery({ queryKey: ['recent-events'], queryFn: () => getRecentEvents(20) })
   const { data: trafficChart } = useQuery({ queryKey: ['traffic-chart'], queryFn: () => getTrafficChart('30m', 'bytes'), refetchInterval: 60_000 })
   useQuery({ queryKey: ['net-bandwidth'], queryFn: getNetworkBandwidth, refetchInterval: 30_000 })
+  const { data: otelStats } = useQuery({ queryKey: ['otel-stats'], queryFn: getOtelStats, refetchInterval: 30_000 })
 
   const handleRefresh = useCallback(() => { qc.invalidateQueries() }, [qc])
 
@@ -107,10 +108,9 @@ export default function DashboardPage() {
           <div className="text-xs text-slate-500 font-mono">
             {status ? `Uptime: ${formatUptime(status.uptime_seconds)}` : ''}
           </div>
+          <DashboardToolbar dashboardName="Command Center" />
         </div>
       </PageHeader>
-
-      <OnboardingChecklist />
 
       {!hasAnyOtherModules ? (
         /* Empty State Command Center Dashboard when no other modules are selected */
@@ -160,6 +160,31 @@ export default function DashboardPage() {
               {hasMenuItem('infrastructure.servers') && <StatCard title="Servers" value={serverCount} icon={Server} iconColor="text-blue-400" subtitle={`${targets?.filter(t => t.target_type === 'server' && t.status === 'healthy').length ?? 0} healthy`} sparkData={spark(serverCount)} sparkColor="#3b82f6" />}
               {hasMenuItem('infrastructure.storage') && <StatCard title="Storage Arrays" value={storageCount} icon={HardDrive} iconColor="text-amber-400" subtitle={`${targets?.filter(t => t.target_type === 'storage' && t.status === 'healthy').length ?? 0} healthy`} sparkData={spark(storageCount)} sparkColor="#f59e0b" />}
               {hasMenuItem('infrastructure.network') && <StatCard title="Network Devices" value={networkCount} icon={Network} iconColor="text-emerald-400" subtitle={`${targets?.filter(t => t.target_type === 'network' && t.status === 'healthy').length ?? 0} healthy`} sparkData={spark(networkCount)} sparkColor="#22c55e" />}
+            </div>
+          )}
+
+          {/* ═══════════ OTEL Signal Health Row ═══════════ */}
+          {hasModule('opentelemetry') && (
+            <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Radio className="w-4 h-4 text-violet-400" />
+                <h3 className="text-sm font-semibold text-white">OTEL Signal Health</h3>
+                <span className="ml-auto text-[10px] text-slate-500">5-min window</span>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                {[
+                  { label: 'Spans/min', value: otelStats?.spans_per_minute?.toFixed(0) ?? '—', color: 'text-violet-400' },
+                  { label: 'Logs/min', value: otelStats?.logs_per_minute?.toFixed(0) ?? '—', color: 'text-blue-400' },
+                  { label: 'Services', value: otelStats?.unique_services?.toString() ?? '—', color: 'text-cyan-400' },
+                  { label: 'Error Rate', value: otelStats ? `${otelStats.error_rate_percent?.toFixed(1)}%` : '—', color: (otelStats?.error_rate_percent ?? 0) > 5 ? 'text-red-400' : 'text-emerald-400' },
+                  { label: 'Avg Span', value: otelStats ? `${otelStats.avg_span_duration_ms?.toFixed(0)}ms` : '—', color: 'text-amber-400' },
+                ].map((s, i) => (
+                  <div key={i} className="bg-white/5 rounded-lg p-3">
+                    <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">{s.label}</div>
+                    <div className={`text-lg font-bold font-mono ${s.color}`}>{s.value}</div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -405,39 +430,19 @@ export default function DashboardPage() {
                   <Shield className="w-4 h-4 text-red-400" />
                   Threat Intelligence
                 </h3>
-                <div className="grid grid-cols-2 gap-3 mb-4">
-                  {[
-                    { label: 'Port Scans', value: String(stats?.threats_detected ?? 12), color: 'text-amber-400', icon: Wifi },
-                    { label: 'Brute Force', value: '3', color: 'text-red-400', icon: Lock },
-                    { label: 'Suspicious', value: '7', color: 'text-purple-400', icon: AlertTriangle },
-                    { label: 'Blocked', value: '22', color: 'text-emerald-400', icon: Shield },
-                  ].map((t) => (
-                    <div key={t.label} className="bg-slate-900/50 rounded-lg p-2 border border-white/5">
-                      <div className="text-[10px] text-slate-500 uppercase flex items-center gap-1">
-                        <t.icon className="w-3 h-3" />
-                        {t.label}
-                      </div>
-                      <div className={`text-lg font-mono font-bold ${t.color}`}>{t.value}</div>
+                <div className="grid grid-cols-1 gap-3 mb-4">
+                  <div className="bg-slate-900/50 rounded-lg p-3 border border-white/5">
+                    <div className="text-[10px] text-slate-500 uppercase flex items-center gap-1">
+                      <Shield className="w-3 h-3" />
+                      Threats Detected (24h)
                     </div>
-                  ))}
+                    <div className={`text-2xl font-mono font-bold ${(stats?.threats_detected ?? 0) > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                      {stats?.threats_detected ?? 0}
+                    </div>
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  {[
-                    { ip: '192.168.1.105', type: 'Port Scan', severity: 'medium' },
-                    { ip: '10.0.3.42', type: 'Brute Force', severity: 'high' },
-                    { ip: '172.16.0.88', type: 'Data Exfil', severity: 'critical' },
-                  ].map((t, i) => (
-                    <div key={i} className="flex items-center gap-2 text-xs p-1.5 bg-slate-900/30 rounded border border-white/5">
-                      <Globe className="w-3 h-3 text-slate-500" />
-                      <span className="font-mono text-slate-400">{t.ip}</span>
-                      <span className="text-slate-500">{t.type}</span>
-                      <span className={`ml-auto px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                        t.severity === 'critical' ? 'bg-red-500/20 text-red-400' :
-                        t.severity === 'high' ? 'bg-amber-500/20 text-amber-400' :
-                        'bg-blue-500/20 text-blue-400'
-                      }`}>{t.severity}</span>
-                    </div>
-                  ))}
+                <div className="text-xs text-slate-500 italic">
+                  Detailed threat breakdown available in the Security page.
                 </div>
               </div>
             )}

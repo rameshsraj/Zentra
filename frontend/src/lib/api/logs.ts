@@ -35,6 +35,10 @@ export const openLogTail = (query = '{}', limit = 50): EventSource => {
   return new EventSource(`/api/logs/tail?${qs}`)
 }
 
+// Log → Trace correlation
+export const getLogTraces = (logId: string) =>
+  fetchJSON<{ trace_id: string; span_count: number; spans: any[] }>(`/logs/${logId}/traces`)
+
 // Correlation
 export const logsForMetric = (params: Record<string, string>) => {
   const qs = new URLSearchParams(params).toString()

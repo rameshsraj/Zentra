@@ -6,9 +6,27 @@ import type {
   TargetMetricsHistoryResponse, TargetMetricsLatestResponse, MetricsCatalogResponse,
 } from './types'
 
+export interface CreateTargetInput {
+  name: string
+  target_type?: string
+  target_subtype: string
+  host: string
+  port?: number
+  description?: string | null
+  environment?: string
+  ssl_enabled?: boolean
+  is_active?: boolean
+  username?: string
+  password?: string
+  database_name?: string
+  check_interval_seconds?: number
+  tags?: Record<string, string>
+  agent_id?: string
+}
+
 // Targets
 export const getTargets = () => fetchJSON<Target[]>('/targets')
-export const createTarget = (data: Partial<Target>) =>
+export const createTarget = (data: CreateTargetInput) =>
   fetchJSON<Target>('/targets', { method: 'POST', body: JSON.stringify(data) })
 export const deleteTarget = (id: string) =>
   fetchJSON<void>(`/targets/${id}`, { method: 'DELETE' })

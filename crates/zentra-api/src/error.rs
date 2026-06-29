@@ -40,6 +40,9 @@ pub enum ApiError {
 
     #[error("service unavailable: {0}")]
     ServiceUnavailable(String),
+
+    #[error("not implemented: {0}")]
+    NotImplemented(String),
 }
 
 impl IntoResponse for ApiError {
@@ -64,6 +67,7 @@ impl IntoResponse for ApiError {
                 tracing::warn!(error = %m, "service unavailable");
                 (StatusCode::SERVICE_UNAVAILABLE, "Service temporarily unavailable".to_string())
             }
+            Self::NotImplemented(m) => (StatusCode::NOT_IMPLEMENTED, m.clone()),
         };
         (status, Json(json!({ "error": message }))).into_response()
     }
@@ -81,6 +85,8 @@ impl From<(StatusCode, String)> for ApiError {
             StatusCode::FORBIDDEN => Self::Forbidden(msg),
             StatusCode::PAYMENT_REQUIRED => Self::PaymentRequired(msg),
             StatusCode::TOO_MANY_REQUESTS => Self::TooManyRequests(msg),
+            StatusCode::NOT_IMPLEMENTED => Self::NotImplemented(msg),
+            StatusCode::SERVICE_UNAVAILABLE => Self::ServiceUnavailable(msg),
             _ => Self::Internal(msg),
         }
     }

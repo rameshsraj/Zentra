@@ -4,6 +4,7 @@ use zentra_agent::plugin_manager::create_plugin_for_target;
 use zentra_agent::remote_delivery::RemoteDeliveryService;
 use zentra_agent::heartbeat::HeartbeatLoop;
 use zentra_agent::remote_targets::RemoteTargetFetcher;
+use zentra_agent::network_scan::NetworkScanner;
 use zentra_core::models::metric::MetricBatch;
 use zentra_core::models::log_entry::LogBatch;
 use zentra_db::pool::create_pool;
@@ -15,6 +16,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
+use tracing::Instrument;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use uuid::Uuid;
 
@@ -67,10 +69,10 @@ async fn run_local_mode(config: zentra_core::AppConfig) {
 
     tokio::spawn(async move {
         ingestion_metrics.run_metric_ingestion(metric_rx).await;
-    });
+    }.instrument(tracing::info_span!("ingestion.metrics")));
     tokio::spawn(async move {
         ingestion_logs.run_log_ingestion(log_rx).await;
-    });
+    }.instrument(tracing::info_span!("ingestion.logs")));
 
     let active_ids: Arc<Mutex<HashSet<Uuid>>> = Arc::new(Mutex::new(HashSet::new()));
 
@@ -98,9 +100,12 @@ async fn run_local_mode(config: zentra_core::AppConfig) {
                     config.org_id,
                     cancel.clone(),
                 );
-                tokio::spawn(async move {
-                    let _lock = lock;
-                    orch.run_collection_loop(plugin, target).await;
+                tokio::spawn({
+                    let span = tracing::info_span!("agent.collection_loop", target.id = %target.target_id, target.name = %target.name);
+                    async move {
+                        let _lock = lock;
+                        orch.run_collection_loop(plugin, target).await;
+                    }.instrument(span)
                 });
             }
         }
@@ -145,9 +150,12 @@ async fn run_local_mode(config: zentra_core::AppConfig) {
                         reload_org_id,
                         reload_cancel.clone(),
                     );
-                    tokio::spawn(async move {
-                        let _lock = lock;
-                        orch.run_collection_loop(plugin, target).await;
+                    tokio::spawn({
+                        let span = tracing::info_span!("agent.collection_loop", target.id = %target.target_id, target.name = %target.name);
+                        async move {
+                            let _lock = lock;
+                            orch.run_collection_loop(plugin, target).await;
+                        }.instrument(span)
                     });
                 }
             }
@@ -168,7 +176,7 @@ async fn run_local_mode(config: zentra_core::AppConfig) {
     );
     tokio::spawn(async move {
         hubble_collector.run().await;
-    });
+    }.instrument(tracing::info_span!("agent.hubble_collector")));
 
     tokio::signal::ctrl_c().await.ok();
     info!("Shutdown signal received, stopping agent...");
@@ -212,10 +220,10 @@ async fn run_remote_mode(config: zentra_core::AppConfig) {
 
     tokio::spawn(async move {
         delivery_metrics.run_metric_delivery(metric_rx).await;
-    });
+    }.instrument(tracing::info_span!("remote.metric_delivery")));
     tokio::spawn(async move {
         delivery_logs.run_log_delivery(log_rx).await;
-    });
+    }.instrument(tracing::info_span!("remote.log_delivery")));
 
     // Heartbeat loop (30s)
     let heartbeat = HeartbeatLoop::new(
@@ -227,7 +235,7 @@ async fn run_remote_mode(config: zentra_core::AppConfig) {
     );
     tokio::spawn(async move {
         heartbeat.run().await;
-    });
+    }.instrument(tracing::info_span!("agent.heartbeat")));
 
     // Remote target fetcher (60s reconciliation)
     let fetcher = RemoteTargetFetcher::new(
@@ -241,7 +249,23 @@ async fn run_remote_mode(config: zentra_core::AppConfig) {
     );
     tokio::spawn(async move {
         fetcher.run().await;
-    });
+    }.instrument(tracing::info_span!("agent.target_fetcher")));
+
+    // Network scanner — discovers hosts in local subnets, reports to server (10min interval)
+    if let Some(agent_id) = config.agent_id {
+        let scanner = NetworkScanner::new(
+            config.api_endpoint.clone(),
+            config.agent_api_key.clone(),
+            agent_id,
+            cancel.clone(),
+        );
+        tokio::spawn(async move {
+            scanner.run().await;
+        }.instrument(tracing::info_span!("agent.network_scanner", agent.id = %agent_id)));
+        info!(agent_id = %agent_id, "Network scanner spawned");
+    } else {
+        tracing::warn!("ZENTRA_AGENT_ID not set — network host discovery disabled");
+    }
 
     // Wait for shutdown
     tokio::signal::ctrl_c().await.ok();

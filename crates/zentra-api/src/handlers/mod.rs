@@ -94,3 +94,4 @@ pub mod pool_status;
 pub mod agents;
 pub mod signup;
 pub mod billing;
+pub mod slo;

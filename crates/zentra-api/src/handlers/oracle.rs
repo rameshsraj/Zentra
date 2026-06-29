@@ -1289,43 +1289,42 @@ pub async fn scrape_metrics(State(_s): State<AppState>) -> Json<Value> {
 // ============================================================================
 
 /// GET /api/oracle/txeventq — list queues with stats
-pub async fn txeventq_list(State(_s): State<AppState>) -> Json<Value> {
-    // Real queue data is fetched from Oracle connections when available.
-    // Returns empty list when no Oracle connections are configured.
-    let conns = oracle_connections().read();
-    if conns.is_empty() {
-        return Json(json!({ "queues": [], "total": 0, "message": "No Oracle connections configured. Add a connection to monitor TxEventQ queues." }));
-    }
-    // TODO: Query actual TxEventQ stats from connected Oracle instances via SSH/sqlplus
-    Json(json!({ "queues": [], "total": 0, "message": "Connect to an Oracle instance with TxEventQ enabled to see queue statistics." }))
+pub async fn txeventq_list(State(_s): State<AppState>, Query(params): Query<ConnIdParam>) -> Json<Value> {
+    // Pick connection_id: from query param, or first configured connection, or demo.
+    let conn_id: Option<String> = params.connection_id.clone().or_else(|| {
+        oracle_connections().read().first().map(|c| c.id.clone())
+    });
+    let queues = match conn_id {
+        Some(ref cid) => database_plugin::oracle_txeventq::collect_queues(cid),
+        None => database_plugin::oracle_txeventq::demo_queues(),
+    };
+    let total = queues.len();
+    Json(json!({ "queues": queues, "total": total }))
 }
 
 /// GET /api/oracle/txeventq/:queue_name — detail
 pub async fn txeventq_detail(
     State(_s): State<AppState>,
     Path(name): Path<String>,
+    Query(params): Query<ConnIdParam>,
 ) -> Json<Value> {
-    Json(json!({
-        "queue_name": name,
-        "message": "Queue detail requires a live Oracle connection with TxEventQ enabled.",
-        "subscribers": [],
-        "throughput_history": [],
-        "latency_history": [],
-    }))
+    let conn_id: Option<String> = params.connection_id.clone().or_else(|| {
+        oracle_connections().read().first().map(|c| c.id.clone())
+    });
+    let queues = match conn_id {
+        Some(ref cid) => database_plugin::oracle_txeventq::collect_queues(cid),
+        None => database_plugin::oracle_txeventq::demo_queues(),
+    };
+    match queues.into_iter().find(|q| q.queue_name.eq_ignore_ascii_case(&name)) {
+        Some(q) => Json(json!(q)),
+        None => Json(json!({ "error": "Queue not found", "queue_name": name })),
+    }
 }
 
 /// GET /api/oracle/txeventq/stats — aggregates
-pub async fn txeventq_stats(State(_s): State<AppState>) -> Json<Value> {
-    Json(json!({
-        "total_queues": 0,
-        "active_queues": 0,
-        "total_ready": 0,
-        "total_processed": 0,
-        "avg_latency_ms": 0.0,
-        "max_latency_ms": 0.0,
-        "backlog_alert_count": 0,
-        "message": "No Oracle TxEventQ data available. Configure an Oracle connection to monitor queues."
-    }))
+pub async fn txeventq_stats(State(_s): State<AppState>, Query(params): Query<ConnIdParam>) -> Json<Value> {
+    let stats = database_plugin::oracle_txeventq::collect_stats(params.connection_id.as_deref());
+    Json(json!(stats))
 }
 
 // ============================================================================

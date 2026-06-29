@@ -144,6 +144,18 @@ pub async fn insert_alert_rule(pool: &PgPool, rule: &AlertRule) -> Result<(), sq
 }
 
 #[tracing::instrument(skip(pool), fields(db.system = "postgresql", db.operation = "SELECT", db.sql.table = "alert_rules", otel.kind = "client"))]
+pub async fn get_alert_rule(pool: &PgPool, rule_id: Uuid, org_id: Uuid) -> Result<Option<AlertRule>, sqlx::Error> {
+    let row = sqlx::query_as::<_, AlertRuleRow>(
+        "SELECT rule_id, org_id, name, description, metric_name, condition, window_seconds, severity, enabled, tags, created_at, updated_at FROM alert_rules WHERE rule_id = $1 AND org_id = $2"
+    )
+    .bind(rule_id)
+    .bind(org_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.and_then(|r| r.try_into().ok()))
+}
+
+#[tracing::instrument(skip(pool), fields(db.system = "postgresql", db.operation = "SELECT", db.sql.table = "alert_rules", otel.kind = "client"))]
 pub async fn list_alert_rules(pool: &PgPool, org_id: Uuid) -> Result<Vec<AlertRule>, sqlx::Error> {
     let rows = sqlx::query_as::<_, AlertRuleRow>(
         "SELECT rule_id, org_id, name, description, metric_name, condition, window_seconds, severity, enabled, tags, created_at, updated_at FROM alert_rules WHERE org_id = $1 ORDER BY name"

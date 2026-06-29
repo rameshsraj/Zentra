@@ -1,6 +1,6 @@
 use axum::{extract::{State, Path, Json}, http::StatusCode};
 use serde::{Deserialize, Serialize};
-use chrono::{Utc, Duration};
+use chrono::Utc;
 use parking_lot::RwLock;
 use std::sync::OnceLock;
 use crate::state::AppState;
@@ -54,7 +54,14 @@ fn instances() -> &'static RwLock<Vec<ApacheInstance>> {
 
 pub fn live_instances() -> &'static RwLock<Vec<ApacheInstance>> { instances() }
 
-pub async fn list_instances(State(_s): State<AppState>) -> Result<Json<Vec<ApacheInstance>>, ApiError> {
+pub async fn list_instances(State(s): State<AppState>) -> Result<Json<Vec<ApacheInstance>>, ApiError> {
+    let rows = sqlx::query_as::<_, (String, String, String, i32, String, String)>(
+        "SELECT id, name, host, port, status, created_at::TEXT FROM middleware_instances WHERE instance_type = 'apache' ORDER BY created_at"
+    ).fetch_all(&s.pool).await.unwrap_or_default();
+    let from_db: Vec<ApacheInstance> = rows.into_iter().map(|(id, name, host, port, status, created_at)|
+        ApacheInstance { id, name, host, port: port as u16, status, created_at }
+    ).collect();
+    if !from_db.is_empty() { *instances().write() = from_db.clone(); return Ok(Json(from_db)); }
     Ok(Json(instances().read().clone()))
 }
 
@@ -91,6 +98,9 @@ pub async fn get_status(State(state): State<AppState>, Path(id): Path<String>) -
                     }
                 }
             }
+            let _ = sqlx::query(
+                "INSERT INTO middleware_metrics (instance_id, instance_type, metric_name, value, collected_at) VALUES ($1,'apache','busy_workers',$2,now()),($1,'apache','req_per_sec',$3,now())"
+            ).bind(&id).bind(s.busy_workers as f64).bind(s.req_per_sec).execute(&state.pool).await;
             Ok(Json(s))
         }
         Ok(resp) => {
@@ -104,62 +114,48 @@ pub async fn get_status(State(state): State<AppState>, Path(id): Path<String>) -
     }
 }
 
-pub async fn performance_history(State(state): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<ApacheHistoryPoint>>, ApiError> {
-    let inst = {
-        let insts = instances().read();
-        insts.iter().find(|i| i.id == id).cloned()
-            .ok_or(ApiError::from((StatusCode::NOT_FOUND, "Instance not found".into())))?
-    };
-    let url = format!("http://{}:{}/server-status?auto", inst.host, inst.port);
-    let (busy, idle, rps, bps) = match state.http_client
-        .get(&url).send().await
-    {
-        Ok(resp) if resp.status().is_success() => {
-            let body = resp.text().await.unwrap_or_default();
-            let mut b: u64 = 0; let mut i: u64 = 0; let mut r: f64 = 0.0; let mut bp: f64 = 0.0;
-            for line in body.lines() {
-                if let Some((k, v)) = line.split_once(':') {
-                    let k = k.trim(); let v = v.trim();
-                    match k {
-                        "BusyWorkers" => b = v.parse().unwrap_or(0),
-                        "IdleWorkers" => i = v.parse().unwrap_or(0),
-                        "ReqPerSec" => r = v.parse().unwrap_or(0.0),
-                        "BytesPerSec" => bp = v.parse().unwrap_or(0.0),
-                        _ => {}
-                    }
-                }
-            }
-            (b, i, r, bp)
-        }
-        _ => (0, 0, 0.0, 0.0),
-    };
-    let now = Utc::now();
-    let points: Vec<ApacheHistoryPoint> = (0..60).rev().map(|i| {
-        let ts = now - Duration::minutes(i);
-        let j = (i as f64 * 0.15).sin();
-        let v = 0.15;
+pub async fn performance_history(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<ApacheHistoryPoint>>, ApiError> {
+    if !instances().read().iter().any(|i| i.id == id) {
+        return Err(ApiError::from((StatusCode::NOT_FOUND, "Instance not found".into())));
+    }
+    let rows = sqlx::query(
+        r#"SELECT time_bucket('1 minute', collected_at) AS bucket,
+           avg(CASE WHEN metric_name = 'busy_workers' THEN value END) AS busy_workers,
+           avg(CASE WHEN metric_name = 'req_per_sec' THEN value END) AS req_per_sec
+           FROM middleware_metrics
+           WHERE instance_id = $1 AND instance_type = 'apache'
+             AND collected_at > now() - INTERVAL '1 hour'
+           GROUP BY bucket ORDER BY bucket"#
+    ).bind(&id).fetch_all(&s.pool).await.unwrap_or_default();
+    let points: Vec<ApacheHistoryPoint> = rows.iter().map(|r| {
+        use sqlx::Row;
+        let bucket: chrono::DateTime<Utc> = r.get("bucket");
         ApacheHistoryPoint {
-            timestamp: ts.to_rfc3339(),
-            busy_workers: (busy as f64 * (1.0 + j * v)).max(0.0) as u64,
-            idle_workers: (idle as f64 * (1.0 - j * 0.05)).max(0.0) as u64,
-            req_per_sec: (rps * (1.0 + j * v)).max(0.0),
-            bytes_per_sec: (bps * (1.0 + j * v)).max(0.0),
+            timestamp: bucket.to_rfc3339(),
+            busy_workers: r.get::<Option<f64>, _>("busy_workers").unwrap_or(0.0) as u64,
+            idle_workers: 0,
+            req_per_sec: r.get::<Option<f64>, _>("req_per_sec").unwrap_or(0.0),
+            bytes_per_sec: 0.0,
         }
     }).collect();
     Ok(Json(points))
 }
 
-pub async fn create_instance(State(_s): State<AppState>, Json(req): Json<CreateApacheRequest>) -> Result<Json<ApacheInstance>, ApiError> {
+pub async fn create_instance(State(s): State<AppState>, Json(req): Json<CreateApacheRequest>) -> Result<Json<ApacheInstance>, ApiError> {
     let inst = ApacheInstance {
         id: crate::error::short_id("apache"),
         name: req.name, host: req.host, port: req.port.unwrap_or(8080),
         status: "unknown".into(), created_at: Utc::now().to_rfc3339(),
     };
+    let _ = sqlx::query(
+        "INSERT INTO middleware_instances (id, instance_type, name, host, port) VALUES ($1, 'apache', $2, $3, $4) ON CONFLICT (id) DO NOTHING"
+    ).bind(&inst.id).bind(&inst.name).bind(&inst.host).bind(inst.port as i32).execute(&s.pool).await;
     instances().write().push(inst.clone());
     Ok(Json(inst))
 }
 
-pub async fn delete_instance(State(_s): State<AppState>, Path(id): Path<String>) -> Result<Json<serde_json::Value>, ApiError> {
+pub async fn delete_instance(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<serde_json::Value>, ApiError> {
+    let _ = sqlx::query("DELETE FROM middleware_instances WHERE id = $1 AND instance_type = 'apache'").bind(&id).execute(&s.pool).await;
     let mut insts = instances().write();
     let before = insts.len();
     insts.retain(|i| i.id != id);
