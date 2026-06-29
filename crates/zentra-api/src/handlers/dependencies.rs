@@ -60,31 +60,7 @@ fn store() -> &'static RwLock<DepStore> {
 }
 
 fn init_store() -> DepStore {
-    let now = Utc::now().to_rfc3339();
-    let dependencies = vec![
-        HostDependency { id: "dep-001".into(), parent_target_id: "10.88.11.1".into(), child_target_id: "10.88.11.162".into(), dependency_type: "network".into(), description: "Gateway → App Server".into(), created_at: now.clone() },
-        HostDependency { id: "dep-002".into(), parent_target_id: "10.88.11.1".into(), child_target_id: "10.88.11.50".into(), dependency_type: "network".into(), description: "Gateway → DB Server".into(), created_at: now.clone() },
-        HostDependency { id: "dep-003".into(), parent_target_id: "10.88.11.162".into(), child_target_id: "10.88.11.50".into(), dependency_type: "service".into(), description: "App Server → PostgreSQL".into(), created_at: now.clone() },
-        HostDependency { id: "dep-004".into(), parent_target_id: "10.88.11.162".into(), child_target_id: "10.88.11.51".into(), dependency_type: "service".into(), description: "App Server → MySQL".into(), created_at: now.clone() },
-        HostDependency { id: "dep-005".into(), parent_target_id: "10.88.11.162".into(), child_target_id: "10.88.11.100".into(), dependency_type: "service".into(), description: "App Server → Mail Server".into(), created_at: now.clone() },
-    ];
-
-    let flapping = vec![
-        FlappingCheck {
-            check_id: "hc-snmp-uptime".into(), check_name: "SNMP System Uptime".into(),
-            target_host: "10.88.11.1".into(), transition_count: 7, window_minutes: 30,
-            current_status: "critical".into(), acknowledged: false,
-            flapping_since: (Utc::now() - chrono::Duration::minutes(25)).to_rfc3339(),
-        },
-        FlappingCheck {
-            check_id: "hc-disk-data".into(), check_name: "Data Disk Space".into(),
-            target_host: "10.88.11.162".into(), transition_count: 5, window_minutes: 30,
-            current_status: "warning".into(), acknowledged: false,
-            flapping_since: (Utc::now() - chrono::Duration::minutes(15)).to_rfc3339(),
-        },
-    ];
-
-    DepStore { dependencies, flapping }
+    DepStore { dependencies: vec![], flapping: vec![] }
 }
 
 // ── Dependency API ───────────────────────────────────────────────────

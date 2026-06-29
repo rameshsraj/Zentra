@@ -560,7 +560,7 @@ fn simulate_check(check: &HealthCheck) -> (String, f64, String, serde_json::Valu
             let domain = check.config.get("domain").and_then(|v| v.as_str()).unwrap_or("example.com");
             let rt = 10.0 + jitter;
             (String::from("ok"), rt, format!("DNS {} resolved in {}ms", domain, rt as u64),
-             serde_json::json!({"domain": domain, "resolved": "93.184.216.34", "resolution_time_ms": rt}))
+             serde_json::json!({"domain": domain, "resolved": null, "resolution_time_ms": rt}))
         },
         "ssl_cert" => {
             let days = 245 - (now_ms % 30) as i64;

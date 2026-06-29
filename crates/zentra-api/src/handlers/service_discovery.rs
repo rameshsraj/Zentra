@@ -195,15 +195,10 @@ pub async fn snmp_walk(
     Json(req): Json<SnmpWalkRequest>,
 ) -> Json<Value> {
     let oid = req.oid.unwrap_or_else(|| "1.3.6.1.2.1".into());
-    // In production: perform actual SNMP walk
     Json(json!({
         "target": req.target,
         "oid": oid,
-        "results": [
-            {"oid": "1.3.6.1.2.1.1.1.0", "type": "OctetString", "value": "Linux server 5.15.0"},
-            {"oid": "1.3.6.1.2.1.1.3.0", "type": "TimeTicks", "value": "123456789"},
-            {"oid": "1.3.6.1.2.1.1.5.0", "type": "OctetString", "value": "web-01.example.com"},
-            {"oid": "1.3.6.1.2.1.2.1.0", "type": "Integer", "value": "3"},
-        ]
+        "results": [],
+        "note": "SNMP walk requires the zentra-agent to be installed on a host with network access to the target."
     }))
 }
