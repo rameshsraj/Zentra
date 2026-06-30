@@ -63,6 +63,12 @@ function targetToPlaceholder(t: Target): ServerView {
 }
 
 function applyStats(sv: ServerView, stats: ServerStats): ServerView {
+  const reachable = stats.reachable !== false
+  const status = !reachable
+    ? 'unreachable'
+    : (stats.cpu_usage_percent > 90 || stats.memory_usage_percent > 90 ? 'critical'
+       : stats.cpu_usage_percent > 75 || stats.memory_usage_percent > 80 ? 'warning'
+       : 'healthy')
   return {
     ...sv,
     name: stats.hostname || sv.name,
@@ -84,10 +90,10 @@ function applyStats(sv: ServerView, stats: ServerStats): ServerView {
     disk_used_gb: stats.disk_used_gb,
     process_count: stats.process_count,
     logged_in_users: stats.logged_in_users,
-    reachable: true,
+    reachable,
     loading: false,
-    error: null as string | null,
-    status: (stats.cpu_usage_percent > 90 || stats.memory_usage_percent > 90 ? 'critical' : stats.cpu_usage_percent > 75 || stats.memory_usage_percent > 80 ? 'warning' : 'healthy'),
+    error: stats.error ?? null,
+    status,
     disks: stats.disks || [],
     nfs_mounts: stats.nfs_mounts || [],
   } as ServerView

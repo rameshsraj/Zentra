@@ -8,6 +8,7 @@ pub mod offline_buffer;
 pub mod heartbeat;
 pub mod remote_targets;
 pub mod network_scan;
+pub mod log_capture;
 
 pub mod collectors {
     pub mod hubble;

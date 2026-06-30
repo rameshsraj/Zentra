@@ -594,7 +594,7 @@ echo "===END==="
         .args(&ssh_args)
         .output()
         .await
-        .map_err(|e| ApiError::Internal(ssh_utils::friendly_error(host, &e.to_string())))?;
+        .map_err(|e| ApiError::BadRequest(ssh_utils::friendly_error(host, &e.to_string())))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -927,11 +927,11 @@ echo "===END==="
         .args(&ssh_args)
         .output()
         .await
-        .map_err(|e| ApiError::Internal(ssh_utils::friendly_error(host, &e.to_string())))?;
+        .map_err(|e| ApiError::BadRequest(ssh_utils::friendly_error(host, &e.to_string())))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(ApiError::Internal(ssh_utils::friendly_error(host, &stderr)));
+        return Err(ApiError::BadRequest(ssh_utils::friendly_error(host, &stderr)));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);

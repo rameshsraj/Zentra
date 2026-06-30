@@ -5,6 +5,7 @@ use zentra_agent::remote_delivery::RemoteDeliveryService;
 use zentra_agent::heartbeat::HeartbeatLoop;
 use zentra_agent::remote_targets::RemoteTargetFetcher;
 use zentra_agent::network_scan::NetworkScanner;
+use zentra_agent::log_capture::{CaptureLayer, LogBuffer};
 use zentra_core::models::metric::MetricBatch;
 use zentra_core::models::log_entry::LogBatch;
 use zentra_db::pool::create_pool;
@@ -24,15 +25,20 @@ use uuid::Uuid;
 async fn main() {
     dotenvy::dotenv().ok();
 
+    // Shared log buffer — populated by CaptureLayer, drained by HeartbeatLoop.
+    let log_buffer = LogBuffer::new();
+
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info"));
     let fmt_layer = tracing_subscriber::fmt::layer().with_target(true);
     let otel_layer = zentra_core::telemetry::init_telemetry("zentra-agent");
+    let capture_layer = CaptureLayer::new(log_buffer.clone());
 
     tracing_subscriber::registry()
         .with(env_filter)
         .with(fmt_layer)
         .with(otel_layer)
+        .with(capture_layer)
         .init();
 
     info!("Zentra Agent starting...");
@@ -40,7 +46,7 @@ async fn main() {
     let config = zentra_core::AppConfig::from_env();
 
     if config.agent_mode == "remote" {
-        run_remote_mode(config).await;
+        run_remote_mode(config, log_buffer).await;
     } else {
         run_local_mode(config).await;
     }
@@ -190,7 +196,7 @@ async fn run_local_mode(config: zentra_core::AppConfig) {
 // REMOTE MODE — no DB, communicates with Zentra server over HTTPS
 // ============================================================================
 
-async fn run_remote_mode(config: zentra_core::AppConfig) {
+async fn run_remote_mode(config: zentra_core::AppConfig, log_buffer: LogBuffer) {
     info!(
         api_endpoint = %config.api_endpoint,
         dc_name = %config.dc_name,
@@ -232,6 +238,7 @@ async fn run_remote_mode(config: zentra_core::AppConfig) {
         config.dc_name.clone(),
         active_targets.clone(),
         cancel.clone(),
+        log_buffer.clone(),
     );
     tokio::spawn(async move {
         heartbeat.run().await;

@@ -1,0 +1,1 @@
+import{f as s}from"./index-C9hNvhsW.js";const e=()=>s("/predictions/forecasts"),o=()=>s("/predictions/anomalies"),r=()=>s("/predictions/trend-alerts"),a=()=>s("/predictions/summary");export{e as a,o as b,r as c,a as g};

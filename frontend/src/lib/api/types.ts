@@ -76,6 +76,8 @@ export interface ServerStats {
   nfs_mounts: { remote: string; mount: string; total_gb: number; used_gb: number; free_gb: number; usage_percent: number }[]
   network_interfaces: { name: string; rx_bytes: number; tx_bytes: number; rx_packets: number; tx_packets: number }[]
   collected_at: string
+  reachable?: boolean
+  error?: string | null
 }
 
 export interface MetricPoint {

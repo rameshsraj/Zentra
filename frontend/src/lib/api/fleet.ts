@@ -89,6 +89,17 @@ export function getOnboardingChecklist(): Promise<OnboardingChecklist> {
   return fetchJSON<OnboardingChecklist>('/onboarding/checklist')
 }
 
+export interface AgentLogLine {
+  timestamp: string
+  level: string
+  target: string
+  message: string
+}
+
+export function getAgentLogsByDc(dcName: string): Promise<{ lines: AgentLogLine[] }> {
+  return fetchJSON<{ lines: AgentLogLine[] }>(`/agents/by-dc/${encodeURIComponent(dcName)}/logs`)
+}
+
 export interface DiscoveredHost {
   id: string
   ip_address: string

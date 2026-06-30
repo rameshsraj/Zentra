@@ -165,7 +165,6 @@ const navItems: NavItem[] = [
     children: [
       { to: '/fleet', label: 'Agents', icon: Server },
       { to: '/fleet/install', label: 'Install Wizard', icon: Cpu },
-      { to: '/fleet/keys', label: 'Agent Keys', icon: Shield },
     ],
   },
   {
