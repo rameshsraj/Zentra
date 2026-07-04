@@ -9,6 +9,7 @@ pub mod heartbeat;
 pub mod remote_targets;
 pub mod network_scan;
 pub mod log_capture;
+pub mod component_discovery;
 
 pub mod collectors {
     pub mod hubble;

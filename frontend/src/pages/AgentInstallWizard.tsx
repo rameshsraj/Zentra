@@ -1,12 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { registerAgent, listAgents, getAgentLogsByDc, type AgentLogLine } from '@/lib/api/fleet'
-import { fetchJSON } from '@/lib/api/_client'
+import {
+  registerAgent, listAgents, getAgentLogsByDc,
+  getComponentsByDc, confirmComponents,
+  type AgentLogLine, type DiscoveredComponent,
+} from '@/lib/api/fleet'
 import PageHeader from '@/components/PageHeader'
 import {
   Server, Copy, Check, Loader2, CheckCircle2,
   AlertTriangle, ChevronRight, ChevronDown, Terminal,
+  RefreshCw, Package, Database, Globe, Cpu,
 } from 'lucide-react'
 
 type Step = 1 | 2 | 3 | 4
@@ -371,63 +375,253 @@ function StepWaiting({ dcName, onConnected }: { dcName: string; onConnected: () 
 
 // ── Step 4: Targets Discovered ─────────────────────────────────────
 
-interface Target { target_id: string; name: string; host: string; target_subtype: string }
+function componentIcon(type: string) {
+  switch (type) {
+    case 'postgres': case 'mysql': case 'oracle': case 'mongodb':
+      return <Database className="h-4 w-4 text-blue-400" />
+    case 'nginx': case 'apache': case 'haproxy': case 'tomcat':
+      return <Globe className="h-4 w-4 text-green-400" />
+    case 'redis': case 'memcached': case 'kafka': case 'rabbitmq':
+      return <Package className="h-4 w-4 text-amber-400" />
+    default:
+      return <Cpu className="h-4 w-4 text-zinc-400" />
+  }
+}
+
+function ComponentRow({
+  comp, selected, onToggle,
+}: { comp: DiscoveredComponent; selected: boolean; onToggle: () => void }) {
+  const isConfirmed = comp.confirmed
+  return (
+    <tr
+      className={`border-b border-border last:border-0 transition-colors ${
+        isConfirmed ? 'opacity-60' : selected ? 'bg-blue-500/5' : 'hover:bg-muted/30'
+      }`}
+    >
+      <td className="px-4 py-3">
+        {isConfirmed ? (
+          <CheckCircle2 className="h-4 w-4 text-green-400" />
+        ) : (
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={onToggle}
+            className="rounded border-border"
+          />
+        )}
+      </td>
+      <td className="px-4 py-3">
+        <div className="flex items-center gap-2">
+          {componentIcon(comp.component_type)}
+          <span className="font-medium">{comp.component_name}</span>
+          {isConfirmed && (
+            <span className="rounded-full bg-green-500/15 px-2 py-0.5 text-xs text-green-400">Added</span>
+          )}
+        </div>
+      </td>
+      <td className="px-4 py-3">
+        <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+          {comp.component_type}
+        </span>
+      </td>
+      <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
+        {comp.address}{comp.port ? `:${comp.port}` : ''}
+      </td>
+      <td className="px-4 py-3 text-xs text-muted-foreground">
+        {comp.version ?? '—'}
+      </td>
+    </tr>
+  )
+}
 
 function StepTargets({ dcName }: { dcName: string }) {
   const navigate = useNavigate()
-  const { data: targets = [] } = useQuery({
-    queryKey: ['targets', 'recent'],
-    queryFn: () => fetchJSON<Target[]>('/targets'),
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [confirmed, setConfirmed] = useState(false)
+  const [createdCount, setCreatedCount] = useState(0)
+
+  const { data, isLoading, isError, refetch, isFetching } = useQuery({
+    queryKey: ['components', dcName],
+    queryFn: () => getComponentsByDc(dcName),
+    refetchInterval: confirmed ? false : 15_000,
+    enabled: !!dcName,
   })
+
+  const components = data?.components ?? []
+  const pending = components.filter(c => !c.confirmed)
+  const alreadyAdded = components.filter(c => c.confirmed)
+
+  // Auto-select all pending components on first load
+  useEffect(() => {
+    if (pending.length > 0 && selected.size === 0) {
+      setSelected(new Set(pending.map(c => c.id)))
+    }
+  }, [pending.length]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const confirmMut = useMutation({
+    mutationFn: () => confirmComponents({
+      component_ids: Array.from(selected),
+      datacenter_name: dcName,
+    }),
+    onSuccess: (res) => {
+      setCreatedCount(res.created)
+      setConfirmed(true)
+      refetch()
+    },
+  })
+
+  const toggleAll = () => {
+    if (selected.size === pending.length) {
+      setSelected(new Set())
+    } else {
+      setSelected(new Set(pending.map(c => c.id)))
+    }
+  }
+
+  const toggle = (id: string) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   return (
     <div className="space-y-6">
+      {/* Connection success banner */}
       <div className="flex items-center gap-3 text-green-400">
         <CheckCircle2 className="h-8 w-8" />
         <h3 className="text-lg font-semibold">Agent connected successfully!</h3>
       </div>
 
-      {targets.length > 0 ? (
-        <div className="rounded-xl border border-border bg-card overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-left text-muted-foreground">
-                <th className="px-4 py-3 font-medium">Name</th>
-                <th className="px-4 py-3 font-medium">Host</th>
-                <th className="px-4 py-3 font-medium">Type</th>
-              </tr>
-            </thead>
-            <tbody>
-              {targets.map((t) => (
-                <tr key={t.target_id} className="border-b border-border last:border-0">
-                  <td className="px-4 py-3 font-medium">{t.name}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{t.host}</td>
-                  <td className="px-4 py-3 text-muted-foreground">{t.target_subtype}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* Confirmed banner */}
+      {confirmed && createdCount > 0 && (
+        <div className="rounded-lg border border-green-500/30 bg-green-500/10 p-4">
+          <p className="text-sm text-green-400 font-medium">
+            ✓ {createdCount} monitoring target{createdCount !== 1 ? 's' : ''} created and will start collecting shortly.
+          </p>
+        </div>
+      )}
+
+      {/* Discovery result */}
+      {isLoading ? (
+        <div className="flex flex-col items-center justify-center py-10 gap-3">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-400" />
+          <p className="text-sm text-muted-foreground">Waiting for agent to report discovered components…</p>
+          <p className="text-xs text-muted-foreground">This may take up to 30 seconds after the agent starts.</p>
+        </div>
+      ) : isError ? (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-4 space-y-3">
+          <p className="text-sm font-medium text-red-400">Failed to fetch discovered components</p>
+          <p className="text-xs text-muted-foreground">Possible reasons: agent not yet connected, discovery still running, or network issue.</p>
+          <button
+            onClick={() => refetch()}
+            className="flex items-center gap-2 rounded-lg bg-zinc-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-600"
+          >
+            <RefreshCw className="h-3.5 w-3.5" /> Retry
+          </button>
+        </div>
+      ) : components.length === 0 ? (
+        <div className="rounded-lg border border-border bg-card p-6 space-y-4">
+          <div className="text-center space-y-2">
+            <p className="text-muted-foreground font-medium">No components discovered yet</p>
+            <p className="text-xs text-muted-foreground">The agent scans for local services every 5 minutes.</p>
+          </div>
+          <ul className="list-disc list-inside text-xs text-muted-foreground space-y-1">
+            <li>Ensure the agent process is running on the target host</li>
+            <li>Agent must be able to reach <code className="text-xs">{window.location.origin}</code></li>
+            <li>Check agent logs below for errors</li>
+            <li>Supported: PostgreSQL, MySQL, Redis, nginx, Apache, MongoDB, Oracle, Kafka, RabbitMQ</li>
+          </ul>
+          <button
+            onClick={() => refetch()}
+            disabled={isFetching}
+            className="flex items-center gap-2 rounded-lg bg-zinc-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-zinc-600 disabled:opacity-50"
+          >
+            {isFetching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            Retry Discovery
+          </button>
         </div>
       ) : (
-        <div className="rounded-lg border border-border bg-card p-6 text-center space-y-3">
-          <p className="text-muted-foreground">No targets discovered yet.</p>
-          <button
-            onClick={() => navigate('/servers')}
-            className="rounded-lg bg-zinc-700 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-600"
-          >
-            Add target manually
-          </button>
+        <div className="space-y-4">
+          {/* Already-added section */}
+          {alreadyAdded.length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              {alreadyAdded.length} component{alreadyAdded.length !== 1 ? 's' : ''} already added as targets.
+            </p>
+          )}
+
+          <div className="rounded-xl border border-border bg-card overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-muted-foreground bg-muted/30">
+                  <th className="px-4 py-3 w-10">
+                    {pending.length > 0 && (
+                      <input
+                        type="checkbox"
+                        checked={selected.size === pending.length && pending.length > 0}
+                        onChange={toggleAll}
+                        className="rounded border-border"
+                      />
+                    )}
+                  </th>
+                  <th className="px-4 py-3 font-medium">Component</th>
+                  <th className="px-4 py-3 font-medium">Type</th>
+                  <th className="px-4 py-3 font-medium">Address</th>
+                  <th className="px-4 py-3 font-medium">Version</th>
+                </tr>
+              </thead>
+              <tbody>
+                {components.map(comp => (
+                  <ComponentRow
+                    key={comp.id}
+                    comp={comp}
+                    selected={selected.has(comp.id)}
+                    onToggle={() => toggle(comp.id)}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Confirm button */}
+          {pending.length > 0 && !confirmed && (
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => confirmMut.mutate()}
+                disabled={selected.size === 0 || confirmMut.isPending}
+                className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                {confirmMut.isPending
+                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                  : <CheckCircle2 className="h-4 w-4" />}
+                Add {selected.size} selected component{selected.size !== 1 ? 's' : ''} to monitoring
+              </button>
+              {confirmMut.isError && (
+                <p className="text-sm text-red-400">{(confirmMut.error as Error).message}</p>
+              )}
+            </div>
+          )}
         </div>
       )}
 
       <AgentLogTail dcName={dcName} defaultOpen={false} />
 
-      <button
-        onClick={() => navigate('/dashboard')}
-        className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
-      >
-        Go to Dashboard <ChevronRight className="h-4 w-4" />
-      </button>
+      <div className="flex items-center gap-3">
+        <button
+          onClick={() => navigate('/dashboard')}
+          className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
+        >
+          Go to Dashboard <ChevronRight className="h-4 w-4" />
+        </button>
+        <button
+          onClick={() => navigate('/servers')}
+          className="flex items-center gap-2 rounded-lg bg-zinc-700 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-600 transition-colors"
+        >
+          Server Fleet
+        </button>
+      </div>
     </div>
   )
 }

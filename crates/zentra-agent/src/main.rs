@@ -6,6 +6,7 @@ use zentra_agent::heartbeat::HeartbeatLoop;
 use zentra_agent::remote_targets::RemoteTargetFetcher;
 use zentra_agent::network_scan::NetworkScanner;
 use zentra_agent::log_capture::{CaptureLayer, LogBuffer};
+use zentra_agent::component_discovery::ComponentDiscovery;
 use zentra_core::models::metric::MetricBatch;
 use zentra_core::models::log_entry::LogBatch;
 use zentra_db::pool::create_pool;
@@ -273,6 +274,18 @@ async fn run_remote_mode(config: zentra_core::AppConfig, log_buffer: LogBuffer) 
     } else {
         tracing::warn!("ZENTRA_AGENT_ID not set — network host discovery disabled");
     }
+
+    // Component discovery — detects local services (postgres, nginx, redis, etc.)
+    // and reports them to the server so the wizard can show them for user selection.
+    let comp_disc = ComponentDiscovery::new(
+        config.api_endpoint.clone(),
+        config.agent_api_key.clone(),
+        config.dc_name.clone(),
+        cancel.clone(),
+    );
+    tokio::spawn(async move {
+        comp_disc.run().await;
+    }.instrument(tracing::info_span!("agent.component_discovery")));
 
     // Wait for shutdown
     tokio::signal::ctrl_c().await.ok();

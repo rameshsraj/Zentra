@@ -706,3 +706,263 @@ pub async fn update_discovered_host(
 
     Ok(Json(json!({ "updated": true, "id": host_id })))
 }
+
+// ============================================================================
+// Local Component Discovery (Feature 7 — agent self-inspection)
+// Agent reports which services are running on its own host; user confirms
+// selection → targets are auto-created with the agent_id set so no SSH needed.
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct ReportComponentEntry {
+    pub component_type: String,  // "linux","postgres","mysql","redis","nginx","apache","mongodb","oracle"
+    pub component_name: String,
+    pub address: String,
+    pub port: Option<i32>,
+    pub version: Option<String>,
+    #[serde(default)]
+    pub extra: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReportComponentsRequest {
+    pub components: Vec<ReportComponentEntry>,
+}
+
+/// POST /api/agents/by-dc/:dc_name/components — called by the agent to report
+/// locally-detected services. Uses Bearer auth (same as heartbeat).
+pub async fn report_components(
+    State(state): State<AppState>,
+    Path(dc_name): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<ReportComponentsRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let raw_key = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .map(|s| s.to_string())
+        .ok_or_else(|| ApiError::Unauthorized("Missing Authorization header".into()))?;
+
+    let (org_id, _) = validate_otlp_key(&state, &raw_key)
+        .await
+        .map_err(ApiError::Unauthorized)?;
+
+    // Resolve the agent_id for this dc_name + org
+    let agent_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT agent_id FROM agent_fleet WHERE org_id = $1 AND datacenter_name = $2 AND status = 'active' LIMIT 1"
+    )
+    .bind(org_id)
+    .bind(dc_name.trim())
+    .fetch_optional(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let agent_id = agent_id.ok_or_else(|| ApiError::NotFound("No active agent for this datacenter".into()))?;
+
+    let mut upserted = 0usize;
+    for comp in &body.components {
+        let extra = if comp.extra.is_null() { serde_json::Value::Object(Default::default()) } else { comp.extra.clone() };
+        sqlx::query(
+            "INSERT INTO discovered_components
+             (agent_id, org_id, component_type, component_name, address, port, version, extra, first_seen, last_seen)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+             ON CONFLICT (agent_id, component_type, port) DO UPDATE
+             SET component_name = EXCLUDED.component_name,
+                 version        = COALESCE(EXCLUDED.version, discovered_components.version),
+                 extra          = EXCLUDED.extra,
+                 last_seen      = NOW()"
+        )
+        .bind(agent_id)
+        .bind(org_id)
+        .bind(&comp.component_type)
+        .bind(&comp.component_name)
+        .bind(&comp.address)
+        .bind(comp.port)
+        .bind(comp.version.as_deref())
+        .bind(&extra)
+        .execute(&state.tsdb_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+        upserted += 1;
+    }
+
+    Ok(Json(json!({ "upserted": upserted, "agent_id": agent_id })))
+}
+
+/// GET /api/agents/by-dc/:dc_name/components — user-facing; lists discovered
+/// components for the given datacenter. Used by the Install Wizard Step 4.
+pub async fn list_components(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(dc_name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    require_agent_admin(&ctx)?;
+
+    let rows = sqlx::query(
+        "SELECT dc.id, dc.component_type, dc.component_name, dc.address, dc.port,
+                dc.version, dc.extra, dc.confirmed, dc.ignored, dc.target_id,
+                dc.first_seen, dc.last_seen,
+                af.agent_id, af.status AS agent_status
+         FROM discovered_components dc
+         JOIN agent_fleet af ON af.agent_id = dc.agent_id
+         WHERE af.org_id = $1 AND af.datacenter_name = $2 AND dc.ignored = FALSE
+         ORDER BY dc.confirmed ASC, dc.last_seen DESC"
+    )
+    .bind(ctx.org_id)
+    .bind(dc_name.trim())
+    .fetch_all(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let components: Vec<Value> = rows.iter().map(|r| {
+        json!({
+            "id":             r.get::<Uuid, _>("id"),
+            "component_type": r.get::<String, _>("component_type"),
+            "component_name": r.get::<String, _>("component_name"),
+            "address":        r.get::<String, _>("address"),
+            "port":           r.get::<Option<i32>, _>("port"),
+            "version":        r.get::<Option<String>, _>("version"),
+            "extra":          r.get::<serde_json::Value, _>("extra"),
+            "confirmed":      r.get::<bool, _>("confirmed"),
+            "target_id":      r.get::<Option<Uuid>, _>("target_id"),
+            "first_seen":     r.get::<DateTime<Utc>, _>("first_seen"),
+            "last_seen":      r.get::<DateTime<Utc>, _>("last_seen"),
+            "agent_id":       r.get::<Uuid, _>("agent_id"),
+            "agent_status":   r.get::<String, _>("agent_status"),
+        })
+    }).collect();
+
+    Ok(Json(json!({
+        "components": components,
+        "datacenter": dc_name.trim(),
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConfirmComponentsRequest {
+    /// IDs of discovered_components rows the user selected
+    pub component_ids: Vec<Uuid>,
+    /// The datacenter name (used to set agent_id on created targets)
+    pub datacenter_name: String,
+}
+
+/// POST /api/agents/components/confirm — user selects components to monitor;
+/// we auto-create targets for each one and mark them confirmed.
+pub async fn confirm_components(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<AuthContext>,
+    Json(body): Json<ConfirmComponentsRequest>,
+) -> Result<Json<Value>, ApiError> {
+    require_agent_admin(&ctx)?;
+
+    if body.component_ids.is_empty() {
+        return Err(ApiError::BadRequest("component_ids must not be empty".into()));
+    }
+
+    // Fetch the agent_id for this datacenter
+    let agent_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT agent_id FROM agent_fleet WHERE org_id = $1 AND datacenter_name = $2 AND status = 'active' LIMIT 1"
+    )
+    .bind(ctx.org_id)
+    .bind(body.datacenter_name.trim())
+    .fetch_optional(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let agent_id = agent_id.ok_or_else(|| ApiError::NotFound("No active agent for this datacenter".into()))?;
+
+    // Fetch the selected components that belong to this org and aren't already confirmed
+    let rows = sqlx::query(
+        "SELECT dc.id, dc.component_type, dc.component_name, dc.address, dc.port, dc.version
+         FROM discovered_components dc
+         JOIN agent_fleet af ON af.agent_id = dc.agent_id
+         WHERE dc.id = ANY($1) AND af.org_id = $2 AND dc.confirmed = FALSE"
+    )
+    .bind(&body.component_ids)
+    .bind(ctx.org_id)
+    .fetch_all(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let mut created_targets: Vec<Value> = Vec::new();
+
+    for row in &rows {
+        let comp_id: Uuid = row.get("id");
+        let comp_type: String = row.get("component_type");
+        let comp_name: String = row.get("component_name");
+        let address: String = row.get("address");
+        let port: Option<i32> = row.get("port");
+        let version: Option<String> = row.get("version");
+
+        // Map component_type → target_subtype string
+        let subtype = match comp_type.as_str() {
+            "linux" | "server"  => "linux",
+            "windows"           => "windows",
+            "postgres"          => "postgres",
+            "mysql"             => "mysql",
+            "oracle"            => "oracle",
+            "redis"             => "redis",
+            "mongodb"           => "mongodb",
+            "nginx" | "apache" | "haproxy" | "tomcat" | "phpfpm" => "linux",
+            _                   => "linux",
+        };
+
+        let display_name = if let Some(v) = &version {
+            format!("{} ({})", comp_name, v)
+        } else {
+            comp_name.clone()
+        };
+        let default_port: Option<u16> = port.map(|p| p as u16);
+
+        let target_id = Uuid::now_v7();
+        let now = Utc::now();
+
+        // Insert a minimal target — no SSH credentials needed; agent_id is set
+        // so the remote agent will collect metrics directly.
+        let insert_ok = sqlx::query(
+            "INSERT INTO targets
+             (target_id, org_id, name, target_type, target_subtype, host, port,
+              agent_id, status, consecutive_failures, created_at, updated_at)
+             VALUES ($1, $2, $3, 'server', $4, $5, $6, $7, 'active', 0, $8, $8)
+             ON CONFLICT DO NOTHING"
+        )
+        .bind(target_id)
+        .bind(ctx.org_id)
+        .bind(&display_name)
+        .bind(subtype)
+        .bind(&address)
+        .bind(default_port.map(|p| p as i32))
+        .bind(agent_id)
+        .bind(now)
+        .execute(&state.tsdb_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+        if insert_ok.rows_affected() > 0 {
+            // Mark component as confirmed and link target_id
+            sqlx::query(
+                "UPDATE discovered_components SET confirmed = TRUE, target_id = $2 WHERE id = $1"
+            )
+            .bind(comp_id)
+            .bind(target_id)
+            .execute(&state.tsdb_pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+            created_targets.push(json!({
+                "target_id":    target_id,
+                "name":         display_name,
+                "host":         address,
+                "subtype":      subtype,
+                "component_id": comp_id,
+            }));
+        }
+    }
+
+    Ok(Json(json!({
+        "created": created_targets.len(),
+        "targets": created_targets,
+    })))
+}
