@@ -986,48 +986,64 @@ pub async fn confirm_components(
         let port: Option<i32> = row.get("port");
         let version: Option<String> = row.get("version");
 
-        // Map component_type → target_subtype string
-        let subtype = match comp_type.as_str() {
-            "linux" | "server"       => "linux",
-            "windows"               => "windows",
-            "oracle"                => "oracle",
-            "redis"                 => "redis",
-            "nginx" | "apache"
-            | "haproxy" | "tomcat"
-            | "phpfpm"              => "linux",
-            "elasticsearch"
-            | "kafka" | "rabbitmq"
-            | "memcached"           => "linux",
-            "network_interface"     => "linux",
-            "log_directory"         => "linux",
-            _                       => "linux",
+        // network_interface and log_directory are metadata — just mark confirmed,
+        // no target row needed. log_directory paths are consumed by OTEL log collection.
+        if comp_type == "network_interface" || comp_type == "log_directory" {
+            sqlx::query(
+                "UPDATE discovered_components SET confirmed = TRUE WHERE id = $1"
+            )
+            .bind(comp_id)
+            .execute(&state.tsdb_pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+            created_targets.push(json!({
+                "component_id": comp_id,
+                "name":         comp_name,
+                "type":         comp_type,
+                "acknowledged": true,
+            }));
+            continue;
+        }
+
+        // Map component_type → (target_subtype, default_port)
+        let (subtype, fallback_port): (&str, i32) = match comp_type.as_str() {
+            "linux" | "server"                          => ("linux",         22),
+            "windows"                                   => ("windows",       3389),
+            "oracle"                                    => ("oracle",        1521),
+            "redis"                                     => ("redis",         6379),
+            "nginx" | "apache" | "haproxy"              => ("linux",         80),
+            "tomcat"                                    => ("linux",         8080),
+            "phpfpm"                                    => ("linux",         9000),
+            "elasticsearch"                             => ("linux",        9200),
+            "kafka"                                     => ("linux",         9092),
+            "rabbitmq"                                  => ("linux",         5672),
+            "memcached"                                 => ("linux",        11211),
+            _                                           => ("linux",         22),
         };
+        let effective_port = port.unwrap_or(fallback_port);
 
         let display_name = if let Some(v) = &version {
             format!("{} ({})", comp_name, v)
         } else {
             comp_name.clone()
         };
-        let default_port: Option<u16> = port.map(|p| p as u16);
 
         let target_id = Uuid::now_v7();
         let now = Utc::now();
 
-        // Insert a minimal target — no SSH credentials needed; agent_id is set
-        // so the remote agent will collect metrics directly.
         let insert_ok = sqlx::query(
             "INSERT INTO targets
              (target_id, org_id, name, target_type, target_subtype, host, port,
               agent_id, status, consecutive_failures, created_at, updated_at)
              VALUES ($1, $2, $3, 'server', $4, $5, $6, $7, 'active', 0, $8, $8)
-             ON CONFLICT DO NOTHING"
+             ON CONFLICT (target_id) DO NOTHING"
         )
         .bind(target_id)
         .bind(ctx.org_id)
         .bind(&display_name)
         .bind(subtype)
         .bind(&address)
-        .bind(default_port.map(|p| p as i32))
+        .bind(effective_port)
         .bind(agent_id)
         .bind(now)
         .execute(&state.tsdb_pool)
@@ -1035,7 +1051,6 @@ pub async fn confirm_components(
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
         if insert_ok.rows_affected() > 0 {
-            // Mark component as confirmed and link target_id
             sqlx::query(
                 "UPDATE discovered_components SET confirmed = TRUE, target_id = $2 WHERE id = $1"
             )
