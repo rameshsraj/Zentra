@@ -708,6 +708,85 @@ pub async fn update_discovered_host(
 }
 
 // ============================================================================
+// Agent binary download — GET /dl/:filename
+// Serves pre-built agent binaries from ZENTRA_DL_DIR (default: /store/Zentra/bin/dl).
+// Nginx proxies /dl/ to this handler so the SPA fallback is never served.
+// ============================================================================
+
+pub async fn download_agent(
+    Path(filename): Path<String>,
+) -> impl axum::response::IntoResponse {
+    use axum::http::{header, StatusCode};
+    use axum::response::Response;
+    use axum::body::Body;
+
+    // Reject path traversal attempts
+    if filename.contains('/') || filename.contains("..") || filename.starts_with('.') {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::from("Invalid filename"))
+            .unwrap();
+    }
+
+    // Only allow known agent binary names
+    let allowed = [
+        "zentra-agent-linux-x86_64",
+        "zentra-agent-linux-aarch64",
+        "zentra-agent-windows-x86_64.exe",
+    ];
+    if !allowed.contains(&filename.as_str()) {
+        return Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("Agent binary not found"))
+            .unwrap();
+    }
+
+    let dl_dir = std::env::var("ZENTRA_DL_DIR")
+        .unwrap_or_else(|_| "/store/Zentra/bin/dl".to_string());
+    let path = std::path::Path::new(&dl_dir).join(&filename);
+
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => {
+            let content_type = if filename.ends_with(".exe") {
+                "application/vnd.microsoft.portable-executable"
+            } else {
+                "application/octet-stream"
+            };
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, content_type)
+                .header(
+                    header::CONTENT_DISPOSITION,
+                    format!("attachment; filename=\"{}\"", filename),
+                )
+                .header(header::CONTENT_LENGTH, bytes.len().to_string())
+                .header("cache-control", "no-store")
+                .body(Body::from(bytes))
+                .unwrap()
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            tracing::warn!(file = %path.display(), "Agent binary not found on disk");
+            Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Body::from(format!(
+                    "Agent binary '{}' is not available on this server yet. \
+                     Place it at {} and try again.",
+                    filename,
+                    path.display()
+                )))
+                .unwrap()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to read agent binary");
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(Body::from("Failed to read binary"))
+                .unwrap()
+        }
+    }
+}
+
+// ============================================================================
 // Local Component Discovery (Feature 7 — agent self-inspection)
 // Agent reports which services are running on its own host; user confirms
 // selection → targets are auto-created with the agent_id set so no SSH needed.

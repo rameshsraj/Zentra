@@ -68,7 +68,12 @@ pub fn is_public_path(method: &Method, path: &str) -> bool {
     if (*method == Method::POST && path == "/api/agents/heartbeat")
         || (*method == Method::GET && path == "/api/agents/targets")
         || (*method == Method::POST && path.starts_with("/api/agents/") && path.ends_with("/discovered"))
+        || (*method == Method::POST && path.starts_with("/api/agents/by-dc/") && path.ends_with("/components"))
     {
+        return true;
+    }
+    // Agent binary downloads — public, no auth required
+    if *method == Method::GET && path.starts_with("/dl/") {
         return true;
     }
     // OTLP ingest endpoints use isok_ API key auth (validated inside the
@@ -95,7 +100,7 @@ pub fn is_public_path(method: &Method, path: &str) -> bool {
     }
     // /metrics is served for Prometheus scrapers. Restrict access at the
     // network layer (firewall / nginx) — do not expose port 5006 externally.
-    if path == "/metrics" {
+    if path == "/metrics" || path == "/api/agents/register" {
         return true;
     }
     // WebSocket endpoints authenticate via query-string token validated

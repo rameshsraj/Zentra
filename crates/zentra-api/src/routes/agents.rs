@@ -20,4 +20,5 @@ pub fn router() -> Router<AppState> {
         .route("/api/agent-keys", get(handlers::agents::list_agent_keys))
         .route("/api/agent-keys", post(handlers::agents::create_agent_key))
         .route("/api/agent-keys/:key_id", delete(handlers::agents::revoke_agent_key))
+        .route("/dl/:filename", get(handlers::agents::download_agent))
 }
