@@ -67,6 +67,7 @@ pub fn is_public_path(method: &Method, path: &str) -> bool {
     }
     if (*method == Method::POST && path == "/api/agents/heartbeat")
         || (*method == Method::GET && path == "/api/agents/targets")
+        || (*method == Method::GET && path == "/api/agents/log-dirs")
         || (*method == Method::POST && path.starts_with("/api/agents/") && path.ends_with("/discovered"))
         || (*method == Method::POST && path.starts_with("/api/agents/by-dc/") && path.ends_with("/components"))
     {

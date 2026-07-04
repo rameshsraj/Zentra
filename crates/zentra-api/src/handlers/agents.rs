@@ -1075,3 +1075,72 @@ pub async fn confirm_components(
         "targets": created_targets,
     })))
 }
+
+/// GET /api/agents/log-dirs
+/// Agent calls this to discover which log directories it should tail.
+/// Returns confirmed log_directory components for the agent identified by its API key.
+/// Auth: Bearer <agent api key> (isok_ prefix)
+pub async fn agent_log_dirs(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    // Authenticate via agent API key
+    let key_raw = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or_else(|| ApiError::Unauthorized("Missing Bearer token".into()))?;
+
+    let (org_id, _perms) = validate_otlp_key(&state, key_raw)
+        .await
+        .map_err(|_| ApiError::Unauthorized("Invalid agent API key".into()))?;
+
+    // The agent may pass its own agent_id as a query param for precise filtering.
+    // If not provided, return all confirmed log dirs for the org.
+    let agent_id_param: Option<Uuid> = headers
+        .get("x-zentra-agent-id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse().ok());
+
+    let rows = if let Some(aid) = agent_id_param {
+        sqlx::query(
+            "SELECT id, component_name, extra
+             FROM discovered_components
+             WHERE agent_id = $1 AND org_id = $2
+               AND component_type = 'log_directory'
+               AND confirmed = TRUE AND ignored = FALSE
+             ORDER BY first_seen ASC"
+        )
+        .bind(aid)
+        .bind(org_id)
+        .fetch_all(&state.tsdb_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+    } else {
+        sqlx::query(
+            "SELECT id, component_name, extra
+             FROM discovered_components
+             WHERE org_id = $1
+               AND component_type = 'log_directory'
+               AND confirmed = TRUE AND ignored = FALSE
+             ORDER BY first_seen ASC"
+        )
+        .bind(org_id)
+        .fetch_all(&state.tsdb_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+    };
+
+    let dirs: Vec<Value> = rows.iter().map(|r| {
+        let id: Uuid = r.get("id");
+        let name: String = r.get("component_name");
+        let extra: Value = r.get("extra");
+        let path = extra.get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        json!({ "id": id, "name": name, "path": path })
+    }).collect();
+
+    Ok(Json(json!({ "log_dirs": dirs })))
+}

@@ -12,6 +12,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/agents/by-dc/:dc_name/components", get(handlers::agents::list_components))
         .route("/api/agents/components/confirm", post(handlers::agents::confirm_components))
         .route("/api/agents/targets", get(handlers::agents::agent_targets))
+        .route("/api/agents/log-dirs", get(handlers::agents::agent_log_dirs))
         .route("/api/agents", get(handlers::agents::list_agents))
         .route("/api/agents/:agent_id", delete(handlers::agents::deregister_agent))
         .route("/api/agents/:agent_id/discovered", post(handlers::agents::report_discovered))

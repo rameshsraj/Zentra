@@ -7,6 +7,7 @@ use zentra_agent::remote_targets::RemoteTargetFetcher;
 use zentra_agent::network_scan::NetworkScanner;
 use zentra_agent::log_capture::{CaptureLayer, LogBuffer};
 use zentra_agent::component_discovery::ComponentDiscovery;
+use zentra_agent::log_shipper::LogShipper;
 use zentra_core::models::metric::MetricBatch;
 use zentra_core::models::log_entry::LogBatch;
 use zentra_db::pool::create_pool;
@@ -217,7 +218,7 @@ async fn run_remote_mode(config: zentra_core::AppConfig, log_buffer: LogBuffer) 
     }
 
     let (metric_tx, metric_rx) = mpsc::channel::<MetricBatch>(1024);
-    let (_log_tx, log_rx) = mpsc::channel::<LogBatch>(1024);
+    let (log_tx, log_rx) = mpsc::channel::<LogBatch>(1024);
 
     // Remote delivery service — replaces IngestionService
     let delivery_metrics = RemoteDeliveryService::new(
@@ -299,6 +300,20 @@ async fn run_remote_mode(config: zentra_core::AppConfig, log_buffer: LogBuffer) 
                 }
             }
         }.instrument(tracing::info_span!("agent.network_scanner")));
+    }
+
+    // Log shipper — tails confirmed log directories and ships via OTLP
+    {
+        let shipper = LogShipper::new(
+            config.api_endpoint.clone(),
+            config.agent_api_key.clone(),
+            config.buffer_dir.clone(),
+            log_tx,
+            cancel.clone(),
+        );
+        tokio::spawn(async move {
+            shipper.run().await;
+        }.instrument(tracing::info_span!("agent.log_shipper")));
     }
 
     // Component discovery — waits for agent_id then detects and reports local services
