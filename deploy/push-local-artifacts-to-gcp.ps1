@@ -1,8 +1,8 @@
 #!/usr/bin/env pwsh
 param(
     [string]$ProjectId = "project-95cdeea7-e2b2-4480-848",
-    [string]$Instance = "instance-20260623-092750",
-    [string]$Zone = "us-central1-f",
+    [string]$Instance = "instance-20260629-111005",
+    [string]$Zone = "us-central1-a",
     [string]$VmUser = "",
     [string]$LocalArtifactDir = "C:\GitHub\Zentra\artifacts\vm-build\zentra-export",
     [string]$RemoteDir = "/store/Zentra"
