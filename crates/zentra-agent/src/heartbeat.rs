@@ -9,6 +9,17 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+/// Returns the first non-loopback IPv4 address of this machine.
+fn local_ip_address() -> String {
+    use std::net::UdpSocket;
+    // Connect to a routable address (doesn't actually send traffic) to let
+    // the OS pick the right source interface.
+    UdpSocket::bind("0.0.0.0:0")
+        .and_then(|s| { s.connect("8.8.8.8:80")?; s.local_addr() })
+        .map(|a| a.ip().to_string())
+        .unwrap_or_default()
+}
+
 /// Shared cell that holds the agent's own UUID once the first successful
 /// heartbeat response arrives. Discovery tasks wait on this before reporting.
 pub type AgentIdCell = Arc<OnceLock<Uuid>>;
@@ -72,12 +83,21 @@ impl HeartbeatLoop {
 
             let target_count = self.active_targets.load(Ordering::Relaxed);
             let recent_logs = self.log_buffer.drain();
+            // Collect real hostname and IP so the server stores them correctly.
+            // remote_addr is unreliable when the agent talks through nginx (127.0.0.1).
+            let hostname = hostname::get()
+                .ok()
+                .and_then(|h| h.into_string().ok())
+                .unwrap_or_default();
+            let local_ip = local_ip_address();
             let body = json!({
                 "agent_version": env!("CARGO_PKG_VERSION"),
                 "active_targets": target_count as i32,
                 "os_name": std::env::consts::OS,
                 "dc_name": self.dc_name,
                 "recent_logs": recent_logs,
+                "hostname": hostname,
+                "ip_address": local_ip,
             });
 
             let url = format!("{}/api/agents/heartbeat", self.api_endpoint);

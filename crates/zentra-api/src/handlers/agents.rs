@@ -47,6 +47,10 @@ pub struct AgentHeartbeatRequest {
     pub dc_name: String,
     #[serde(default)]
     pub recent_logs: Vec<AgentLogLine>,
+    /// Agent-reported IP — preferred over remote_addr which is 127.0.0.1 behind nginx
+    pub ip_address: Option<String>,
+    /// Agent-reported hostname
+    pub hostname: Option<String>,
 }
 
 /// In-memory ring buffer of recent agent logs, keyed by (org_id, datacenter_name).
@@ -224,6 +228,13 @@ pub async fn heartbeat(
         .map_err(ApiError::Unauthorized)?;
     let key_hash = hash_api_key(&raw_key);
 
+    // Prefer the agent-reported IP (accurate behind nginx) over remote_addr (127.0.0.1)
+    let effective_ip = body.ip_address
+        .as_deref()
+        .filter(|s| !s.is_empty() && *s != "127.0.0.1")
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| remote_addr.ip().to_string());
+
     sqlx::query(
         "INSERT INTO agent_fleet
          (org_id, otlp_api_key_id, api_key_hash, datacenter_name, agent_version, active_target_count, last_seen, ip_address, os_name, status, created_at, updated_at)
@@ -243,11 +254,45 @@ pub async fn heartbeat(
     .bind(body.dc_name.trim())
     .bind(body.agent_version.trim())
     .bind(body.active_targets)
-    .bind(remote_addr.ip().to_string())
+    .bind(&effective_ip)
     .bind(body.os_name.trim())
     .execute(&state.tsdb_pool)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    // Update discovered_components address for linux/host components of this agent
+    // so that when confirmed, the target gets the real IP not 127.0.0.1
+    if effective_ip != "127.0.0.1" {
+        let agent_row: Option<Uuid> = sqlx::query_scalar(
+            "SELECT agent_id FROM agent_fleet WHERE api_key_hash = $1 LIMIT 1"
+        )
+        .bind(&key_hash)
+        .fetch_optional(&state.tsdb_pool)
+        .await
+        .unwrap_or(None);
+
+        if let Some(aid) = agent_row {
+            let _ = sqlx::query(
+                "UPDATE discovered_components
+                 SET address = $1
+                 WHERE agent_id = $2 AND component_type = 'linux'"
+            )
+            .bind(&effective_ip)
+            .bind(aid)
+            .execute(&state.tsdb_pool)
+            .await;
+
+            // Also fix any already-created targets for this agent
+            let _ = sqlx::query(
+                "UPDATE targets SET host = $1
+                 WHERE agent_id = $2 AND host = '127.0.0.1'"
+            )
+            .bind(&effective_ip)
+            .bind(aid)
+            .execute(&state.tsdb_pool)
+            .await;
+        }
+    }
 
     // Look up the agent_id for this key so we can return it in the response.
     // The agent uses this to self-discover its UUID on first heartbeat.
@@ -744,6 +789,8 @@ pub async fn download_agent(
         "zentra-agent-linux-x86_64",
         "zentra-agent-linux-aarch64",
         "zentra-agent-windows-x86_64.exe",
+        "zentra-collector-linux-x86_64",
+        "zentra-collector-linux-aarch64",
     ];
     if !allowed.contains(&filename.as_str()) {
         return Response::builder()
@@ -986,9 +1033,14 @@ pub async fn confirm_components(
         let port: Option<i32> = row.get("port");
         let version: Option<String> = row.get("version");
 
-        // network_interface and log_directory are metadata — just mark confirmed,
-        // no target row needed. log_directory paths are consumed by OTEL log collection.
-        if comp_type == "network_interface" || comp_type == "log_directory" {
+        // network_interface, log_directory, and linux/windows components that belong
+        // to an agent-managed host are metadata only — mark confirmed, no SSH target row.
+        // The agent ships its own metrics via OTLP; creating an SSH target here would
+        // cause the server to try to SSH into 127.0.0.1 / the wrong IP.
+        // SSH targets are only created for agentless/collector-managed hosts (agent_id IS NULL).
+        let is_agent_owned_host = (comp_type == "linux" || comp_type == "windows" || comp_type == "server")
+            && agent_id != Uuid::nil();
+        if comp_type == "network_interface" || comp_type == "log_directory" || is_agent_owned_host {
             sqlx::query(
                 "UPDATE discovered_components SET confirmed = TRUE WHERE id = $1"
             )

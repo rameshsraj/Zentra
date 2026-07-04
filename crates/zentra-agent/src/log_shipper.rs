@@ -55,7 +55,6 @@ struct LogDirEntry {
 #[derive(Debug, Deserialize)]
 struct LogDirsResponse {
     log_dirs: Vec<LogDirEntry>,
-    agent_id: Uuid,
 }
 
 pub struct LogShipper {
@@ -65,6 +64,7 @@ pub struct LogShipper {
     log_tx: mpsc::Sender<LogBatch>,
     cancel: CancellationToken,
     client: Client,
+    agent_id: Option<uuid::Uuid>,
 }
 
 impl LogShipper {
@@ -74,6 +74,7 @@ impl LogShipper {
         buffer_dir: String,
         log_tx: mpsc::Sender<LogBatch>,
         cancel: CancellationToken,
+        agent_id: Option<uuid::Uuid>,
     ) -> Self {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(15))
@@ -88,6 +89,7 @@ impl LogShipper {
             log_tx,
             cancel,
             client,
+            agent_id,
         }
     }
 
@@ -101,7 +103,7 @@ impl LogShipper {
             .checked_sub(std::time::Duration::from_secs(REFRESH_INTERVAL_SECS + 1))
             .unwrap_or(std::time::Instant::now());
 
-        let mut agent_id: Option<Uuid> = None;
+        let agent_id = self.agent_id;
 
         loop {
             tokio::select! {
@@ -117,7 +119,6 @@ impl LogShipper {
             if last_refresh.elapsed().as_secs() >= REFRESH_INTERVAL_SECS {
                 match self.fetch_log_dirs().await {
                     Ok(resp) => {
-                        agent_id = Some(resp.agent_id);
                         log_dirs = resp.log_dirs;
                         last_refresh = std::time::Instant::now();
                         info!(count = log_dirs.len(), "LogShipper: log dirs refreshed");
@@ -133,10 +134,8 @@ impl LogShipper {
                 continue;
             }
 
-            let aid = match agent_id {
-                Some(id) => id,
-                None => continue,
-            };
+            // Use agent_id if known, else nil (server will resolve from API key)
+            let aid = agent_id.unwrap_or(Uuid::nil());
 
             // Collect log files from all confirmed directories
             let log_files = collect_log_files(&log_dirs);
@@ -184,10 +183,14 @@ impl LogShipper {
 
     async fn fetch_log_dirs(&self) -> Result<LogDirsResponse, String> {
         let url = format!("{}/api/agents/log-dirs", self.api_endpoint);
-        let resp = self
+        let mut req = self
             .client
             .get(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Authorization", format!("Bearer {}", self.api_key));
+        if let Some(aid) = self.agent_id {
+            req = req.header("x-zentra-agent-id", aid.to_string());
+        }
+        let resp = req
             .send()
             .await
             .map_err(|e| e.to_string())?;

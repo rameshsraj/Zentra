@@ -157,15 +157,17 @@ struct DiscoveredComponent {
 async fn discover_local_components() -> Vec<DiscoveredComponent> {
     let mut components: HashMap<String, DiscoveredComponent> = HashMap::new();
 
-    // 1. Linux host OS
+    // 1. Linux host OS — use real outbound IP so the server stores a reachable address.
     let os_version = read_os_version();
+    let real_ip = local_outbound_ip();
+    let hostname = hostname_str();
     components.insert("host:linux".into(), DiscoveredComponent {
         component_type: "linux".into(),
         component_name: "Linux Host".into(),
-        address: "127.0.0.1".into(),
+        address: real_ip.clone(),
         port: None,
         version: os_version,
-        extra: json!({}),
+        extra: json!({ "hostname": hostname, "ip": real_ip }),
     });
 
     // 2. Port-based detection
@@ -200,20 +202,12 @@ async fn discover_local_components() -> Vec<DiscoveredComponent> {
         }
     }
 
-    // 4. Network interfaces
-    for iface in network_interfaces() {
-        let key = format!("net:{}", iface.name);
-        components.entry(key).or_insert_with(|| DiscoveredComponent {
-            component_type: "network_interface".into(),
-            component_name: format!("Network Interface ({})", iface.name),
-            address: iface.address.clone(),
-            port: None,
-            version: None,
-            extra: json!({ "interface": iface.name, "address": iface.address }),
-        });
-    }
+    // Note: Network interfaces are intentionally NOT reported in agent mode.
+    // Reporting them caused network interface IPs (e.g. 172.16.1.20) to be stored
+    // as host addresses, leading to failed SSH connection attempts.
+    // The real agent IP is already stored in agent_fleet via the heartbeat.
 
-    // 5. Log directories
+    // 4. Log directories
     for log_dir in log_directories() {
         let key = format!("logs:{}", log_dir);
         components.entry(key).or_insert_with(|| DiscoveredComponent {
@@ -235,9 +229,19 @@ struct ComponentDef {
     default_port: Option<i32>,
 }
 
-struct NetworkInterface {
-    name: String,
-    address: String,
+/// Returns the real outbound IP of this host (not 127.0.0.1, not a docker bridge).
+fn local_outbound_ip() -> String {
+    use std::net::UdpSocket;
+    UdpSocket::bind("0.0.0.0:0")
+        .and_then(|s| { s.connect("8.8.8.8:80")?; s.local_addr() })
+        .map(|a| a.ip().to_string())
+        .unwrap_or_else(|_| "127.0.0.1".to_string())
+}
+
+fn hostname_str() -> String {
+    std::fs::read_to_string("/proc/sys/kernel/hostname")
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
 }
 
 /// Maps a listening TCP port to a known middleware/Oracle component.
@@ -294,44 +298,6 @@ fn proc_to_component(name: &str) -> Option<ComponentDef> {
         return Some(ComponentDef { component_type: "memcached".into(), component_name: "Memcached".into(), default_port: Some(11211) });
     }
     None
-}
-
-/// Reads /proc/net/if_inet6 and /proc/net/fib_trie for active network interfaces with IPs.
-fn network_interfaces() -> Vec<NetworkInterface> {
-    let mut ifaces: Vec<NetworkInterface> = Vec::new();
-    // Parse /proc/net/dev for interface names, then /proc/net/fib_trie for IPs
-    // Simpler: read /proc/net/if_inet6 for IPv6, and parse `ip addr` output
-    if let Ok(out) = std::process::Command::new("ip")
-        .args(["addr", "show"])
-        .output()
-    {
-        let text = String::from_utf8_lossy(&out.stdout);
-        let mut current_iface = String::new();
-        for line in text.lines() {
-            let line = line.trim();
-            // Interface line: "2: eth0: <...>"
-            if let Some(rest) = line.split(':').nth(1) {
-                let name = rest.trim().split('@').next().unwrap_or("").trim().to_string();
-                if !name.is_empty() && name != "lo" {
-                    current_iface = name;
-                }
-            }
-            // IP line: "inet 10.0.0.1/24 ..."
-            if line.starts_with("inet ") && !current_iface.is_empty() {
-                if let Some(addr_cidr) = line.split_whitespace().nth(1) {
-                    let addr = addr_cidr.split('/').next().unwrap_or("").to_string();
-                    if !addr.is_empty() && addr != "127.0.0.1" {
-                        ifaces.push(NetworkInterface {
-                            name: current_iface.clone(),
-                            address: addr,
-                        });
-                        current_iface.clear(); // one entry per interface
-                    }
-                }
-            }
-        }
-    }
-    ifaces
 }
 
 /// Returns log directories that exist on this host.

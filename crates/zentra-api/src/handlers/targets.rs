@@ -4,7 +4,8 @@ use crate::error::ApiError;
 use crate::tenant::OrgId;
 use zentra_core::ssh_utils;
 use crate::validation;
-use zentra_core::models::target::{CreateTargetRequest, Target, TargetCredentials, TargetSubtype};
+use zentra_core::models::target::{CreateTargetRequest, Target, TargetCredentials, TargetStatus, TargetSubtype};
+use sqlx::Row;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use tokio::process::Command;
@@ -25,7 +26,7 @@ pub async fn list_targets(
     OrgId(org_id): OrgId,
     Query(params): Query<ListTargetsQuery>,
 ) -> Result<Json<Vec<Target>>, ApiError> {
-    let targets = zentra_db::repositories::targets::list_targets(
+    let mut targets = zentra_db::repositories::targets::list_targets(
         &state.pool,
         org_id,
         params.target_type.as_deref(),
@@ -33,6 +34,63 @@ pub async fn list_targets(
     )
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    // Inject agent-managed hosts as virtual server targets.
+    // These agents ship metrics via OTLP — no SSH collection needed.
+    // We synthesise a Target from agent_fleet + discovered_components so the
+    // Server Fleet UI can display them with real IP / hostname / status.
+    let filter_type = params.target_type.as_deref();
+    if filter_type.is_none() || filter_type == Some("server") {
+        let agent_rows = sqlx::query(
+            "SELECT af.agent_id, af.datacenter_name, af.ip_address, af.os_name, af.status,
+                    dc.component_name, dc.version, dc.id AS comp_id, dc.target_id AS existing_target_id
+             FROM agent_fleet af
+             LEFT JOIN discovered_components dc
+               ON dc.agent_id = af.agent_id AND dc.component_type = 'linux' AND dc.confirmed = TRUE
+             WHERE af.org_id = $1 AND af.status IN ('active', 'stale')"
+        )
+        .bind(org_id)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default();
+
+        let existing_agent_ids: std::collections::HashSet<uuid::Uuid> = targets.iter()
+            .filter_map(|t| t.agent_id)
+            .collect();
+
+        for row in agent_rows {
+            let agent_id: uuid::Uuid = row.get("agent_id");
+            if existing_agent_ids.contains(&agent_id) { continue; }
+
+            let ip: String = row.get::<Option<String>, _>("ip_address").unwrap_or_else(|| "0.0.0.0".to_string());
+            let dc_name: String = row.get("datacenter_name");
+            let os_name: String = row.get::<Option<String>, _>("os_name").unwrap_or_else(|| "linux".to_string());
+            let af_status: String = row.get("status");
+            let comp_name: Option<String> = row.get("component_name");
+            let version: Option<String> = row.get("version");
+
+            let display_name = if let Some(ver) = &version {
+                format!("{} ({})", comp_name.as_deref().unwrap_or("Linux Host"), ver)
+            } else {
+                comp_name.unwrap_or_else(|| format!("Linux Host ({})", dc_name))
+            };
+
+            let t_status = if af_status == "active" { TargetStatus::Healthy } else { TargetStatus::Warning };
+
+            let mut vt = Target::new(
+                org_id,
+                &display_name,
+                TargetSubtype::Linux,
+                &ip,
+                22,
+            );
+            vt.agent_id = Some(agent_id);
+            vt.status = t_status;
+            vt.environment = dc_name;
+            vt.description = Some(os_name);
+            targets.push(vt);
+        }
+    }
 
     Ok(Json(targets))
 }

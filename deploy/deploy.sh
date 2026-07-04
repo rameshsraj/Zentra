@@ -125,6 +125,12 @@ build_backend_remote() {
     cp target/release/zentra-agent bin/dl/zentra-agent-linux-x86_64
     chmod +x bin/dl/zentra-agent-linux-x86_64
     echo '  Agent build complete — binary at bin/dl/zentra-agent-linux-x86_64'
+
+    # Build collector binary and publish to download directory
+    cargo build --release --bin zentra-collector 2>&1 | tail -3
+    cp target/release/zentra-collector bin/dl/zentra-collector-linux-x86_64
+    chmod +x bin/dl/zentra-collector-linux-x86_64
+    echo '  Collector build complete — binary at bin/dl/zentra-collector-linux-x86_64'
   "
 
   echo ">>> [2/4] Backend build complete."

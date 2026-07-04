@@ -1,14 +1,14 @@
 import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import {
-  listAgents, deregisterAgent, listDiscoveredHosts, optInHost,
-  type Agent, type DiscoveredHost,
+  listAgents, deregisterAgent, getComponentsByDc,
+  type Agent, type DiscoveredComponent,
 } from '@/lib/api/fleet'
 import PageHeader from '@/components/PageHeader'
 import {
   Server, Trash2, Plus, Wifi, WifiOff, AlertTriangle,
-  ChevronDown, ChevronRight, Eye, EyeOff, CheckCircle2, XCircle,
+  ChevronDown, ChevronRight, CheckCircle2, XCircle,
 } from 'lucide-react'
 
 const STATUS_STYLES: Record<string, { color: string; bg: string; label: string }> = {
@@ -29,157 +29,69 @@ function timeAgo(iso: string | null): string {
   return `${Math.floor(hrs / 24)}d ago`
 }
 
-const OS_ICONS: Record<string, string> = {
-  linux: '🐧', windows: '🪟', unknown: '❓',
+// ─────────────────────────────────────────────────────────────────────────────
+// Discovered components panel — shows services / log dirs found on the agent host
+// ─────────────────────────────────────────────────────────────────────────────
+const TYPE_LABELS: Record<string, string> = {
+  linux: 'OS Host', windows: 'OS Host', oracle: 'Database',
+  redis: 'Cache', nginx: 'Web Server', apache: 'Web Server',
+  haproxy: 'Load Balancer', tomcat: 'App Server', phpfpm: 'PHP-FPM',
+  elasticsearch: 'Search', kafka: 'Messaging', rabbitmq: 'Messaging',
+  memcached: 'Cache', log_directory: 'Log Dir', network_interface: 'Network',
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Discovered hosts panel shown when an agent row is expanded
-// ─────────────────────────────────────────────────────────────────────────────
-function DiscoveredHostsPanel({ agentId }: { agentId: string }) {
-  const queryClient = useQueryClient()
-  const [showIgnored, setShowIgnored] = useState(false)
-
-  const { data: hosts = [], isLoading } = useQuery({
-    queryKey: ['discovered', agentId],
-    queryFn: () => listDiscoveredHosts(agentId),
+function DiscoveredComponentsPanel({ dcName }: { dcName: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['dc-components', dcName],
+    queryFn: () => getComponentsByDc(dcName),
     refetchInterval: 60_000,
   })
 
-  const patchMutation = useMutation({
-    mutationFn: ({ hostId, body }: { hostId: string; body: { opted_in?: boolean; ignored?: boolean } }) =>
-      optInHost(agentId, hostId, body),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['discovered', agentId] }),
-  })
-
-  const visible = hosts.filter(h => showIgnored || !h.ignored)
-  const newCount = hosts.filter(h => !h.opted_in && !h.ignored).length
-  const monitoredCount = hosts.filter(h => h.opted_in).length
+  const components: DiscoveredComponent[] = data?.components ?? []
 
   if (isLoading) {
-    return <p className="px-6 py-4 text-sm text-muted-foreground animate-pulse">Loading discovered hosts…</p>
+    return <p className="px-6 py-4 text-sm text-muted-foreground animate-pulse">Loading components…</p>
   }
 
-  if (hosts.length === 0) {
+  if (components.length === 0) {
     return (
       <div className="px-6 py-5 text-sm text-muted-foreground">
-        <p className="font-medium text-foreground mb-1">No hosts discovered yet</p>
-        <p>The agent scans its local subnet every 10 minutes. Check back shortly after the agent is running.</p>
+        <p className="font-medium text-foreground mb-1">No components discovered yet</p>
+        <p>The agent reports discovered services every 5 minutes. Check back shortly after the agent is running.</p>
       </div>
     )
   }
 
   return (
-    <div className="px-4 py-4 space-y-3">
-      {/* Summary bar */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1">
-            <span className="h-2 w-2 rounded-full bg-blue-400 inline-block" />
-            {newCount} new
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="h-2 w-2 rounded-full bg-green-400 inline-block" />
-            {monitoredCount} monitored
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="h-2 w-2 rounded-full bg-zinc-500 inline-block" />
-            {hosts.filter(h => h.ignored).length} ignored
-          </span>
-        </div>
-        <button
-          onClick={() => setShowIgnored(v => !v)}
-          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-        >
-          {showIgnored ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-          {showIgnored ? 'Hide ignored' : 'Show ignored'}
-        </button>
-      </div>
-
-      {/* Host table */}
+    <div className="px-4 py-4">
       <div className="rounded-lg border border-border overflow-hidden">
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-border bg-muted/20 text-left text-muted-foreground">
-              <th className="px-3 py-2 font-medium">IP Address</th>
-              <th className="px-3 py-2 font-medium">Hostname</th>
-              <th className="px-3 py-2 font-medium">OS</th>
-              <th className="px-3 py-2 font-medium">Open Ports</th>
-              <th className="px-3 py-2 font-medium">Last Seen</th>
+              <th className="px-3 py-2 font-medium">Component</th>
+              <th className="px-3 py-2 font-medium">Type</th>
+              <th className="px-3 py-2 font-medium">Address</th>
+              <th className="px-3 py-2 font-medium">Version</th>
               <th className="px-3 py-2 font-medium">Status</th>
-              <th className="px-3 py-2 font-medium text-right">Action</th>
             </tr>
           </thead>
           <tbody>
-            {visible.map((h: DiscoveredHost) => (
-              <tr
-                key={h.id}
-                className={`border-b border-border last:border-0 transition-colors ${
-                  h.ignored ? 'opacity-40' : h.opted_in ? 'bg-green-500/5' : 'hover:bg-muted/20'
-                }`}
-              >
-                <td className="px-3 py-2 font-mono font-medium">{h.ip_address}</td>
-                <td className="px-3 py-2 text-muted-foreground">{h.hostname ?? '—'}</td>
+            {components.map((c: DiscoveredComponent) => (
+              <tr key={c.id} className="border-b border-border last:border-0 hover:bg-muted/20">
+                <td className="px-3 py-2 font-medium">{c.component_name}</td>
+                <td className="px-3 py-2 text-muted-foreground">{TYPE_LABELS[c.component_type] ?? c.component_type}</td>
+                <td className="px-3 py-2 font-mono text-muted-foreground">{c.address}{c.port ? `:${c.port}` : ''}</td>
+                <td className="px-3 py-2 text-muted-foreground">{c.version ?? '—'}</td>
                 <td className="px-3 py-2">
-                  {OS_ICONS[h.os_hint ?? 'unknown'] ?? '❓'}{' '}
-                  <span className="text-muted-foreground capitalize">{h.os_hint ?? '—'}</span>
-                </td>
-                <td className="px-3 py-2 font-mono text-muted-foreground">
-                  {h.open_ports?.length ? h.open_ports.join(', ') : '—'}
-                </td>
-                <td className="px-3 py-2 text-muted-foreground">{timeAgo(h.last_seen)}</td>
-                <td className="px-3 py-2">
-                  {h.opted_in ? (
+                  {c.confirmed ? (
                     <span className="inline-flex items-center gap-1 text-green-400">
-                      <CheckCircle2 className="h-3.5 w-3.5" /> Monitored
-                    </span>
-                  ) : h.ignored ? (
-                    <span className="inline-flex items-center gap-1 text-zinc-500">
-                      <XCircle className="h-3.5 w-3.5" /> Ignored
+                      <CheckCircle2 className="h-3.5 w-3.5" /> Monitoring
                     </span>
                   ) : (
-                    <span className="text-blue-400">New</span>
+                    <span className="inline-flex items-center gap-1 text-yellow-400">
+                      <XCircle className="h-3.5 w-3.5" /> Pending
+                    </span>
                   )}
-                </td>
-                <td className="px-3 py-2 text-right">
-                  <div className="flex items-center justify-end gap-2">
-                    {!h.opted_in && !h.ignored && (
-                      <>
-                        <button
-                          onClick={() => patchMutation.mutate({ hostId: h.id, body: { opted_in: true } })}
-                          disabled={patchMutation.isPending}
-                          className="rounded px-2 py-1 bg-green-600 text-white hover:bg-green-700 transition-colors disabled:opacity-50"
-                        >
-                          Monitor
-                        </button>
-                        <button
-                          onClick={() => patchMutation.mutate({ hostId: h.id, body: { ignored: true } })}
-                          disabled={patchMutation.isPending}
-                          className="rounded px-2 py-1 bg-zinc-700 text-muted-foreground hover:bg-zinc-600 transition-colors disabled:opacity-50"
-                        >
-                          Ignore
-                        </button>
-                      </>
-                    )}
-                    {h.opted_in && (
-                      <button
-                        onClick={() => patchMutation.mutate({ hostId: h.id, body: { opted_in: false } })}
-                        disabled={patchMutation.isPending}
-                        className="rounded px-2 py-1 bg-zinc-700 text-muted-foreground hover:bg-zinc-600 transition-colors text-xs disabled:opacity-50"
-                      >
-                        Remove
-                      </button>
-                    )}
-                    {h.ignored && (
-                      <button
-                        onClick={() => patchMutation.mutate({ hostId: h.id, body: { ignored: false } })}
-                        disabled={patchMutation.isPending}
-                        className="rounded px-2 py-1 bg-zinc-700 text-muted-foreground hover:bg-zinc-600 transition-colors text-xs disabled:opacity-50"
-                      >
-                        Unignore
-                      </button>
-                    )}
-                  </div>
                 </td>
               </tr>
             ))}
@@ -205,13 +117,17 @@ export default function FleetPage() {
     refetchInterval: 15_000,
   })
 
-  const removeMutation = useMutation({
-    mutationFn: deregisterAgent,
-    onSuccess: () => {
+  const [removePending, setRemovePending] = useState<string | null>(null)
+  const handleDeregister = async (agentId: string) => {
+    setRemovePending(agentId)
+    try {
+      await deregisterAgent(agentId)
       queryClient.invalidateQueries({ queryKey: ['agents'] })
       setConfirmId(null)
-    },
-  })
+    } finally {
+      setRemovePending(null)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -302,9 +218,9 @@ export default function FleetPage() {
                             <div className="flex items-center gap-2 justify-end">
                               <span className="text-xs text-red-400">Confirm?</span>
                               <button
-                                onClick={() => removeMutation.mutate(a.agent_id)}
+                                onClick={() => handleDeregister(a.agent_id)}
                                 className="rounded bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700"
-                                disabled={removeMutation.isPending}
+                                disabled={removePending === a.agent_id}
                               >
                                 Yes
                               </button>
@@ -333,9 +249,9 @@ export default function FleetPage() {
                           <div className="border-t border-dashed border-border/50">
                             <div className="flex items-center gap-2 px-6 pt-3 pb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                               <Server className="h-3.5 w-3.5" />
-                              Discovered Hosts
+                              Discovered Components
                             </div>
-                            <DiscoveredHostsPanel agentId={a.agent_id} />
+                            <DiscoveredComponentsPanel dcName={a.datacenter_name} />
                           </div>
                         </td>
                       </tr>
