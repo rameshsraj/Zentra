@@ -72,8 +72,8 @@ pub fn is_public_path(method: &Method, path: &str) -> bool {
     {
         return true;
     }
-    // Agent binary downloads — public, no auth required
-    if *method == Method::GET && path.starts_with("/dl/") {
+    // Agent binary downloads — public, no auth required (HEAD for curl -I checks)
+    if (*method == Method::GET || *method == Method::HEAD) && path.starts_with("/dl/") {
         return true;
     }
     // OTLP ingest endpoints use isok_ API key auth (validated inside the

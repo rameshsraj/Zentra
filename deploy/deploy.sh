@@ -103,11 +103,13 @@ build_backend_remote() {
   # Clean macOS resource fork files that break cargo
   ${SSH} "find ${DEPLOY_PATH}/crates ${DEPLOY_PATH}/plugins -name '._*' -delete 2>/dev/null || true"
 
-  # Build on server, then stop service → replace binary → (restart happens in step 4)
+  # Build server + agent on the server, then stop service → replace binaries → (restart in step 4)
   ${SSH} "
     cd ${DEPLOY_PATH}
     source .env 2>/dev/null || true
     export SQLX_OFFLINE=true
+
+    # Build API server
     cargo build --release --bin zentra-server 2>&1 | tail -5
     # Stop service so binary isn't locked ('Text file busy')
     systemctl stop zentra-api 2>/dev/null || pkill -f zentra-server 2>/dev/null || true
@@ -116,6 +118,13 @@ build_backend_remote() {
     cp target/release/zentra-server bin/zentra-server
     chmod +x bin/zentra-server
     echo '  Backend build complete — binary at bin/zentra-server'
+
+    # Build agent binary and publish to download directory
+    cargo build --release --bin zentra-agent 2>&1 | tail -3
+    mkdir -p bin/dl
+    cp target/release/zentra-agent bin/dl/zentra-agent-linux-x86_64
+    chmod +x bin/dl/zentra-agent-linux-x86_64
+    echo '  Agent build complete — binary at bin/dl/zentra-agent-linux-x86_64'
   "
 
   echo ">>> [2/4] Backend build complete."
@@ -182,10 +191,13 @@ restart_and_verify() {
       echo '  zentra-server started (nohup)'
     fi
 
-    # Restart nginx (serves frontend)
+    # Sync nginx config and reload
+    if [ -f ${DEPLOY_PATH}/deploy/nginx.conf ]; then
+      cp ${DEPLOY_PATH}/deploy/nginx.conf /etc/nginx/conf.d/zentra.conf
+      echo '  nginx config updated from deploy/nginx.conf'
+    fi
     if systemctl is-active --quiet nginx 2>/dev/null; then
-      systemctl reload nginx 2>/dev/null || systemctl restart nginx
-      echo '  nginx reloaded'
+      nginx -t 2>&1 && (systemctl reload nginx 2>/dev/null || systemctl restart nginx) && echo '  nginx reloaded'
     fi
   "
 
