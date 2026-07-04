@@ -26,6 +26,8 @@ Thumbs.db
 # Logs
 *.log
 /logs/
+artifacts/*
+
 
 # Docker image tarballs (too large for git)
 docker/zentra-latest.tar.gz
