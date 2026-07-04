@@ -2,22 +2,29 @@
 # =============================================================
 # Zentra Full Deploy Pipeline
 #
-# FLOW (run this for every code change):
-#
-#   STEP 1  Push source code: Windows git folder → WSL Ubuntu
-#   STEP 2  Build + compile + quick test in WSL
-#   STEP 3  Copy built artifacts (binary + frontend) → local artifacts/ folder
+# FLOW -- full deployment (default):
+#   STEP 1  Push source code: Windows git folder → WSL
+#   STEP 2  Build + compile in WSL (zentra-server + zentra-agent + frontend)
+#   STEP 3  Copy built artifacts → vm-build/ + client-handoff/
 #   STEP 4  Push source code to GCP VM
 #   STEP 5  Rebuild on GCP VM (cargo + vite + migrate + restart)
 #   STEP 6  Quick smoke test on GCP VM
 #
+# FLOW -- local only (-SkipGcp):
+#   STEP 1  Push source code: Windows git folder → WSL
+#   STEP 2  Build + compile in WSL
+#   STEP 3  Copy artifacts → vm-build/ + client-handoff/ (server + agent)
+#   STEP 4  Start services in WSL (postgres + zentra-api + nginx)
+#   STEP 5  Smoke test against WSL local endpoints
+#   STEP 6  Display WSL IP + access URLs
+#
 # Usage:
-#   .\deploy\full-pipeline.ps1                   # full run (most common)
+#   .\deploy\full-pipeline.ps1                   # full run → GCP (most common)
 #   .\deploy\full-pipeline.ps1 -SkipSync         # skip step 1 (WSL already up to date)
 #   .\deploy\full-pipeline.ps1 -SkipBuild        # skip steps 2-3 (artifacts already built)
-#   .\deploy\full-pipeline.ps1 -SkipGcp          # steps 1-3 only, no GCP
+#   .\deploy\full-pipeline.ps1 -SkipGcp          # build locally, start in WSL, package client-handoff
 #   .\deploy\full-pipeline.ps1 -FullSetup        # first-time GCP setup (installs all packages)
-#   .\deploy\full-pipeline.ps1 -UploadOnly       # steps 1-4: build locally, upload built binaries to GCP, extract, stop
+#   .\deploy\full-pipeline.ps1 -UploadOnly       # steps 1-4: build locally, upload binaries to GCP, stop
 # =============================================================
 
 param(
@@ -160,14 +167,32 @@ echo "Frontend files: `$(find dist -type f | wc -l)"
 "@ "npm install + vite build"
     OK "Frontend compiled: $WslRepoPath/frontend/dist"
 
+    # 2b-agent -- Agent binary
+    Write-Host "  Building agent (zentra-agent)..." -ForegroundColor Yellow
+    Invoke-Wsl @"
+set -euo pipefail
+[[ -f /root/.cargo/env ]] && source /root/.cargo/env || true
+export PATH="/root/.cargo/bin:`$PATH"
+cd '$WslRepoPath'
+cargo build --release --bin zentra-agent
+mkdir -p '$WslRepoPath/bin/dl'
+cp target/release/zentra-agent '$WslRepoPath/bin/dl/zentra-agent'
+chmod 755 '$WslRepoPath/bin/dl/zentra-agent'
+echo "Agent: `$(du -sh '$WslRepoPath/bin/dl/zentra-agent' | cut -f1) -> $WslRepoPath/bin/dl/zentra-agent"
+"@ "cargo build zentra-agent"
+    OK "Agent compiled → $WslRepoPath/bin/dl/zentra-agent"
+
     # 2c -- Binary sanity check
     Invoke-Wsl @"
 set -euo pipefail
 BIN='$WslRepoPath/target/release/zentra-server'
-[[ -x "`$BIN" ]] || { echo "Binary missing or not executable: `$BIN"; exit 1; }
-echo "Binary check OK (`$(du -sh "`$BIN" | cut -f1))"
+AGENT='$WslRepoPath/bin/dl/zentra-agent'
+[[ -x "`$BIN" ]]   || { echo "Binary missing or not executable: `$BIN"; exit 1; }
+[[ -x "`$AGENT" ]] || { echo "Agent missing or not executable: `$AGENT"; exit 1; }
+echo "zentra-server : `$(du -sh "`$BIN" | cut -f1)"
+echo "zentra-agent  : `$(du -sh "`$AGENT" | cut -f1)"
 "@ "binary sanity check"
-    OK "Binary test passed"
+    OK "Binary tests passed"
 } else {
     Warn "STEP 2 skipped -- using existing WSL build"
 }
@@ -195,9 +220,204 @@ if (-not $SkipBuild) {
 }
 
 if ($SkipGcp) {
-    Warn "STEP 4-6 skipped (-SkipGcp)"
+    # =========================================================================
+    # LOCAL MODE: package client-handoff, start services in WSL, smoke test
+    # =========================================================================
+    $clientHandoffDir = Join-Path $WindowsRepo "artifacts\client-handoff"
+    New-Item -ItemType Directory -Path $clientHandoffDir -Force | Out-Null
+
+    # -------------------------------------------------------------------------
+    Step "STEP 4/6  Package client-handoff"
+    # -------------------------------------------------------------------------
+
+    # Copy server release tar
+    $srcTar = Join-Path $ArtifactRoot "zentra-release.tar.gz"
+    if (Test-Path $srcTar) {
+        Copy-Item $srcTar (Join-Path $clientHandoffDir "zentra-release.tar.gz") -Force
+        OK "Server package → client-handoff\zentra-release.tar.gz"
+    } else {
+        Warn "zentra-release.tar.gz not found in vm-build -- skipping tar copy"
+    }
+
+    # Pull agent binary from WSL bin/dl/ into client-handoff
+    Write-Host "  Copying zentra-agent from WSL ($WslRepoPath/bin/dl/)..." -ForegroundColor Yellow
+    $agentDestPath = Join-Path $clientHandoffDir "zentra-agent"
+    $wslAgentDest  = ($agentDestPath -replace '^([A-Za-z]):\\', { "/mnt/$($_.Groups[1].Value.ToLower())/" }) -replace '\\','/'
+    Invoke-Wsl "cp '$WslRepoPath/bin/dl/zentra-agent' '$wslAgentDest' && chmod 755 '$wslAgentDest'" "copy agent binary"
+    $agentItem = Get-Item $agentDestPath -ErrorAction SilentlyContinue
+    $agentMB   = if ($agentItem) { [math]::Round($agentItem.Length / 1MB, 1) } else { "?" }
+    OK "Agent binary → client-handoff\zentra-agent  (${agentMB} MB)"
+
     Write-Host ""
-    Write-Host "  Pipeline complete (local build only)." -ForegroundColor Green
+    Write-Host "  client-handoff contents:" -ForegroundColor Cyan
+    Get-ChildItem $clientHandoffDir | ForEach-Object { Write-Host "    $($_.Name)" -ForegroundColor White }
+
+    # -------------------------------------------------------------------------
+    Step "STEP 5/6  Start services in WSL ($WslDistro)"
+    # -------------------------------------------------------------------------
+
+    # Use single-quoted heredoc so PowerShell never parses $() or $VAR inside the bash script.
+    # $WslRepoPath is substituted via -replace before passing to Invoke-Wsl.
+    $localStartScript = (@'
+set -euo pipefail
+DEPLOY='__DEPLOY__'
+mkdir -p "$DEPLOY/logs" "$DEPLOY/bin"
+
+echo '--- [a] Ensure PostgreSQL is running + TimescaleDB installed ---'
+service postgresql start 2>/dev/null || systemctl start postgresql 2>/dev/null || true
+sleep 2
+pg_isready -h 127.0.0.1 -p 5434 2>/dev/null && echo 'PostgreSQL: ready' || echo 'PostgreSQL: not ready on port 5434'
+
+# Install TimescaleDB if not already present
+PG_VER=$(pg_lsclusters -h 2>/dev/null | awk 'NR==1{print $1}')
+PG_VER=${PG_VER:-$(psql --version 2>/dev/null | grep -oP '\d+' | head -1)}
+PKG="postgresql-${PG_VER}-timescaledb"
+if dpkg -s "$PKG" >/dev/null 2>&1; then
+    echo "TimescaleDB package already installed ($PKG)"
+else
+    echo "Installing $PKG ..."
+    apt-get install -y "$PKG" 2>&1 | tail -3
+fi
+
+# Enable TimescaleDB preload (idempotent)
+CONF="/etc/postgresql/${PG_VER}/main/postgresql.conf"
+if [[ -f "$CONF" ]] && ! grep -q "^shared_preload_libraries = 'timescaledb'" "$CONF"; then
+    sed -i "s/^shared_preload_libraries/#shared_preload_libraries/" "$CONF" 2>/dev/null || true
+    echo "shared_preload_libraries = 'timescaledb'" >> "$CONF"
+    echo "TimescaleDB added to shared_preload_libraries -- restarting PostgreSQL"
+    pg_ctlcluster "$PG_VER" main restart 2>/dev/null || service postgresql restart 2>/dev/null || true
+    sleep 3
+    pg_isready -h 127.0.0.1 -p 5434 && echo 'PostgreSQL: ready after restart'
+fi
+
+echo '--- [b] Install server binary ---'
+cp "$DEPLOY/target/release/zentra-server" "$DEPLOY/bin/zentra-server"
+chmod 755 "$DEPLOY/bin/zentra-server"
+
+echo '--- [c] Ensure .env exists ---'
+if [[ ! -f "$DEPLOY/.env" ]]; then
+    cat > "$DEPLOY/.env" <<'ENVEOF'
+DATABASE_URL=postgresql://postgres:zantaz@127.0.0.1:5434/zentra
+ZENTRA_API_PORT=5006
+ZENTRA_BIND_ADDR=0.0.0.0
+ZENTRA_JWT_SECRET=ZentraSecureAPIKey2026!@#XyZ9p2qR7mW4nV
+ZENTRA_MASTER_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+RUST_LOG=info
+ENVEOF
+    echo 'Created default .env'
+fi
+
+echo '--- [d] Apply migrations ---'
+source "$DEPLOY/.env" 2>/dev/null || true
+PG_PORT=${ZENTRA_PG_PORT:-5434}
+PG_DB=${POSTGRES_DB:-zentra}
+PG_USER=${POSTGRES_USER:-postgres}
+PG_PASS=${POSTGRES_PASSWORD:-zantaz}
+
+# Ensure the database exists
+DB_EXISTS=$(PGPASSWORD="$PG_PASS" psql -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" -d postgres \
+    -tAc "SELECT 1 FROM pg_database WHERE datname='$PG_DB'" 2>/dev/null | tr -d '[:space:]')
+if [[ "$DB_EXISTS" != '1' ]]; then
+    echo "  Creating database '$PG_DB'..."
+    PGPASSWORD="$PG_PASS" psql -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" -d postgres \
+        -c "CREATE DATABASE $PG_DB OWNER $PG_USER;" 2>&1
+    echo "  Database '$PG_DB' created."
+else
+    echo "  Database '$PG_DB' already exists."
+fi
+
+# Ensure TimescaleDB extension if available (non-fatal)
+PGPASSWORD="$PG_PASS" psql -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" -d "$PG_DB" \
+    -c "CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;" 2>/dev/null || true
+
+PGPASSWORD="$PG_PASS" psql -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" -d "$PG_DB" \
+    -c "CREATE TABLE IF NOT EXISTS zentra_schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW());" 2>&1 || { echo "ERROR: Cannot connect to DB '$PG_DB' on port $PG_PORT as $PG_USER"; exit 1; }
+shopt -s nullglob
+for m in "$DEPLOY/migrations/"*.sql; do
+    name="$(basename "$m")"
+    applied="$(PGPASSWORD="$PG_PASS" psql -tAc "SELECT 1 FROM zentra_schema_migrations WHERE filename='$name'" \
+        -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" -d "$PG_DB" 2>/dev/null | tr -d '[:space:]')"
+    if [[ "$applied" == '1' ]]; then echo "  skip: $name"; continue; fi
+    echo "  apply: $name"
+    PGPASSWORD="$PG_PASS" psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" -d "$PG_DB" -f "$m"
+    PGPASSWORD="$PG_PASS" psql -h 127.0.0.1 -p "$PG_PORT" -U "$PG_USER" -d "$PG_DB" \
+        -c "INSERT INTO zentra_schema_migrations(filename) VALUES ('$name') ON CONFLICT DO NOTHING;"
+done
+echo 'Migrations done.'
+
+echo '--- [e] Start zentra-server ---'
+pkill -f zentra-server 2>/dev/null || true
+sleep 1
+set -a; source "$DEPLOY/.env"; set +a
+nohup "$DEPLOY/bin/zentra-server" >> "$DEPLOY/logs/api.log" 2>&1 &
+SERVER_PID=$!
+echo "zentra-server started (pid $SERVER_PID)"
+sleep 4
+kill -0 "$SERVER_PID" 2>/dev/null || { echo 'ERROR: zentra-server died'; tail -20 "$DEPLOY/logs/api.log"; exit 1; }
+echo "zentra-server running (pid $SERVER_PID)"
+
+echo '--- [f] Configure + start nginx on port 5010 ---'
+if ! command -v nginx >/dev/null 2>&1; then
+    echo 'nginx not installed -- installing...'
+    apt-get install -y nginx 2>&1 | tail -3
+fi
+mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
+cp /mnt/c/GitHub/Zentra/deploy/nginx-zentra-local.conf /etc/nginx/sites-available/zentra-local
+sed -i "s|__FRONTEND_DIST__|$DEPLOY/frontend/dist|g" /etc/nginx/sites-available/zentra-local
+ln -sf /etc/nginx/sites-available/zentra-local /etc/nginx/sites-enabled/zentra-local
+rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+nginx -t && (service nginx reload 2>/dev/null || service nginx restart 2>/dev/null || true)
+echo "nginx: $(service nginx status 2>/dev/null | grep -oE 'active|running|stopped' | head -1 || echo started)"
+'@) -replace '__DEPLOY__', $WslRepoPath
+
+    Invoke-Wsl $localStartScript "start services in WSL"
+    OK "Services started in WSL"
+
+    # -------------------------------------------------------------------------
+    Step "STEP 6/6  Smoke test (WSL local)"
+    # -------------------------------------------------------------------------
+
+    $wslIp = (& wsl -d $WslDistro -u root -- bash -lc "hostname -I | awk '{print `$1}'").Trim().Split(' ')[0]
+
+    $localSmokeScript = @'
+set -uo pipefail
+BASE='http://127.0.0.1:5006'
+FE='http://127.0.0.1:5010'
+PASS=0; FAIL=0
+check() {
+    local name="$1" url="$2" expected="${3:-200}"
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$url" 2>/dev/null || echo '000')
+    if [[ "$code" == "$expected" ]]; then echo "  PASS: $name  (HTTP $code)"; ((PASS++)) || true
+    else echo "  FAIL: $name  (expected $expected, got $code)"; ((FAIL++)) || true; fi
+}
+check 'API health'     "$BASE/api/health"     '200'
+check 'Login endpoint' "$BASE/api/auth/login" '405'
+check 'Frontend'       "$FE"                  '200'
+echo ''
+echo "  Results: $PASS passed, $FAIL failed"
+'@
+    Invoke-Wsl $localSmokeScript "local smoke test"
+
+    Write-Host ""
+    Write-Host "============================================" -ForegroundColor Green
+    Write-Host "  Local build complete!" -ForegroundColor Green
+    Write-Host "============================================" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "  Mode            : WSL local (-SkipGcp)" -ForegroundColor Cyan
+    Write-Host "  WSL distro      : $WslDistro" -ForegroundColor White
+    Write-Host "  WSL IP address  : $wslIp" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  API (direct)    : http://${wslIp}:5006/api/health" -ForegroundColor White
+    Write-Host "  API (login)     : http://${wslIp}:5006/api/auth/login" -ForegroundColor White
+    Write-Host "  Frontend        : http://${wslIp}:5010" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  Logs            : wsl -d $WslDistro -u root -- tail -f $WslRepoPath/logs/api.log" -ForegroundColor DarkGray
+    Write-Host ""
+    Write-Host "  client-handoff/ : $clientHandoffDir" -ForegroundColor Cyan
+    Write-Host "    zentra-release.tar.gz    <- server package (send to client)" -ForegroundColor White
+    Write-Host "    zentra-agent             <- agent binary" -ForegroundColor White
+    Write-Host "    install-from-binaries.sh <- installer script" -ForegroundColor White
+    Write-Host ""
     exit 0
 }
 
@@ -439,7 +659,30 @@ try {
     Warn "  gcloud compute ssh $gcpTarget --zone $Zone --command 'tail -80 /store/Zentra/logs/api.log'"
 }
 
+# Final report
+$gcpExtIp = try {
+    if ($UseWslGcloud) {
+        $esc = "compute instances describe '$Instance' --zone '$Zone' --format=get(networkInterfaces[0].accessConfigs[0].natIP)"
+        (& wsl -d $WslDistro -u root -- bash -lc "gcloud $esc" 2>/dev/null) -join "" | ForEach-Object { $_.Trim() }
+    } else {
+        (& gcloud compute instances describe $Instance --zone $Zone --format="get(networkInterfaces[0].accessConfigs[0].natIP)" 2>/dev/null) -join "" | ForEach-Object { $_.Trim() }
+    }
+} catch { "<unknown -- check GCP console>" }
+if ([string]::IsNullOrWhiteSpace($gcpExtIp)) { $gcpExtIp = "<unknown -- check GCP console>" }
+
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Green
 Write-Host "  Pipeline complete!" -ForegroundColor Green
 Write-Host "============================================" -ForegroundColor Green
+Write-Host ""
+Write-Host "  Mode            : GCP deployment" -ForegroundColor Cyan
+Write-Host "  Instance        : $gcpTarget  Zone: $Zone" -ForegroundColor White
+Write-Host "  GCP external IP : $gcpExtIp" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  API (direct)    : http://${gcpExtIp}:5006/api/health" -ForegroundColor White
+Write-Host "  API (login)     : http://${gcpExtIp}:5006/api/auth/login" -ForegroundColor White
+Write-Host "  Frontend        : http://${gcpExtIp}:5010" -ForegroundColor White
+Write-Host ""
+Write-Host "  SSH into VM     : gcloud compute ssh $gcpTarget --zone $Zone" -ForegroundColor DarkGray
+Write-Host "  View logs       : gcloud compute ssh $gcpTarget --zone $Zone --command 'tail -f /store/Zentra/logs/api.log'" -ForegroundColor DarkGray
+Write-Host ""
