@@ -1,17 +1,118 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { registerAgent, listAgents } from '@/lib/api/fleet'
+import { registerAgent, listAgents, getAgentLogsByDc, type AgentLogLine } from '@/lib/api/fleet'
 import { fetchJSON } from '@/lib/api/_client'
 import PageHeader from '@/components/PageHeader'
 import {
   Server, Copy, Check, Loader2, CheckCircle2,
-  AlertTriangle, ChevronRight, ChevronDown,
+  AlertTriangle, ChevronRight, ChevronDown, Terminal,
 } from 'lucide-react'
 
 type Step = 1 | 2 | 3 | 4
 
 const STEP_LABELS = ['Register Datacenter', 'Install Agent', 'Waiting for Connection', 'Targets Discovered']
+
+// ── Agent Log Tail (live) ──────────────────────────────────────────
+
+function levelColor(level: string): string {
+  const lvl = level.toUpperCase()
+  if (lvl === 'ERROR') return 'text-red-400'
+  if (lvl === 'WARN' || lvl === 'WARNING') return 'text-amber-400'
+  if (lvl === 'DEBUG' || lvl === 'TRACE') return 'text-zinc-500'
+  return 'text-emerald-400'
+}
+
+function AgentLogTail({ dcName, defaultOpen = true }: { dcName: string; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen)
+  const [paused, setPaused] = useState(false)
+  const [lines, setLines] = useState<AgentLogLine[]>([])
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const seenRef = useRef<Set<string>>(new Set())
+
+  const { data } = useQuery({
+    queryKey: ['agent-logs', dcName],
+    queryFn: () => getAgentLogsByDc(dcName),
+    refetchInterval: paused || !open ? false : 3_000,
+    enabled: !!dcName,
+  })
+
+  useEffect(() => {
+    if (!data?.lines) return
+    const seen = seenRef.current
+    const fresh: AgentLogLine[] = []
+    for (const l of data.lines) {
+      const key = `${l.timestamp}|${l.message}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      fresh.push(l)
+    }
+    if (fresh.length > 0) {
+      setLines(prev => {
+        const next = [...prev, ...fresh]
+        return next.length > 500 ? next.slice(next.length - 500) : next
+      })
+    }
+  }, [data])
+
+  useEffect(() => {
+    if (paused) return
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [lines, paused])
+
+  return (
+    <div className="rounded-lg border border-border bg-card">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-4 py-2.5 text-sm font-medium hover:bg-muted/40 transition-colors"
+      >
+        <Terminal className="h-4 w-4 text-blue-400" />
+        <span className="flex-1 text-left">Agent Logs (live tail)</span>
+        <span className="text-xs text-muted-foreground">{lines.length} lines</span>
+        {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+      </button>
+      {open && (
+        <div className="border-t border-border">
+          <div className="flex items-center justify-between px-4 py-2 text-xs border-b border-border">
+            <span className="text-muted-foreground">Polling every 3s · datacenter <code className="text-xs">{dcName}</code></span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPaused(p => !p)}
+                className="rounded px-2 py-0.5 border border-border hover:bg-muted/40"
+              >
+                {paused ? 'Resume' : 'Pause'}
+              </button>
+              <button
+                onClick={() => { setLines([]); seenRef.current = new Set() }}
+                className="rounded px-2 py-0.5 border border-border hover:bg-muted/40"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+          <div
+            ref={scrollRef}
+            className="h-64 overflow-y-auto bg-zinc-950 px-3 py-2 font-mono text-xs leading-relaxed"
+          >
+            {lines.length === 0 ? (
+              <div className="text-zinc-500 italic">Waiting for agent log lines… (first heartbeat arrives within 30s of agent start)</div>
+            ) : (
+              lines.map((l, i) => (
+                <div key={i} className="flex gap-2 whitespace-pre-wrap break-words">
+                  <span className="text-zinc-600 shrink-0">{new Date(l.timestamp).toLocaleTimeString()}</span>
+                  <span className={`shrink-0 w-12 ${levelColor(l.level)}`}>{l.level.toUpperCase()}</span>
+                  <span className="text-zinc-500 shrink-0">{l.target}</span>
+                  <span className="text-zinc-200">{l.message}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ── Step 1: Register Datacenter ────────────────────────────────────
 
@@ -75,22 +176,22 @@ function StepRegister({ onComplete }: { onComplete: (apiKey: string, dc: string)
       className="space-y-4 max-w-md"
     >
       <div>
-        <label className="block text-sm font-medium mb-1">Datacenter Name</label>
+        <label className="block text-sm font-medium text-slate-200 mb-1">Datacenter Name</label>
         <input
           value={dcName}
           onChange={(e) => setDcName(e.target.value)}
           required
           placeholder="e.g. us-east-prod"
-          className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
       </div>
       <div>
-        <label className="block text-sm font-medium mb-1">Region Label (optional)</label>
+        <label className="block text-sm font-medium text-slate-200 mb-1">Region Label (optional)</label>
         <input
           value={region}
           onChange={(e) => setRegion(e.target.value)}
           placeholder="e.g. US East"
-          className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
       </div>
       <button
@@ -242,9 +343,10 @@ function StepWaiting({ dcName, onConnected }: { dcName: string; onConnected: () 
             <li>Check the API key was copied correctly (starts with <code className="text-xs">isok_</code>)</li>
             <li>Ensure no firewall is blocking outbound port 443</li>
             <li>Check the agent process is running: <code className="text-xs">ps aux | grep zentra-agent</code></li>
-            <li>Review agent logs for errors</li>
+            <li>Inspect the live agent log tail below for errors</li>
           </ul>
         </div>
+        <AgentLogTail dcName={dcName} />
         <button
           onClick={() => { setTimedOut(false); startTime.current = Date.now() }}
           className="rounded-lg bg-zinc-700 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-600"
@@ -256,10 +358,13 @@ function StepWaiting({ dcName, onConnected }: { dcName: string; onConnected: () 
   }
 
   return (
-    <div className="flex flex-col items-center justify-center py-16 space-y-4">
-      <Loader2 className="h-10 w-10 animate-spin text-blue-400" />
-      <p className="text-muted-foreground">Waiting for agent to connect…</p>
-      <p className="text-xs text-muted-foreground">Polling every 5 seconds</p>
+    <div className="space-y-6">
+      <div className="flex flex-col items-center justify-center py-8 space-y-3">
+        <Loader2 className="h-10 w-10 animate-spin text-blue-400" />
+        <p className="text-muted-foreground">Waiting for agent to connect…</p>
+        <p className="text-xs text-muted-foreground">Polling every 5 seconds</p>
+      </div>
+      <AgentLogTail dcName={dcName} />
     </div>
   )
 }
@@ -268,7 +373,7 @@ function StepWaiting({ dcName, onConnected }: { dcName: string; onConnected: () 
 
 interface Target { target_id: string; name: string; host: string; target_subtype: string }
 
-function StepTargets() {
+function StepTargets({ dcName }: { dcName: string }) {
   const navigate = useNavigate()
   const { data: targets = [] } = useQuery({
     queryKey: ['targets', 'recent'],
@@ -314,6 +419,8 @@ function StepTargets() {
           </button>
         </div>
       )}
+
+      <AgentLogTail dcName={dcName} defaultOpen={false} />
 
       <button
         onClick={() => navigate('/dashboard')}
@@ -374,7 +481,7 @@ export default function AgentInstallWizard() {
         {step === 1 && <StepRegister onComplete={handleRegistered} />}
         {step === 2 && <StepInstall apiKey={apiKey} dcName={dcName} onNext={() => setStep(3)} />}
         {step === 3 && <StepWaiting dcName={dcName} onConnected={() => setStep(4)} />}
-        {step === 4 && <StepTargets />}
+        {step === 4 && <StepTargets dcName={dcName} />}
       </div>
     </div>
   )

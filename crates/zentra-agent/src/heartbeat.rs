@@ -1,5 +1,6 @@
 //! Heartbeat loop — periodically POSTs agent status to the Zentra server.
 
+use crate::log_capture::LogBuffer;
 use reqwest::Client;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -14,6 +15,7 @@ pub struct HeartbeatLoop {
     dc_name: String,
     active_targets: Arc<AtomicUsize>,
     cancel: CancellationToken,
+    log_buffer: LogBuffer,
 }
 
 impl HeartbeatLoop {
@@ -23,6 +25,7 @@ impl HeartbeatLoop {
         dc_name: String,
         active_targets: Arc<AtomicUsize>,
         cancel: CancellationToken,
+        log_buffer: LogBuffer,
     ) -> Self {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(10))
@@ -36,6 +39,7 @@ impl HeartbeatLoop {
             dc_name,
             active_targets,
             cancel,
+            log_buffer,
         }
     }
 
@@ -54,11 +58,13 @@ impl HeartbeatLoop {
             }
 
             let target_count = self.active_targets.load(Ordering::Relaxed);
+            let recent_logs = self.log_buffer.drain();
             let body = json!({
                 "agent_version": env!("CARGO_PKG_VERSION"),
                 "active_targets": target_count as i32,
                 "os_name": std::env::consts::OS,
                 "dc_name": self.dc_name,
+                "recent_logs": recent_logs,
             });
 
             let url = format!("{}/api/agents/heartbeat", self.api_endpoint);

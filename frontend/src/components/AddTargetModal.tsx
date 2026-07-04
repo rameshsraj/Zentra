@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { createTarget, verifySsh, setupSsh, crawlServer } from '@/lib/api'
+import { createTarget, verifySsh, setupSsh, crawlServer, deleteTarget } from '@/lib/api'
 import type { CrawledComponent, CrawlResult } from '@/lib/api'
 import { listAgents, type Agent } from '@/lib/api/fleet'
 import { X, Plus, Loader2, CheckCircle, XCircle, KeyRound, AlertTriangle, Search, Database, Server, HardDrive, Wifi, Package, Clock, Bot, ChevronDown } from 'lucide-react'
@@ -70,6 +70,9 @@ export default function AddTargetModal({ open, onClose, defaultType = '', defaul
   const [registering, setRegistering] = useState(false)
   const [registerProgress, setRegisterProgress] = useState(0)
   const [registerDone, setRegisterDone] = useState(false)
+  const [createdTargetId, setCreatedTargetId] = useState<string>('')
+  const [crawlAttempt, setCrawlAttempt] = useState(0)
+  const [formBanner, setFormBanner] = useState('')
 
   const isServer = form.target_type === 'server'
 
@@ -100,9 +103,43 @@ export default function AddTargetModal({ open, onClose, defaultType = '', defaul
     setRegistering(false)
     setRegisterProgress(0)
     setRegisterDone(false)
+    setCreatedTargetId('')
+    setCrawlAttempt(0)
+    setFormBanner('')
   }
 
-  const handleClose = () => {
+  /// Silently delete a dangling target (best-effort) — used when the user
+  /// discards a failed-crawl attempt or closes the modal mid-failure.
+  const cleanupTarget = async (id: string) => {
+    if (!id) return
+    try { await deleteTarget(id) } catch { /* ignore */ }
+    qc.invalidateQueries({ queryKey: ['targets'] })
+  }
+
+  const handleClose = async () => {
+    // If we're closing while a target exists but the crawl failed, remove the orphan.
+    if (createdTargetId && crawlError) {
+      await cleanupTarget(createdTargetId)
+    }
+    onClose()
+    resetAll()
+  }
+
+  // "Edit & Retry" — delete the stale target and go back to the form so the
+  // user can correct host / credentials / agent selection. Form values are
+  // preserved on purpose so they only have to adjust what was wrong.
+  const handleEditAndRetry = async () => {
+    if (createdTargetId) await cleanupTarget(createdTargetId)
+    setCreatedTargetId('')
+    setCrawlError('')
+    setCrawlResult(null)
+    setStep('form')
+    setFormBanner('Previous attempt failed. Adjust the details below and try again — this is your last retry.')
+  }
+
+  // "Discard" — delete the target and close.
+  const handleDiscard = async () => {
+    if (createdTargetId) await cleanupTarget(createdTargetId)
     onClose()
     resetAll()
   }
@@ -122,11 +159,13 @@ export default function AddTargetModal({ open, onClose, defaultType = '', defaul
     }),
     onSuccess: (target) => {
       qc.invalidateQueries({ queryKey: ['targets'] })
+      const tid = (target as any).target_id || ''
+      setCreatedTargetId(tid)
       if (isServer) {
-        const tid = (target as any).target_id || ''
         doCrawl(tid)
       } else {
-        handleClose()
+        onClose()
+        resetAll()
       }
     },
     onError: (e: Error) => setError(e.message),
@@ -135,13 +174,22 @@ export default function AddTargetModal({ open, onClose, defaultType = '', defaul
   const doCrawl = async (targetId: string) => {
     setStep('crawling')
     setCrawlError('')
+    const attempt = crawlAttempt + 1
+    setCrawlAttempt(attempt)
     try {
       const result = await crawlServer(targetId)
       setCrawlResult(result)
       setSelectedComponents(new Set(result.components.map((_, i) => i)))
       setStep('discovered')
     } catch (err) {
-      setCrawlError(String(err))
+      const msg = String(err)
+      setCrawlError(msg)
+      // On the 2nd consecutive failure, auto-remove the orphan target so the
+      // user isn't left with a phantom 'unreachable' entry in their fleet.
+      if (attempt >= 2) {
+        await cleanupTarget(targetId)
+        setCreatedTargetId('')
+      }
       setStep('discovered')
     }
   }
@@ -300,8 +348,18 @@ export default function AddTargetModal({ open, onClose, defaultType = '', defaul
               <div className="px-4 py-3 bg-red-500/10 border border-red-500/20 rounded-xl text-sm text-red-400 flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
                 <div>
-                  <div className="font-medium">Crawl failed</div>
+                  <div className="font-medium">Crawl failed{crawlAttempt >= 2 ? ' — target removed' : ''}</div>
                   <div className="text-xs opacity-80 mt-0.5">{crawlError}</div>
+                  {crawlAttempt < 2 && (
+                    <div className="text-xs opacity-70 mt-2">
+                      You can edit the connection details and retry. If the second attempt also fails, the target will be removed automatically.
+                    </div>
+                  )}
+                  {crawlAttempt >= 2 && (
+                    <div className="text-xs opacity-70 mt-2">
+                      The server was created but couldn&apos;t be reached after 2 attempts, so it has been removed. Verify connectivity / credentials outside Zentra and try again.
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -444,13 +502,32 @@ export default function AddTargetModal({ open, onClose, defaultType = '', defaul
               </button>
             )}
             {step === 'discovered' && crawlError && components.length === 0 && (
-              <button
-                type="button"
-                onClick={handleClose}
-                className="px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-sm text-slate-400 hover:text-white transition-colors"
-              >
-                Close
-              </button>
+              crawlAttempt < 2 ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleDiscard}
+                    className="px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-sm text-slate-400 hover:text-white transition-colors"
+                  >
+                    Discard
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleEditAndRetry}
+                    className="flex items-center gap-2 px-5 py-2.5 bg-brand-600 hover:bg-brand-700 rounded-xl text-sm font-medium text-white transition-colors"
+                  >
+                    Edit &amp; Retry
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => { onClose(); resetAll() }}
+                  className="px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-sm text-slate-400 hover:text-white transition-colors"
+                >
+                  Close
+                </button>
+              )
             )}
           </div>
         </div>
@@ -473,6 +550,12 @@ export default function AddTargetModal({ open, onClose, defaultType = '', defaul
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {formBanner && (
+            <div className="px-4 py-2.5 bg-amber-500/10 border border-amber-500/20 rounded-xl text-sm text-amber-300 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+              <span>{formBanner}</span>
+            </div>
+          )}
           {error && (
             <div className="px-4 py-2.5 bg-red-500/10 border border-red-500/20 rounded-xl text-sm text-red-400">{error}</div>
           )}

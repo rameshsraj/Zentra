@@ -124,6 +124,40 @@ fn init_store() -> LogStore {
     }
 }
 
+/// Push a batch of log lines (with shared labels) into the in-memory store.
+/// Used by other handlers (e.g. the agent heartbeat) to surface their entries
+/// in the Log Explorer alongside ingested target logs.
+pub(crate) fn push_log_lines(labels: HashMap<String, String>, lines: Vec<(i64, String)>) {
+    if lines.is_empty() {
+        return;
+    }
+    let fp = label_fingerprint(&labels);
+    let mut store = store().write();
+    let mut added_bytes: u64 = 0;
+    let mut added_lines: u64 = 0;
+    let stream = store
+        .streams
+        .entry(fp)
+        .or_insert_with(|| InternalStream { labels, entries: VecDeque::new(), bytes: 0 });
+    for (ts, line) in lines {
+        let bytes = line.len() as u64;
+        stream.entries.push_back(LogEntry {
+            timestamp: ts,
+            line,
+            structured_metadata: HashMap::new(),
+            parsed_fields: None,
+        });
+        stream.bytes += bytes;
+        added_bytes += bytes;
+        added_lines += 1;
+        if stream.entries.len() > 100_000 {
+            stream.entries.pop_front();
+        }
+    }
+    store.total_bytes += added_bytes;
+    store.total_lines += added_lines;
+}
+
 fn match_stream(labels: &HashMap<String, String>, query: &str) -> bool {
     if query.is_empty() || query == "{}" { return true; }
     let inner = query.trim_start_matches('{').split('}').next().unwrap_or("");

@@ -66,7 +66,7 @@ pub fn create_plugin_for_target(target: &Target) -> Option<PluginInstance> {
         TargetSubtype::Linux | TargetSubtype::Windows => {
             Some(PluginInstance::Server(server_plugin::ServerPlugin::new()))
         }
-        TargetSubtype::PostgreSQL | TargetSubtype::MySQL | TargetSubtype::MariaDB => {
+        TargetSubtype::Oracle => {
             Some(PluginInstance::Database(database_plugin::DatabasePlugin::new()))
         }
         TargetSubtype::LocalDisk | TargetSubtype::NFS | TargetSubtype::SAN | TargetSubtype::HP3PAR => {

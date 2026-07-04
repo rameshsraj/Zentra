@@ -4,12 +4,15 @@ use axum::{
     Extension, Json,
 };
 use chrono::{DateTime, Utc};
+use parking_lot::RwLock;
 use rand::Rng;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
+use std::sync::OnceLock;
 use uuid::Uuid;
 
 use crate::auth_middleware::AuthContext;
@@ -18,6 +21,7 @@ use crate::handlers::otlp::validate_otlp_key;
 use crate::state::AppState;
 
 const AGENT_KEY_HEADER: &str = "x-zentra-key";
+const AGENT_LOG_BUFFER_CAP: usize = 500;
 
 #[derive(Debug, Deserialize)]
 pub struct RegisterAgentRequest {
@@ -26,12 +30,46 @@ pub struct RegisterAgentRequest {
     pub region_label: Option<String>,
 }
 
+/// A single agent log line shipped with a heartbeat.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentLogLine {
+    pub timestamp: DateTime<Utc>,
+    pub level: String,
+    pub target: String,
+    pub message: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct AgentHeartbeatRequest {
     pub agent_version: String,
     pub active_targets: i32,
     pub os_name: String,
     pub dc_name: String,
+    #[serde(default)]
+    pub recent_logs: Vec<AgentLogLine>,
+}
+
+/// In-memory ring buffer of recent agent logs, keyed by (org_id, datacenter_name).
+/// Lost on API restart by design — diagnostic only; persisted copy goes through OTLP.
+fn agent_log_store() -> &'static RwLock<HashMap<(Uuid, String), VecDeque<AgentLogLine>>> {
+    static STORE: OnceLock<RwLock<HashMap<(Uuid, String), VecDeque<AgentLogLine>>>> =
+        OnceLock::new();
+    STORE.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+fn push_agent_logs(org_id: Uuid, dc_name: &str, lines: Vec<AgentLogLine>) {
+    if lines.is_empty() {
+        return;
+    }
+    let key = (org_id, dc_name.to_string());
+    let mut store = agent_log_store().write();
+    let buf = store.entry(key).or_insert_with(VecDeque::new);
+    for line in lines {
+        if buf.len() >= AGENT_LOG_BUFFER_CAP {
+            buf.pop_front();
+        }
+        buf.push_back(line);
+    }
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -211,9 +249,44 @@ pub async fn heartbeat(
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
+    // Stash recent logs (if any) so the install wizard can tail them live,
+    // and also persist them in the Log Explorer store keyed by service/dc.
+    let lines_for_explorer: Vec<(i64, String)> = body
+        .recent_logs
+        .iter()
+        .map(|l| {
+            let ts = l.timestamp.timestamp_nanos_opt().unwrap_or(0);
+            let line = format!("[{}] {} {}", l.level, l.target, l.message);
+            (ts, line)
+        })
+        .collect();
+    let mut labels = std::collections::HashMap::new();
+    labels.insert("service".to_string(), "zentra-agent".to_string());
+    labels.insert("datacenter".to_string(), body.dc_name.trim().to_string());
+    labels.insert("org_id".to_string(), org_id.to_string());
+    crate::handlers::log_engine::push_log_lines(labels, lines_for_explorer);
+    push_agent_logs(org_id, body.dc_name.trim(), body.recent_logs);
+
     Ok(Json(json!({
         "server_timestamp_utc": Utc::now(),
     })))
+}
+
+/// GET /api/agents/by-dc/:dc_name/logs — returns the most recent buffered
+/// log lines reported by the agent for that datacenter. Used by the install
+/// wizard to give the operator a live tail without needing shell access.
+pub async fn agent_logs_by_dc(
+    State(_state): State<AppState>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(dc_name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let key = (ctx.org_id, dc_name);
+    let store = agent_log_store().read();
+    let lines: Vec<AgentLogLine> = store
+        .get(&key)
+        .map(|buf| buf.iter().cloned().collect())
+        .unwrap_or_default();
+    Ok(Json(json!({ "lines": lines })))
 }
 
 pub async fn agent_targets(
