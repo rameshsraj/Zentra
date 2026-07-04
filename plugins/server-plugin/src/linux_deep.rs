@@ -126,31 +126,40 @@ echo "===END==="
     pub async fn collect(target: &Target) -> Vec<Metric> {
         let mut metrics = Vec::new();
 
-        let host = &target.host;
-        let ssh_user = target.credentials.as_ref()
-            .and_then(|c| c.username.clone())
-            .unwrap_or_else(|| std::env::var("zentra_SSH_USER").unwrap_or_else(|_| "root".into()));
-
-        let output = Command::new("ssh")
-            .args([
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "ConnectTimeout=10",
-                "-o", "BatchMode=yes",
-                "-o", "ServerAliveInterval=5",
-                &format!("{}@{}", ssh_user, host),
-                Self::COLLECTION_SCRIPT,
-            ])
-            .output()
-            .await;
+        // When agent_id is set the agent runs on the target machine — collect locally,
+        // no SSH needed (and no SSH credentials available).
+        let output = if target.agent_id.is_some() {
+            debug!(target = %target.name, "Linux deep collection: running locally (agent-mode)");
+            Command::new("bash")
+                .args(["-c", Self::COLLECTION_SCRIPT])
+                .output()
+                .await
+        } else {
+            let host = &target.host;
+            let ssh_user = target.credentials.as_ref()
+                .and_then(|c| c.username.clone())
+                .unwrap_or_else(|| std::env::var("zentra_SSH_USER").unwrap_or_else(|_| "root".into()));
+            Command::new("ssh")
+                .args([
+                    "-o", "StrictHostKeyChecking=no",
+                    "-o", "ConnectTimeout=10",
+                    "-o", "BatchMode=yes",
+                    "-o", "ServerAliveInterval=5",
+                    &format!("{}@{}", ssh_user, host),
+                    Self::COLLECTION_SCRIPT,
+                ])
+                .output()
+                .await
+        };
 
         let output = match output {
             Ok(o) if o.status.success() || !o.stdout.is_empty() => o,
             Ok(o) => {
-                warn!(target = %target.name, err = %String::from_utf8_lossy(&o.stderr), "SSH collection failed");
+                warn!(target = %target.name, err = %String::from_utf8_lossy(&o.stderr), "collection failed");
                 return metrics;
             }
             Err(e) => {
-                warn!(target = %target.name, err = %e, "SSH exec error");
+                warn!(target = %target.name, err = %e, "collection exec error");
                 return metrics;
             }
         };
