@@ -100,7 +100,7 @@ pub fn is_public_path(method: &Method, path: &str) -> bool {
     }
     // /metrics is served for Prometheus scrapers. Restrict access at the
     // network layer (firewall / nginx) — do not expose port 5006 externally.
-    if path == "/metrics" || path == "/api/agents/register" {
+    if path == "/metrics" {
         return true;
     }
     // WebSocket endpoints authenticate via query-string token validated

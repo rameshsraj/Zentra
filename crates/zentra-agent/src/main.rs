@@ -2,7 +2,7 @@ use zentra_agent::leader_election;
 use zentra_agent::orchestrator::Orchestrator;
 use zentra_agent::plugin_manager::create_plugin_for_target;
 use zentra_agent::remote_delivery::RemoteDeliveryService;
-use zentra_agent::heartbeat::HeartbeatLoop;
+use zentra_agent::heartbeat::{HeartbeatLoop, new_agent_id_cell};
 use zentra_agent::remote_targets::RemoteTargetFetcher;
 use zentra_agent::network_scan::NetworkScanner;
 use zentra_agent::log_capture::{CaptureLayer, LogBuffer};
@@ -208,6 +208,14 @@ async fn run_remote_mode(config: zentra_core::AppConfig, log_buffer: LogBuffer) 
     let event_bus = EventBus::new();
     let active_targets = Arc::new(AtomicUsize::new(0));
 
+    // Shared cell — populated by HeartbeatLoop on first successful response.
+    // Seed it from env var if already known (e.g. systemd service after first run).
+    let agent_id_cell = new_agent_id_cell();
+    if let Some(id) = config.agent_id {
+        let _ = agent_id_cell.set(id);
+        info!(agent_id = %id, "Agent ID pre-loaded from ZENTRA_AGENT_ID env var");
+    }
+
     let (metric_tx, metric_rx) = mpsc::channel::<MetricBatch>(1024);
     let (_log_tx, log_rx) = mpsc::channel::<LogBatch>(1024);
 
@@ -232,7 +240,7 @@ async fn run_remote_mode(config: zentra_core::AppConfig, log_buffer: LogBuffer) 
         delivery_logs.run_log_delivery(log_rx).await;
     }.instrument(tracing::info_span!("remote.log_delivery")));
 
-    // Heartbeat loop (30s)
+    // Heartbeat loop (30s) — fires immediately on startup to get agent_id fast
     let heartbeat = HeartbeatLoop::new(
         config.api_endpoint.clone(),
         config.agent_api_key.clone(),
@@ -240,6 +248,7 @@ async fn run_remote_mode(config: zentra_core::AppConfig, log_buffer: LogBuffer) 
         active_targets.clone(),
         cancel.clone(),
         log_buffer.clone(),
+        agent_id_cell.clone(),
     );
     tokio::spawn(async move {
         heartbeat.run().await;
@@ -259,29 +268,46 @@ async fn run_remote_mode(config: zentra_core::AppConfig, log_buffer: LogBuffer) 
         fetcher.run().await;
     }.instrument(tracing::info_span!("agent.target_fetcher")));
 
-    // Network scanner — discovers hosts in local subnets, reports to server (10min interval)
-    if let Some(agent_id) = config.agent_id {
-        let scanner = NetworkScanner::new(
-            config.api_endpoint.clone(),
-            config.agent_api_key.clone(),
-            agent_id,
-            cancel.clone(),
-        );
+    // Network scanner — waits for agent_id then discovers hosts in local subnets
+    {
+        let scanner_cell = agent_id_cell.clone();
+        let scanner_endpoint = config.api_endpoint.clone();
+        let scanner_key = config.agent_api_key.clone();
+        let scanner_cancel = cancel.clone();
         tokio::spawn(async move {
-            scanner.run().await;
-        }.instrument(tracing::info_span!("agent.network_scanner", agent.id = %agent_id)));
-        info!(agent_id = %agent_id, "Network scanner spawned");
-    } else {
-        tracing::warn!("ZENTRA_AGENT_ID not set — network host discovery disabled");
+            // Wait up to 60s for agent_id from the first heartbeat response
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+            loop {
+                if let Some(id) = scanner_cell.get() {
+                    let scanner = NetworkScanner::new(
+                        scanner_endpoint,
+                        scanner_key,
+                        *id,
+                        scanner_cancel,
+                    );
+                    info!(agent_id = %id, "Network scanner spawned");
+                    scanner.run().await;
+                    return;
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    tracing::warn!("Timed out waiting for agent_id — network scanner disabled");
+                    return;
+                }
+                tokio::select! {
+                    _ = scanner_cancel.cancelled() => { return; }
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(2)) => {}
+                }
+            }
+        }.instrument(tracing::info_span!("agent.network_scanner")));
     }
 
-    // Component discovery — detects local services (postgres, nginx, redis, etc.)
-    // and reports them to the server so the wizard can show them for user selection.
+    // Component discovery — waits for agent_id then detects and reports local services
     let comp_disc = ComponentDiscovery::new(
         config.api_endpoint.clone(),
         config.agent_api_key.clone(),
         config.dc_name.clone(),
         cancel.clone(),
+        agent_id_cell.clone(),
     );
     tokio::spawn(async move {
         comp_disc.run().await;

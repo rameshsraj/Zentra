@@ -4,9 +4,18 @@ use crate::log_capture::LogBuffer;
 use reqwest::Client;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
+use uuid::Uuid;
+
+/// Shared cell that holds the agent's own UUID once the first successful
+/// heartbeat response arrives. Discovery tasks wait on this before reporting.
+pub type AgentIdCell = Arc<OnceLock<Uuid>>;
+
+pub fn new_agent_id_cell() -> AgentIdCell {
+    Arc::new(OnceLock::new())
+}
 
 pub struct HeartbeatLoop {
     client: Client,
@@ -16,6 +25,7 @@ pub struct HeartbeatLoop {
     active_targets: Arc<AtomicUsize>,
     cancel: CancellationToken,
     log_buffer: LogBuffer,
+    agent_id_cell: AgentIdCell,
 }
 
 impl HeartbeatLoop {
@@ -26,6 +36,7 @@ impl HeartbeatLoop {
         active_targets: Arc<AtomicUsize>,
         cancel: CancellationToken,
         log_buffer: LogBuffer,
+        agent_id_cell: AgentIdCell,
     ) -> Self {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(10))
@@ -40,13 +51,15 @@ impl HeartbeatLoop {
             active_targets,
             cancel,
             log_buffer,
+            agent_id_cell,
         }
     }
 
     pub async fn run(self) {
         info!("Heartbeat loop started (30s interval)");
+        // Fire immediately so the agent gets its agent_id on startup,
+        // then continue every 30 seconds.
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(30));
-        ticker.tick().await; // skip immediate
 
         loop {
             tokio::select! {
@@ -84,6 +97,15 @@ impl HeartbeatLoop {
                     }
                     if status.is_success() {
                         if let Ok(json) = resp.json::<serde_json::Value>().await {
+                            // Capture agent_id from server response on first heartbeat
+                            if self.agent_id_cell.get().is_none() {
+                                if let Some(id_str) = json.get("agent_id").and_then(|v| v.as_str()) {
+                                    if let Ok(id) = id_str.parse::<Uuid>() {
+                                        let _ = self.agent_id_cell.set(id);
+                                        info!(agent_id = %id, "Agent ID received from server");
+                                    }
+                                }
+                            }
                             if let Some(ts) = json.get("server_timestamp_utc").and_then(|v| v.as_str()) {
                                 if let Ok(server_time) = chrono::DateTime::parse_from_rfc3339(ts) {
                                     let drift = (chrono::Utc::now() - server_time.with_timezone(&chrono::Utc))

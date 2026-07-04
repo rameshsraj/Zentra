@@ -249,6 +249,16 @@ pub async fn heartbeat(
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
+    // Look up the agent_id for this key so we can return it in the response.
+    // The agent uses this to self-discover its UUID on first heartbeat.
+    let agent_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT agent_id FROM agent_fleet WHERE api_key_hash = $1 LIMIT 1",
+    )
+    .bind(&key_hash)
+    .fetch_optional(&state.tsdb_pool)
+    .await
+    .unwrap_or(None);
+
     // Stash recent logs (if any) so the install wizard can tail them live,
     // and also persist them in the Log Explorer store keyed by service/dc.
     let lines_for_explorer: Vec<(i64, String)> = body
@@ -269,6 +279,7 @@ pub async fn heartbeat(
 
     Ok(Json(json!({
         "server_timestamp_utc": Utc::now(),
+        "agent_id": agent_id,
     })))
 }
 

@@ -6,6 +6,7 @@
 //!   3. Try systemctl is-active for known service units (best-effort).
 //!   4. Report to /api/agents/by-dc/:dc_name/components every 5 minutes.
 
+use crate::heartbeat::AgentIdCell;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -14,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 const REPORT_INTERVAL_SECS: u64 = 300; // 5 min
-const INITIAL_DELAY_SECS: u64 = 10;    // small delay so agent is fully registered first
+const AGENT_ID_WAIT_SECS: u64 = 60;    // max wait for agent_id from first heartbeat
 
 pub struct ComponentDiscovery {
     client: Client,
@@ -22,6 +23,7 @@ pub struct ComponentDiscovery {
     api_key: String,
     dc_name: String,
     cancel: CancellationToken,
+    agent_id_cell: AgentIdCell,
 }
 
 impl ComponentDiscovery {
@@ -30,6 +32,7 @@ impl ComponentDiscovery {
         api_key: String,
         dc_name: String,
         cancel: CancellationToken,
+        agent_id_cell: AgentIdCell,
     ) -> Self {
         let client = Client::builder()
             .timeout(Duration::from_secs(15))
@@ -41,12 +44,27 @@ impl ComponentDiscovery {
             api_key,
             dc_name,
             cancel,
+            agent_id_cell,
         }
     }
 
     pub async fn run(self) {
         info!("Component discovery started ({}s interval)", REPORT_INTERVAL_SECS);
-        tokio::time::sleep(Duration::from_secs(INITIAL_DELAY_SECS)).await;
+
+        // Wait until the heartbeat loop has populated agent_id from the server.
+        // This guarantees the server has registered this agent before we report.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(AGENT_ID_WAIT_SECS);
+        loop {
+            if self.agent_id_cell.get().is_some() { break; }
+            if tokio::time::Instant::now() >= deadline {
+                warn!("Timed out waiting for agent_id — component discovery will proceed anyway");
+                break;
+            }
+            tokio::select! {
+                _ = self.cancel.cancelled() => { return; }
+                _ = tokio::time::sleep(Duration::from_secs(2)) => {}
+            }
+        }
 
         let mut ticker = tokio::time::interval(Duration::from_secs(REPORT_INTERVAL_SECS));
 
