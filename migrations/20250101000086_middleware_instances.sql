@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS middleware_instances (
     port            INT  NOT NULL,
     status          TEXT NOT NULL DEFAULT 'unknown',
     extra           JSONB NOT NULL DEFAULT '{}',  -- type-specific fields (e.g. stub_status_path, username)
-    org_id          UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    org_id          UUID REFERENCES organizations(org_id) ON DELETE CASCADE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

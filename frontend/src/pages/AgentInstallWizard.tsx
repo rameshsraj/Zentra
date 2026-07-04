@@ -10,7 +10,7 @@ import PageHeader from '@/components/PageHeader'
 import {
   Server, Copy, Check, Loader2, CheckCircle2,
   AlertTriangle, ChevronRight, ChevronDown, Terminal,
-  RefreshCw, Package, Database, Globe, Cpu,
+  RefreshCw, Package, Database, Globe, Cpu, Network, FolderOpen,
 } from 'lucide-react'
 
 type Step = 1 | 2 | 3 | 4
@@ -219,19 +219,22 @@ function StepInstall({ apiKey, dcName, onNext }: { apiKey: string; dcName: strin
   const [tab, setTab] = useState<'linux' | 'windows'>('linux')
   const [copied, setCopied] = useState(false)
   const [showSystemd, setShowSystemd] = useState(false)
-  const serverUrl = window.location.origin
+  // downloadUrl: frontend origin (nginx at :5010 serves /dl/)
+  const downloadUrl = window.location.origin
+  // apiEndpoint: same host, direct to API port 5006
+  const apiEndpoint = `${window.location.protocol}//${window.location.hostname}:5006`
 
-  const linuxCmd = `curl -fsSL ${serverUrl}/dl/zentra-agent-linux-x86_64 -o zentra-agent && \\
+  const linuxCmd = `curl -fsSL ${downloadUrl}/dl/zentra-agent-linux-x86_64 -o zentra-agent && \\
 chmod +x zentra-agent && \\
 ZENTRA_AGENT_MODE=remote \\
-ZENTRA_API_ENDPOINT=${serverUrl} \\
+ZENTRA_API_ENDPOINT=${apiEndpoint} \\
 ZENTRA_AGENT_API_KEY=${apiKey} \\
 ZENTRA_DC_NAME=${dcName} \\
 ./zentra-agent`
 
-  const windowsCmd = `Invoke-WebRequest -Uri "${serverUrl}/dl/zentra-agent-windows-x86_64.exe" -OutFile zentra-agent.exe
+  const windowsCmd = `Invoke-WebRequest -Uri "${downloadUrl}/dl/zentra-agent-windows-x86_64.exe" -OutFile zentra-agent.exe
 $env:ZENTRA_AGENT_MODE="remote"
-$env:ZENTRA_API_ENDPOINT="${serverUrl}"
+$env:ZENTRA_API_ENDPOINT="${apiEndpoint}"
 $env:ZENTRA_AGENT_API_KEY="${apiKey}"
 $env:ZENTRA_DC_NAME="${dcName}"
 .\\zentra-agent.exe`
@@ -243,7 +246,7 @@ After=network.target
 [Service]
 Type=simple
 Environment=ZENTRA_AGENT_MODE=remote
-Environment=ZENTRA_API_ENDPOINT=${serverUrl}
+Environment=ZENTRA_API_ENDPOINT=${apiEndpoint}
 Environment=ZENTRA_AGENT_API_KEY=${apiKey}
 Environment=ZENTRA_DC_NAME=${dcName}
 ExecStart=/usr/local/bin/zentra-agent
@@ -377,12 +380,18 @@ function StepWaiting({ dcName, onConnected }: { dcName: string; onConnected: () 
 
 function componentIcon(type: string) {
   switch (type) {
-    case 'postgres': case 'mysql': case 'oracle': case 'mongodb':
+    case 'oracle':
       return <Database className="h-4 w-4 text-blue-400" />
     case 'nginx': case 'apache': case 'haproxy': case 'tomcat':
       return <Globe className="h-4 w-4 text-green-400" />
-    case 'redis': case 'memcached': case 'kafka': case 'rabbitmq':
+    case 'redis': case 'memcached': case 'kafka': case 'rabbitmq': case 'elasticsearch':
       return <Package className="h-4 w-4 text-amber-400" />
+    case 'network_interface':
+      return <Network className="h-4 w-4 text-cyan-400" />
+    case 'log_directory':
+      return <FolderOpen className="h-4 w-4 text-yellow-400" />
+    case 'linux': case 'server':
+      return <Server className="h-4 w-4 text-zinc-400" />
     default:
       return <Cpu className="h-4 w-4 text-zinc-400" />
   }

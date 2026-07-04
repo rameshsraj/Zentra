@@ -857,7 +857,7 @@ pub async fn report_components(
             "INSERT INTO discovered_components
              (agent_id, org_id, component_type, component_name, address, port, version, extra, first_seen, last_seen)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
-             ON CONFLICT (agent_id, component_type, port) DO UPDATE
+             ON CONFLICT (agent_id, component_type, COALESCE(port, -1)) DO UPDATE
              SET component_name = EXCLUDED.component_name,
                  version        = COALESCE(EXCLUDED.version, discovered_components.version),
                  extra          = EXCLUDED.extra,
@@ -988,15 +988,19 @@ pub async fn confirm_components(
 
         // Map component_type → target_subtype string
         let subtype = match comp_type.as_str() {
-            "linux" | "server"  => "linux",
-            "windows"           => "windows",
-            "postgres"          => "postgres",
-            "mysql"             => "mysql",
-            "oracle"            => "oracle",
-            "redis"             => "redis",
-            "mongodb"           => "mongodb",
-            "nginx" | "apache" | "haproxy" | "tomcat" | "phpfpm" => "linux",
-            _                   => "linux",
+            "linux" | "server"       => "linux",
+            "windows"               => "windows",
+            "oracle"                => "oracle",
+            "redis"                 => "redis",
+            "nginx" | "apache"
+            | "haproxy" | "tomcat"
+            | "phpfpm"              => "linux",
+            "elasticsearch"
+            | "kafka" | "rabbitmq"
+            | "memcached"           => "linux",
+            "network_interface"     => "linux",
+            "log_directory"         => "linux",
+            _                       => "linux",
         };
 
         let display_name = if let Some(v) = &version {

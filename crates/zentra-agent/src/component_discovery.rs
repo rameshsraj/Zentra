@@ -147,23 +147,28 @@ struct DiscoveredComponent {
     extra: Value,
 }
 
-/// Top-level: combine port-based and process-based detection.
+/// Discover everything running on the agent host:
+///   - Linux host OS (always)
+///   - Middleware: nginx, apache, haproxy, tomcat, php-fpm, kafka, rabbitmq,
+///                 redis, elasticsearch, memcached
+///   - Database: Oracle only (postgres/mysql/mongodb are NOT monitored by this product)
+///   - Network interfaces
+///   - Log directories
 async fn discover_local_components() -> Vec<DiscoveredComponent> {
     let mut components: HashMap<String, DiscoveredComponent> = HashMap::new();
 
-    // 1. Always add the host OS itself as a "linux" component
+    // 1. Linux host OS
     let os_version = read_os_version();
-    let host_key = "host:linux".to_string();
-    components.insert(host_key, DiscoveredComponent {
-        component_type: "linux".to_string(),
-        component_name: "Linux Host".to_string(),
-        address: "127.0.0.1".to_string(),
+    components.insert("host:linux".into(), DiscoveredComponent {
+        component_type: "linux".into(),
+        component_name: "Linux Host".into(),
+        address: "127.0.0.1".into(),
         port: None,
         version: os_version,
         extra: json!({}),
     });
 
-    // 2. Parse listening ports from /proc/net/tcp[6]
+    // 2. Port-based detection
     let listening = listening_ports();
     for port in &listening {
         if let Some(def) = port_to_component(*port) {
@@ -171,7 +176,7 @@ async fn discover_local_components() -> Vec<DiscoveredComponent> {
             components.entry(key).or_insert_with(|| DiscoveredComponent {
                 component_type: def.component_type.clone(),
                 component_name: def.component_name.clone(),
-                address: "127.0.0.1".to_string(),
+                address: "127.0.0.1".into(),
                 port: Some(*port as i32),
                 version: probe_version(&def.component_type),
                 extra: json!({ "detected_via": "port_scan" }),
@@ -179,7 +184,7 @@ async fn discover_local_components() -> Vec<DiscoveredComponent> {
         }
     }
 
-    // 3. Scan /proc for known process names
+    // 3. Process-based detection
     let procs = running_processes();
     for proc_name in &procs {
         if let Some(def) = proc_to_component(proc_name) {
@@ -187,12 +192,38 @@ async fn discover_local_components() -> Vec<DiscoveredComponent> {
             components.entry(key).or_insert_with(|| DiscoveredComponent {
                 component_type: def.component_type.clone(),
                 component_name: def.component_name.clone(),
-                address: "127.0.0.1".to_string(),
+                address: "127.0.0.1".into(),
                 port: def.default_port,
                 version: probe_version(&def.component_type),
                 extra: json!({ "detected_via": "process", "process_name": proc_name }),
             });
         }
+    }
+
+    // 4. Network interfaces
+    for iface in network_interfaces() {
+        let key = format!("net:{}", iface.name);
+        components.entry(key).or_insert_with(|| DiscoveredComponent {
+            component_type: "network_interface".into(),
+            component_name: format!("Network Interface ({})", iface.name),
+            address: iface.address.clone(),
+            port: None,
+            version: None,
+            extra: json!({ "interface": iface.name, "address": iface.address }),
+        });
+    }
+
+    // 5. Log directories
+    for log_dir in log_directories() {
+        let key = format!("logs:{}", log_dir);
+        components.entry(key).or_insert_with(|| DiscoveredComponent {
+            component_type: "log_directory".into(),
+            component_name: format!("Log Directory ({})", log_dir),
+            address: "127.0.0.1".into(),
+            port: None,
+            version: None,
+            extra: json!({ "path": log_dir }),
+        });
     }
 
     components.into_values().collect()
@@ -204,14 +235,17 @@ struct ComponentDef {
     default_port: Option<i32>,
 }
 
-/// Maps a listening TCP port to a known component type.
+struct NetworkInterface {
+    name: String,
+    address: String,
+}
+
+/// Maps a listening TCP port to a known middleware/Oracle component.
+/// Postgres (5432), MySQL (3306), MongoDB (27017) are intentionally excluded.
 fn port_to_component(port: u16) -> Option<ComponentDef> {
     match port {
-        5432 => Some(ComponentDef { component_type: "postgres".into(), component_name: "PostgreSQL".into(), default_port: Some(5432) }),
-        3306 => Some(ComponentDef { component_type: "mysql".into(), component_name: "MySQL".into(), default_port: Some(3306) }),
         1521 | 1522 => Some(ComponentDef { component_type: "oracle".into(), component_name: "Oracle DB".into(), default_port: Some(port as i32) }),
         6379 => Some(ComponentDef { component_type: "redis".into(), component_name: "Redis".into(), default_port: Some(6379) }),
-        27017 => Some(ComponentDef { component_type: "mongodb".into(), component_name: "MongoDB".into(), default_port: Some(27017) }),
         80 | 8080 => Some(ComponentDef { component_type: "nginx".into(), component_name: "Web Server (HTTP)".into(), default_port: Some(port as i32) }),
         443 | 8443 => Some(ComponentDef { component_type: "nginx".into(), component_name: "Web Server (HTTPS)".into(), default_port: Some(port as i32) }),
         9200 | 9300 => Some(ComponentDef { component_type: "elasticsearch".into(), component_name: "Elasticsearch".into(), default_port: Some(port as i32) }),
@@ -222,23 +256,15 @@ fn port_to_component(port: u16) -> Option<ComponentDef> {
     }
 }
 
-/// Maps a process name to a known component type.
+/// Maps a process name to a known middleware/Oracle component.
+/// Postgres, MySQL, MongoDB processes are intentionally excluded.
 fn proc_to_component(name: &str) -> Option<ComponentDef> {
     let n = name.to_lowercase();
-    if n.contains("postgres") {
-        return Some(ComponentDef { component_type: "postgres".into(), component_name: "PostgreSQL".into(), default_port: Some(5432) });
-    }
-    if n.contains("mysqld") || n == "mysql" {
-        return Some(ComponentDef { component_type: "mysql".into(), component_name: "MySQL".into(), default_port: Some(3306) });
-    }
     if n.contains("oracle") || n == "ora_pmon" || n.starts_with("ora_") {
         return Some(ComponentDef { component_type: "oracle".into(), component_name: "Oracle DB".into(), default_port: Some(1521) });
     }
     if n.contains("redis") {
         return Some(ComponentDef { component_type: "redis".into(), component_name: "Redis".into(), default_port: Some(6379) });
-    }
-    if n.contains("mongod") {
-        return Some(ComponentDef { component_type: "mongodb".into(), component_name: "MongoDB".into(), default_port: Some(27017) });
     }
     if n == "nginx" || n.starts_with("nginx:") {
         return Some(ComponentDef { component_type: "nginx".into(), component_name: "nginx".into(), default_port: Some(80) });
@@ -264,7 +290,71 @@ fn proc_to_component(name: &str) -> Option<ComponentDef> {
     if n.contains("rabbitmq") || n.contains("beam.smp") {
         return Some(ComponentDef { component_type: "rabbitmq".into(), component_name: "RabbitMQ".into(), default_port: Some(5672) });
     }
+    if n.contains("memcached") {
+        return Some(ComponentDef { component_type: "memcached".into(), component_name: "Memcached".into(), default_port: Some(11211) });
+    }
     None
+}
+
+/// Reads /proc/net/if_inet6 and /proc/net/fib_trie for active network interfaces with IPs.
+fn network_interfaces() -> Vec<NetworkInterface> {
+    let mut ifaces: Vec<NetworkInterface> = Vec::new();
+    // Parse /proc/net/dev for interface names, then /proc/net/fib_trie for IPs
+    // Simpler: read /proc/net/if_inet6 for IPv6, and parse `ip addr` output
+    if let Ok(out) = std::process::Command::new("ip")
+        .args(["addr", "show"])
+        .output()
+    {
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut current_iface = String::new();
+        for line in text.lines() {
+            let line = line.trim();
+            // Interface line: "2: eth0: <...>"
+            if let Some(rest) = line.split(':').nth(1) {
+                let name = rest.trim().split('@').next().unwrap_or("").trim().to_string();
+                if !name.is_empty() && name != "lo" {
+                    current_iface = name;
+                }
+            }
+            // IP line: "inet 10.0.0.1/24 ..."
+            if line.starts_with("inet ") && !current_iface.is_empty() {
+                if let Some(addr_cidr) = line.split_whitespace().nth(1) {
+                    let addr = addr_cidr.split('/').next().unwrap_or("").to_string();
+                    if !addr.is_empty() && addr != "127.0.0.1" {
+                        ifaces.push(NetworkInterface {
+                            name: current_iface.clone(),
+                            address: addr,
+                        });
+                        current_iface.clear(); // one entry per interface
+                    }
+                }
+            }
+        }
+    }
+    ifaces
+}
+
+/// Returns log directories that exist on this host.
+fn log_directories() -> Vec<String> {
+    let candidates = [
+        "/var/log",
+        "/var/log/nginx",
+        "/var/log/apache2",
+        "/var/log/httpd",
+        "/var/log/mysql",
+        "/var/log/oracle",
+        "/var/log/tomcat",
+        "/var/log/kafka",
+        "/var/log/elasticsearch",
+        "/var/log/rabbitmq",
+        "/var/log/redis",
+        "/opt/oracle/diag",
+    ];
+    candidates
+        .iter()
+        .filter(|p| std::path::Path::new(p).is_dir())
+        .map(|p| p.to_string())
+        .collect()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
