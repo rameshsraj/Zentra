@@ -364,6 +364,7 @@ fi
 mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
 cp /mnt/c/GitHub/Zentra/deploy/nginx-zentra-local.conf /etc/nginx/sites-available/zentra-local
 sed -i "s|__FRONTEND_DIST__|$DEPLOY/frontend/dist|g" /etc/nginx/sites-available/zentra-local
+sed -i "s|__DEPLOY_DL__|$DEPLOY/bin/dl/|g" /etc/nginx/sites-available/zentra-local
 ln -sf /etc/nginx/sites-available/zentra-local /etc/nginx/sites-enabled/zentra-local
 rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
 nginx -t && (service nginx reload 2>/dev/null || service nginx restart 2>/dev/null || true)
