@@ -8,7 +8,7 @@ import {
 import PageHeader from '@/components/PageHeader'
 import {
   Server, Trash2, Plus, Wifi, WifiOff, AlertTriangle,
-  ChevronDown, ChevronRight, CheckCircle2, ScrollText,
+  ChevronDown, ChevronRight, CheckCircle2, ScrollText, RefreshCw,
 } from 'lucide-react'
 
 const STATUS_STYLES: Record<string, { color: string; bg: string; label: string }> = {
@@ -71,7 +71,7 @@ function DiscoveredComponentsPanel({ dcName }: { dcName: string }) {
     return (
       <div className="px-6 py-5 text-sm text-muted-foreground">
         <p className="font-medium text-foreground mb-1">No components discovered yet</p>
-        <p>The agent reports discovered services every 5 minutes. Check back shortly after the agent is running.</p>
+        <p>The agent scans for running services on startup and reports them within 30 seconds. If nothing appears, check the Agent Logs panel below for errors.</p>
       </div>
     )
   }
@@ -200,7 +200,7 @@ export default function FleetPage() {
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
-  const { data: agents = [], isLoading } = useQuery({
+  const { data: agents = [], isLoading, isFetching, refetch } = useQuery({
     queryKey: ['agents'],
     queryFn: listAgents,
     refetchInterval: 15_000,
@@ -225,7 +225,15 @@ export default function FleetPage() {
         subtitle="Manage your monitoring agents across all datacenters."
       />
 
-      <div className="flex justify-end">
+      <div className="flex items-center justify-end gap-2">
+        <button
+          onClick={() => refetch()}
+          disabled={isFetching}
+          className="flex items-center justify-center rounded-lg border border-border p-2 text-muted-foreground hover:text-foreground hover:bg-muted/40 disabled:opacity-40 transition-colors"
+          title="Refresh"
+        >
+          <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
+        </button>
         <button
           onClick={() => navigate('/fleet/install')}
           className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors"

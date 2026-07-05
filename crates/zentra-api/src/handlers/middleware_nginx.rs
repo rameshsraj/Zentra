@@ -99,14 +99,23 @@ pub async fn get_status(State(s): State<AppState>, Path(id): Path<String>) -> Re
                 }
             }
             let dropped = accepts.saturating_sub(handled);
-            // Approximate per-sec rates (snapshot — no delta tracking yet)
             let uptime_guess = if accepts > 0 { (accepts as f64 / 100.0).max(1.0) } else { 1.0 };
+            let rps = (requests as f64 / uptime_guess).min(99999.0);
+            let _ = sqlx::query(
+                "INSERT INTO middleware_metrics (instance_id, instance_type, metric_name, value, collected_at)
+                 VALUES ($1,'nginx','active_connections',$2,now()),
+                        ($1,'nginx','requests_per_sec',$3,now()),
+                        ($1,'nginx','reading',$4,now()),
+                        ($1,'nginx','writing',$5,now()),
+                        ($1,'nginx','waiting',$6,now())"
+            ).bind(&id).bind(active as f64).bind(rps).bind(reading as f64).bind(writing as f64).bind(waiting as f64)
+             .execute(&s.pool).await;
             Ok(Json(NginxStatus {
                 active_connections: active, accepts, handled, requests,
                 reading, writing, waiting,
                 accepts_per_sec: (accepts as f64 / uptime_guess).min(99999.0),
                 handled_per_sec: (handled as f64 / uptime_guess).min(99999.0),
-                requests_per_sec: (requests as f64 / uptime_guess).min(99999.0),
+                requests_per_sec: rps,
                 dropped_connections: dropped,
             }))
         }
@@ -122,50 +131,31 @@ pub async fn get_status(State(s): State<AppState>, Path(id): Path<String>) -> Re
 }
 
 pub async fn performance_history(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<NginxHistoryPoint>>, ApiError> {
-    let inst = {
-        let insts = instances().read();
-        insts.iter().find(|i| i.id == id).cloned()
-            .ok_or(ApiError::from((StatusCode::NOT_FOUND, "Instance not found".into())))?
-    };
-    // Fetch current snapshot to base history on
-    let url = format!("http://{}:{}{}", inst.host, inst.port, inst.stub_status_path);
-    let (active, requests, reading, writing, waiting) = match s.http_client
-        .get(&url).send().await
-    {
-        Ok(resp) if resp.status().is_success() => {
-            let body = resp.text().await.unwrap_or_default();
-            let mut a: u64 = 0; let mut req: u64 = 0; let mut r: u64 = 0; let mut w: u64 = 0; let mut wt: u64 = 0;
-            for line in body.lines() {
-                let line = line.trim();
-                if line.starts_with("Active connections:") {
-                    a = line.split(':').nth(1).and_then(|v| v.trim().parse().ok()).unwrap_or(0);
-                } else if line.starts_with("Reading:") {
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    r = parts.get(1).and_then(|v| v.parse().ok()).unwrap_or(0);
-                    w = parts.get(3).and_then(|v| v.parse().ok()).unwrap_or(0);
-                    wt = parts.get(5).and_then(|v| v.parse().ok()).unwrap_or(0);
-                } else if let Ok(vals) = line.split_whitespace().map(|v| v.parse::<u64>()).collect::<Result<Vec<u64>,_>>() {
-                    if vals.len() == 3 { req = vals[2]; }
-                }
-            }
-            (a, req, r, w, wt)
-        }
-        _ => (0, 0, 0, 0, 0),
-    };
-    // Generate 60 history points (1 per minute) with variations around current values
-    let now = Utc::now();
-    let rps = if requests > 0 { (requests as f64 / 60.0).max(0.1) } else { 0.0 };
-    let points: Vec<NginxHistoryPoint> = (0..60).rev().map(|i| {
-        let ts = now - Duration::minutes(i);
-        let j = (i as f64 * 0.17).sin();
-        let variance = 0.15;
+    if !instances().read().iter().any(|i| i.id == id) {
+        return Err(ApiError::from((StatusCode::NOT_FOUND, "Instance not found".into())));
+    }
+    let rows = sqlx::query(
+        r#"SELECT time_bucket('1 minute', collected_at) AS bucket,
+           avg(CASE WHEN metric_name = 'active_connections' THEN value END) AS active_connections,
+           avg(CASE WHEN metric_name = 'requests_per_sec'  THEN value END) AS requests_per_sec,
+           avg(CASE WHEN metric_name = 'reading'           THEN value END) AS reading,
+           avg(CASE WHEN metric_name = 'writing'           THEN value END) AS writing,
+           avg(CASE WHEN metric_name = 'waiting'           THEN value END) AS waiting
+           FROM middleware_metrics
+           WHERE instance_id = $1 AND instance_type = 'nginx'
+             AND collected_at > now() - INTERVAL '1 hour'
+           GROUP BY bucket ORDER BY bucket"#
+    ).bind(&id).fetch_all(&s.pool).await.unwrap_or_default();
+    let points: Vec<NginxHistoryPoint> = rows.iter().map(|r| {
+        use sqlx::Row;
+        let bucket: chrono::DateTime<Utc> = r.get("bucket");
         NginxHistoryPoint {
-            timestamp: ts.to_rfc3339(),
-            active_connections: ((active as f64 * (1.0 + j * variance)).max(0.0) as u64).max(if active > 0 { 1 } else { 0 }),
-            requests_per_sec: (rps * (1.0 + j * variance)).max(0.0),
-            reading: reading,
-            writing: ((writing as f64 * (1.0 + j * variance)).max(0.0) as u64).max(if writing > 0 { 1 } else { 0 }),
-            waiting: (waiting as f64 * (1.0 + j * variance)).max(0.0) as u64,
+            timestamp:          bucket.to_rfc3339(),
+            active_connections: r.get::<Option<f64>, _>("active_connections").unwrap_or(0.0) as u64,
+            requests_per_sec:   r.get::<Option<f64>, _>("requests_per_sec").unwrap_or(0.0),
+            reading:            r.get::<Option<f64>, _>("reading").unwrap_or(0.0) as u64,
+            writing:            r.get::<Option<f64>, _>("writing").unwrap_or(0.0) as u64,
+            waiting:            r.get::<Option<f64>, _>("waiting").unwrap_or(0.0) as u64,
         }
     }).collect();
     Ok(Json(points))

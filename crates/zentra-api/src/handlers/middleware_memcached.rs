@@ -43,48 +43,56 @@ pub async fn get_status(State(s): State<AppState>, Path(id): Path<String>) -> Re
             .ok_or(ApiError::from((StatusCode::NOT_FOUND, "Instance not found".into())))?
     };
     let empty = MemcachedStatus { curr_connections: 0, total_connections: 0, get_hits: 0, get_misses: 0, hit_rate: 0.0, bytes_read: 0, bytes_written: 0, curr_items: 0, total_items: 0, evictions: 0, cmd_get_per_sec: 0.0, cmd_set_per_sec: 0.0, bytes_used_mb: 0.0, limit_maxbytes_mb: 0.0, uptime: 0, version: String::new() };
-    // Prometheus memcached exporter endpoint
-    let url = format!("http://{}:{}/metrics", inst.host, inst.port);
-    match s.http_client.get(&url).send().await {
-        Ok(resp) if resp.status().is_success() => {
-            let body = resp.text().await.unwrap_or_default();
-            let mut get_hits: u64 = 0; let mut get_misses: u64 = 0;
-            let mut curr_items: u64 = 0; let mut evictions: u64 = 0;
-            let mut bytes_used: f64 = 0.0; let mut max_bytes: f64 = 0.0;
-            let mut curr_connections: u32 = 0; let mut uptime: u64 = 0;
-            let mut version = String::new();
-            for line in body.lines() {
-                if line.starts_with('#') { continue; }
-                let parts: Vec<&str> = line.splitn(2, ' ').collect();
-                if parts.len() < 2 { continue; }
-                let val: f64 = parts[1].trim().parse().unwrap_or(0.0);
-                let key = parts[0];
-                if key.starts_with("memcached_get_hits") { get_hits = val as u64; }
-                else if key.starts_with("memcached_get_misses") { get_misses = val as u64; }
-                else if key.starts_with("memcached_current_items") { curr_items = val as u64; }
-                else if key.starts_with("memcached_items_evicted") { evictions = val as u64; }
-                else if key.starts_with("memcached_current_bytes") { bytes_used = val / 1_048_576.0; }
-                else if key.starts_with("memcached_limit_bytes") { max_bytes = val / 1_048_576.0; }
-                else if key.starts_with("memcached_current_connections") { curr_connections = val as u32; }
-                else if key.starts_with("memcached_uptime_seconds") { uptime = val as u64; }
-                else if key.starts_with("memcached_version") {
-                    // version is a label not a value, skip
-                    if let Some(v_start) = line.find("version=\"") {
-                        let tail = &line[v_start + 9..];
-                        if let Some(end) = tail.find('"') { version = tail[..end].to_string(); }
-                    }
-                }
-            }
-            let total = get_hits + get_misses;
-            let hit_rate = if total > 0 { get_hits as f64 / total as f64 * 100.0 } else { 0.0 };
-            let _ = sqlx::query(
-                "INSERT INTO middleware_metrics (instance_id, instance_type, metric_name, value, collected_at) VALUES ($1,'memcached','curr_items',$2,now())"
-            ).bind(&id).bind(curr_items as f64).execute(&s.pool).await;
-            Ok(Json(MemcachedStatus { curr_connections, total_connections: 0, get_hits, get_misses, hit_rate, bytes_read: 0, bytes_written: 0, curr_items, total_items: 0, evictions, cmd_get_per_sec: 0.0, cmd_set_per_sec: 0.0, bytes_used_mb: bytes_used, limit_maxbytes_mb: max_bytes, uptime, version }))
+    // Native Memcached stats command via TCP
+    use tokio::io::{AsyncWriteExt, AsyncReadExt};
+    let addr = format!("{}:{}", inst.host, inst.port);
+    let mut stream = match tokio::net::TcpStream::connect(&addr).await {
+        Ok(s) => s,
+        Err(e) => { tracing::warn!(addr=%addr, err=%e, "Failed to connect to Memcached"); return Ok(Json(empty)); }
+    };
+    let _ = stream.write_all(b"stats\r\n").await;
+    let mut buf = vec![0u8; 16384];
+    let n = stream.read(&mut buf).await.unwrap_or(0);
+    let stats = String::from_utf8_lossy(&buf[..n]).to_string();
+    let get = |key: &str| -> f64 {
+        for line in stats.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 3 && parts[1] == key { return parts[2].parse().unwrap_or(0.0); }
         }
-        Ok(resp) => { tracing::warn!(url=%url, status=%resp.status(), "Memcached metrics error"); Ok(Json(empty)) }
-        Err(e)   => { tracing::warn!(url=%url, err=%e, "Failed to reach Memcached exporter"); Ok(Json(empty)) }
+        0.0
+    };
+    let get_str = |key: &str| -> String {
+        for line in stats.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 3 && parts[1] == key { return parts[2].to_string(); }
+        }
+        String::new()
+    };
+    let get_hits        = get("get_hits") as u64;
+    let get_misses      = get("get_misses") as u64;
+    let curr_items      = get("curr_items") as u64;
+    let total_items     = get("total_items") as u64;
+    let evictions       = get("evictions") as u64;
+    let bytes_used      = get("bytes") / 1_048_576.0;
+    let max_bytes       = get("limit_maxbytes") / 1_048_576.0;
+    let curr_connections = get("curr_connections") as u32;
+    let total_connections = get("total_connections") as u64;
+    let bytes_read      = get("bytes_read") as u64;
+    let bytes_written   = get("bytes_written") as u64;
+    let uptime          = get("uptime") as u64;
+    let version         = get_str("version");
+    let total           = get_hits + get_misses;
+    let hit_rate        = if total > 0 { get_hits as f64 / total as f64 * 100.0 } else { 0.0 };
+    if !stats.is_empty() {
+        let _ = sqlx::query(
+            "INSERT INTO middleware_metrics (instance_id, instance_type, metric_name, value, collected_at)
+             VALUES ($1,'memcached','curr_items',$2,now()),
+                    ($1,'memcached','hit_rate',$3,now()),
+                    ($1,'memcached','bytes_used_mb',$4,now()),
+                    ($1,'memcached','evictions',$5,now())"
+        ).bind(&id).bind(curr_items as f64).bind(hit_rate).bind(bytes_used).bind(evictions as f64).execute(&s.pool).await;
     }
+    Ok(Json(MemcachedStatus { curr_connections, total_connections, get_hits, get_misses, hit_rate, bytes_read, bytes_written, curr_items, total_items, evictions, cmd_get_per_sec: 0.0, cmd_set_per_sec: 0.0, bytes_used_mb: bytes_used, limit_maxbytes_mb: max_bytes, uptime, version }))
 }
 pub async fn performance_history(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<MemcachedHistoryPoint>>, ApiError> {
     if !instances().read().iter().any(|i| i.id == id) {
@@ -92,7 +100,10 @@ pub async fn performance_history(State(s): State<AppState>, Path(id): Path<Strin
     }
     let rows = sqlx::query(
         r#"SELECT time_bucket('1 minute', collected_at) AS bucket,
-           avg(CASE WHEN metric_name = 'curr_items' THEN value END) AS curr_items
+           avg(CASE WHEN metric_name = 'curr_items'    THEN value END) AS curr_items,
+           avg(CASE WHEN metric_name = 'hit_rate'      THEN value END) AS hit_rate,
+           avg(CASE WHEN metric_name = 'bytes_used_mb' THEN value END) AS bytes_used_mb,
+           avg(CASE WHEN metric_name = 'evictions'     THEN value END) AS evictions
            FROM middleware_metrics
            WHERE instance_id = $1 AND instance_type = 'memcached'
              AND collected_at > now() - INTERVAL '1 hour'
@@ -102,10 +113,12 @@ pub async fn performance_history(State(s): State<AppState>, Path(id): Path<Strin
         use sqlx::Row;
         let bucket: chrono::DateTime<Utc> = r.get("bucket");
         MemcachedHistoryPoint {
-            timestamp: bucket.to_rfc3339(),
-            hit_rate: 0.0,
-            curr_items: r.get::<Option<f64>, _>("curr_items").unwrap_or(0.0) as u64,
-            evictions: 0, cmd_get_per_sec: 0.0, bytes_used_mb: 0.0,
+            timestamp:       bucket.to_rfc3339(),
+            curr_items:      r.get::<Option<f64>, _>("curr_items").unwrap_or(0.0) as u64,
+            hit_rate:        r.get::<Option<f64>, _>("hit_rate").unwrap_or(0.0),
+            bytes_used_mb:   r.get::<Option<f64>, _>("bytes_used_mb").unwrap_or(0.0),
+            evictions:       r.get::<Option<f64>, _>("evictions").unwrap_or(0.0) as u64,
+            cmd_get_per_sec: 0.0,
         }
     }).collect();
     Ok(Json(points))

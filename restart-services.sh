@@ -3,6 +3,7 @@
 # Usage:
 #   ./restart-services.sh                 # rebuild everything + restart
 #   ./restart-services.sh --backend-only  # rebuild API + agent + collector only
+#   ./restart-services.sh --agent-only    # rebuild zentra-agent only (fast, no SSH timeout)
 #   ./restart-services.sh --frontend-only # rebuild frontend only
 #   ./restart-services.sh --restart-only  # restart services only (no rebuild)
 
@@ -49,38 +50,68 @@ sync_source() {
     die "Source sync failed"
 }
 
+# ── Remote nohup build helper ─────────────────────────────────────────────────
+# Usage: remote_bg_build <crate> <logfile>
+# Starts build in background, polls until done, returns 0/1.
+remote_bg_build() {
+    local crate="$1" logfile="$2"
+    run_remote "rm -f $logfile; nohup bash -c 'cd $REMOTE_DIR && cargo build --release -p $crate >> $logfile 2>&1 && echo __BUILD_OK__ >> $logfile || echo __BUILD_FAIL__ >> $logfile' &>/dev/null &"
+    echo "    Building $crate (background) …"
+    local elapsed=0
+    while true; do
+        sleep 10; elapsed=$((elapsed+10))
+        local last; last=$(sshpass -p skyline ssh $SSH_OPTS $HOST "tail -3 $logfile 2>/dev/null" 2>/dev/null || true)
+        if echo "$last" | grep -q '__BUILD_OK__'; then
+            ok "$crate built (${elapsed}s)"
+            return 0
+        elif echo "$last" | grep -q '__BUILD_FAIL__'; then
+            fail "$crate build FAILED — log:"
+            run_remote "grep '^error' $logfile | head -20" || true
+            return 1
+        fi
+        if [ $((elapsed % 30)) -eq 0 ]; then
+            echo "    … still building $crate (${elapsed}s)"
+        fi
+    done
+}
+
 # ── Step 2a: Build backend binaries ───────────────────────────────────────────
 build_backend() {
     info "Building + replacing backend binaries on server ..."
+
+    remote_bg_build zentra-api     /tmp/build-api.log     || die "zentra-api build failed"
+    remote_bg_build zentra-agent   /tmp/build-agent.log   || die "zentra-agent build failed"
+    remote_bg_build zentra-collector /tmp/build-coll.log  || die "zentra-collector build failed"
+
     run_remote "
         set -e
         cd $REMOTE_DIR
-
-        # Build all three crates
-        cargo build --release -p zentra-api     2>&1 | grep -E '^error|Finished|^warning.*unused' | grep -v '^warning' || { echo 'zentra-api build FAILED'; exit 1; }
-        cargo build --release -p zentra-agent   2>&1 | grep -E '^error|Finished' || { echo 'zentra-agent build FAILED'; exit 1; }
-        cargo build --release -p zentra-collector 2>&1 | grep -E '^error|Finished' || { echo 'zentra-collector build FAILED'; exit 1; }
-
         mkdir -p bin/dl
-
-        # Back up running binary
         [ -f bin/zentra-server ] && cp -f bin/zentra-server bin/zentra-server.bak || true
-
-        # Stop service so binary file is not locked
         systemctl stop zentra-api 2>/dev/null || true
         sleep 1
-
-        # Copy — rollback on failure
         cp -f target/release/zentra-server bin/zentra-server \
             || { cp -f bin/zentra-server.bak bin/zentra-server 2>/dev/null
                  echo 'ROLLBACK: restored previous zentra-server'; exit 1; }
-
         cp -f target/release/zentra-agent     bin/dl/zentra-agent-linux-x86_64
         cp -f target/release/zentra-collector bin/dl/zentra-collector-linux-x86_64
-
         echo 'Binaries replaced OK'
-    " || die "Backend build/replace failed"
+    " || die "Binary copy failed"
     ok "API + agent + collector binaries updated"
+}
+
+# ── Step 2c: Build agent only ─────────────────────────────────────────────────
+build_agent_only() {
+    info "Building zentra-agent only (background build) ..."
+    remote_bg_build zentra-agent /tmp/build-agent.log || die "zentra-agent build failed"
+    run_remote "
+        set -e
+        cd $REMOTE_DIR
+        mkdir -p bin/dl
+        cp -f target/release/zentra-agent bin/dl/zentra-agent-linux-x86_64
+        echo 'Agent binary updated'
+    " || die "Agent binary copy failed"
+    ok "Agent binary updated at /store/Zentra/bin/dl/zentra-agent-linux-x86_64"
 }
 
 # ── Step 2b: Build frontend ────────────────────────────────────────────────────
@@ -157,6 +188,11 @@ case "$MODE" in
         build_backend
         restart_services
         health_check
+        ;;
+    --agent-only)
+        sync_source
+        build_agent_only
+        ok "Agent binary available at http://10.88.11.162:5010/dl/zentra-agent-linux-x86_64"
         ;;
     --frontend-only)
         sync_source
