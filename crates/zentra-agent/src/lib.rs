@@ -4,6 +4,7 @@ pub mod orchestrator;
 pub mod plugin_manager;
 pub mod streaming;
 pub mod remote_delivery;
+pub mod remote_transport;
 pub mod offline_buffer;
 pub mod heartbeat;
 pub mod remote_targets;

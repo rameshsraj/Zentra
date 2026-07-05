@@ -3,12 +3,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import {
   listAgents, deregisterAgent, getComponentsByDc, confirmComponents, getAgentLogsByDc,
-  type Agent, type DiscoveredComponent, type AgentLogLine,
+  listOrgEnrollmentKeys, createOrgEnrollmentKey, updateOrgEnrollmentKey, revokeOrgEnrollmentKey,
+  listOrgEnrollmentRegistrations,
+  type Agent, type DiscoveredComponent, type AgentLogLine, type OrgEnrollmentKey,
 } from '@/lib/api/fleet'
 import PageHeader from '@/components/PageHeader'
 import {
   Server, Trash2, Plus, Wifi, WifiOff, AlertTriangle,
-  ChevronDown, ChevronRight, CheckCircle2, ScrollText, RefreshCw,
+  ChevronDown, ChevronRight, CheckCircle2, ScrollText, RefreshCw, KeyRound, Copy,
 } from 'lucide-react'
 
 const STATUS_STYLES: Record<string, { color: string; bg: string; label: string }> = {
@@ -191,6 +193,118 @@ function AgentLogsPanel({ dcName }: { dcName: string }) {
   )
 }
 
+function EnrollmentKeyPanel() {
+  const qc = useQueryClient()
+  const [newKey, setNewKey] = useState<string>('')
+
+  const { data: keys = [] } = useQuery({
+    queryKey: ['org-enrollment-keys'],
+    queryFn: listOrgEnrollmentKeys,
+    refetchInterval: 30_000,
+  })
+
+  const activeKey = keys[0] as OrgEnrollmentKey | undefined
+
+  const { data: registrations = [] } = useQuery({
+    queryKey: ['org-enrollment-registrations', activeKey?.id],
+    queryFn: () => listOrgEnrollmentRegistrations(activeKey!.id),
+    enabled: !!activeKey?.id,
+    refetchInterval: 30_000,
+  })
+
+  const createMutation = useMutation({
+    mutationFn: () => createOrgEnrollmentKey({}),
+    onSuccess: (data) => {
+      setNewKey(data.org_key)
+      qc.invalidateQueries({ queryKey: ['org-enrollment-keys'] })
+    },
+  })
+
+  const revokeMutation = useMutation({
+    mutationFn: (id: string) => revokeOrgEnrollmentKey(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['org-enrollment-keys'] }),
+  })
+
+  const toggleApproval = useMutation({
+    mutationFn: ({ id, value }: { id: string; value: boolean }) =>
+      updateOrgEnrollmentKey(id, { require_approval: value }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['org-enrollment-keys'] }),
+  })
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-base font-semibold flex items-center gap-2">
+            <KeyRound className="h-4 w-4 text-blue-400" />
+            Organization Enrollment Key
+          </h3>
+          <p className="text-xs text-muted-foreground mt-1">Install agents using one shared isok_ key. Each server receives its own isak_ key during registration.</p>
+        </div>
+        <button
+          onClick={() => createMutation.mutate()}
+          className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+        >
+          Generate New Key
+        </button>
+      </div>
+
+      {(newKey || activeKey) && (
+        <div className="rounded-lg border border-border p-3 bg-muted/20 space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-sm">{newKey || `${activeKey?.display_prefix}••••••••••`}</span>
+            {newKey && (
+              <button
+                onClick={() => navigator.clipboard.writeText(newKey)}
+                className="rounded px-2 py-1 text-xs bg-zinc-700 text-zinc-100 hover:bg-zinc-600 inline-flex items-center gap-1"
+              >
+                <Copy className="h-3 w-3" /> Copy
+              </button>
+            )}
+          </div>
+
+          {activeKey && (
+            <div className="flex flex-wrap items-center gap-3 text-xs">
+              <span className="text-muted-foreground">Max registrations/hour: <span className="text-foreground">{activeKey.max_registrations_per_hour}</span></span>
+              <span className="text-muted-foreground">Allowed CIDR: <span className="text-foreground">{activeKey.allowed_cidr ?? 'Any'}</span></span>
+              <label className="inline-flex items-center gap-1 text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={activeKey.require_approval}
+                  onChange={(e) => toggleApproval.mutate({ id: activeKey.id, value: e.target.checked })}
+                />
+                Require manual approval
+              </label>
+              <button
+                onClick={() => revokeMutation.mutate(activeKey.id)}
+                className="rounded bg-red-600 px-2 py-1 text-white hover:bg-red-700"
+              >
+                Revoke Key
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {registrations.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Recent Registrations</p>
+          <div className="rounded-lg border border-border overflow-hidden">
+            {registrations.slice(0, 5).map((r) => (
+              <div key={r.id} className="px-3 py-2 text-xs border-b last:border-b-0 border-border flex items-center justify-between">
+                <span className="font-mono text-muted-foreground">{r.request_ip ?? 'n/a'}</span>
+                <span>{r.hostname ?? 'unknown-host'}</span>
+                <span className="text-muted-foreground">{timeAgo(r.created_at)}</span>
+                <span className={r.status === 'registered' ? 'text-green-400' : 'text-yellow-400'}>{r.status}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Main Fleet page
 // ─────────────────────────────────────────────────────────────────────────────
@@ -224,6 +338,8 @@ export default function FleetPage() {
         title="Agent Fleet"
         subtitle="Manage your monitoring agents across all datacenters."
       />
+
+      <EnrollmentKeyPanel />
 
       <div className="flex items-center justify-end gap-2">
         <button
@@ -270,6 +386,8 @@ export default function FleetPage() {
                 <th className="px-4 py-3 font-medium">Version</th>
                 <th className="px-4 py-3 font-medium">Targets</th>
                 <th className="px-4 py-3 font-medium">IP</th>
+                <th className="px-4 py-3 font-medium">Key Status</th>
+                <th className="px-4 py-3 font-medium">Key Expiry</th>
                 <th className="px-4 py-3 font-medium" />
               </tr>
             </thead>
@@ -308,7 +426,18 @@ export default function FleetPage() {
                       <td className="px-4 py-3 text-muted-foreground">{timeAgo(a.last_seen)}</td>
                       <td className="px-4 py-3 font-mono text-xs">{a.agent_version ?? '—'}</td>
                       <td className="px-4 py-3">{a.active_target_count}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{a.ip_address ?? '—'}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{a.registered_ip ?? a.ip_address ?? '—'}</td>
+                      <td className="px-4 py-3 text-xs">
+                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 ${
+                          a.key_status === 'active' ? 'bg-green-500/20 text-green-400' :
+                          a.key_status === 'expiring_soon' ? 'bg-yellow-500/20 text-yellow-300' :
+                          a.key_status === 'expired' ? 'bg-orange-500/20 text-orange-300' :
+                          'bg-red-500/20 text-red-300'
+                        }`}>
+                          {a.key_status ?? 'unknown'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground">{a.key_expires_at ? timeAgo(a.key_expires_at) : '—'}</td>
                       <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
                         {a.status !== 'deregistered' && (
                           confirmId === a.agent_id ? (
@@ -342,7 +471,7 @@ export default function FleetPage() {
                     </tr>
                     {isExpanded && (
                       <tr key={`${a.agent_id}-discovered`} className="bg-muted/10 border-b border-border">
-                        <td colSpan={8} className="p-0">
+                        <td colSpan={10} className="p-0">
                           <div className="border-t border-dashed border-border/50">
                             <div className="flex items-center gap-2 px-6 pt-3 pb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                               <Server className="h-3.5 w-3.5" />

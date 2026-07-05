@@ -2,6 +2,7 @@ use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
+    Extension,
     Json,
 };
 use chrono::{Duration, Utc};
@@ -13,6 +14,7 @@ use rand::{rngs::OsRng, RngCore};
 use uuid::Uuid;
 
 use crate::state::AppState;
+use crate::auth_middleware::AuthContext;
 use zentra_core::models::auth::*;
 use validator::Validate;
 
@@ -698,6 +700,56 @@ pub async fn me(
         "is_admin": is_admin,
         "is_super_admin": is_super_admin,
     }))).into_response()
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct UpdateProfileRequest {
+    pub email: Option<String>,
+    pub display_name: Option<String>,
+    pub avatar_url: Option<String>,
+    pub timezone: Option<String>,
+    pub theme: Option<String>,
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PUT /api/auth/profile
+// ═══════════════════════════════════════════════════════════════════════════
+
+pub async fn update_profile(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<AuthContext>,
+    Json(req): Json<UpdateProfileRequest>,
+) -> impl IntoResponse {
+    let result = sqlx::query(
+        "UPDATE users SET \
+         email = COALESCE($1, email), \
+         display_name = COALESCE($2, display_name), \
+         avatar_url = COALESCE($3, avatar_url), \
+         timezone = COALESCE($4, timezone), \
+         theme = COALESCE($5, theme), \
+         updated_at = NOW() \
+         WHERE id = $6 AND org_id = $7"
+    )
+    .bind(&req.email)
+    .bind(&req.display_name)
+    .bind(&req.avatar_url)
+    .bind(&req.timezone)
+    .bind(&req.theme)
+    .bind(ctx.user_id)
+    .bind(ctx.org_id)
+    .execute(&state.pool)
+    .await;
+
+    match result {
+        Ok(r) if r.rows_affected() > 0 => {
+            (StatusCode::OK, Json(json!({"message": "Profile updated"}))).into_response()
+        }
+        Ok(_) => (StatusCode::NOT_FOUND, Json(json!({"error": "user_not_found"}))).into_response(),
+        Err(e) => {
+            tracing::error!("profile update error: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "update_failed"}))).into_response()
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

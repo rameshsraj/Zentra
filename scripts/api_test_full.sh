@@ -36,9 +36,42 @@ R=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/agents/heartbeat" 
 check "$R" "200" "POST /api/agents/heartbeat"
 
 echo ""
-echo "=== AGENT TARGETS ==="
-R=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $AGENT_KEY" "$BASE/api/agents/targets")
-check "$R" "200" "GET /api/agents/targets"
+echo "=== COMPONENT CONFIRMATION -> SUBTYPE-SPECIFIC AGENT TARGETS ==="
+COMP_RESP=$(curl -s -X POST "$BASE/api/agents/by-dc/test-dc/components" \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $AGENT_KEY" \
+  -d '{"components":[
+    {"component_type":"linux","component_name":"Linux Host","address":"10.88.11.50","port":22},
+    {"component_type":"postgresql","component_name":"PostgreSQL","address":"10.88.11.50:5432","port":5432},
+    {"component_type":"nginx","component_name":"Nginx","address":"10.88.11.50:80","port":80},
+    {"component_type":"redis","component_name":"Redis","address":"10.88.11.50:6379","port":6379}
+  ]}')
+UPSERTED=$(echo "$COMP_RESP" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("upserted",""))' 2>/dev/null)
+check "$UPSERTED" "4" "POST /api/agents/by-dc/:dc/components (4 concrete component types)"
+
+COMP_LIST=$(curl -s -H "$AUTH" "$BASE/api/agents/by-dc/test-dc/components")
+COMP_IDS=$(echo "$COMP_LIST" | python3 -c 'import sys,json; data=json.load(sys.stdin); print(",".join(c["id"] for c in data.get("components",[]) if c.get("component_type") in {"linux","postgresql","nginx","redis"}))' 2>/dev/null)
+if [ -n "$COMP_IDS" ]; then
+  pass "GET /api/agents/by-dc/:dc/components -> selected component ids"
+else
+  fail "GET /api/agents/by-dc/:dc/components -> $COMP_LIST"
+fi
+
+CONFIRM_PAYLOAD=$(COMP_IDS="$COMP_IDS" python3 - <<'PY'
+import json, os
+ids=[x for x in os.environ["COMP_IDS"].split(",") if x]
+print(json.dumps({"datacenter_name":"test-dc","component_ids":ids}))
+PY
+)
+CONFIRM_RESP=$(curl -s -X POST "$BASE/api/agents/components/confirm" \
+  -H 'Content-Type: application/json' -H "$AUTH" \
+  -d "$CONFIRM_PAYLOAD")
+CREATED=$(echo "$CONFIRM_RESP" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("created",""))' 2>/dev/null)
+check "$CREATED" "4" "POST /api/agents/components/confirm -> creates subtype-specific targets"
+
+AGENT_TARGETS=$(curl -s -H "Authorization: Bearer $AGENT_KEY" "$BASE/api/agents/targets")
+SUBTYPE_CHECK=$(echo "$AGENT_TARGETS" | python3 -c 'import sys,json; data=json.load(sys.stdin); sub={t.get("target_subtype") for t in data}; hosts_ok=all(":" not in t.get("host","") for t in data); print("ok" if {"linux","postgresql","nginx","redis"}.issubset(sub) and hosts_ok else f"bad:{sorted(sub)}:hosts_ok={hosts_ok}")' 2>/dev/null)
+check "$SUBTYPE_CHECK" "ok" "GET /api/agents/targets returns assigned concrete subtypes and host without port"
 
 echo ""
 echo "=== DISCOVERED HOSTS (new) ==="

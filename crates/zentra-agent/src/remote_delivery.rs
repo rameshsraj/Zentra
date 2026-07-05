@@ -54,7 +54,7 @@ impl RemoteDeliveryService {
             match rx.recv().await {
                 Some(batch) => {
                     let payload = self.metrics_to_otlp(&batch);
-                    let url = format!("{}/v1/metrics", self.api_endpoint);
+                    let url = format!("{}/api/agent/ingest/metrics", self.api_endpoint);
                     if let Err(fatal) = self.post_otlp(&url, &payload).await {
                         if fatal {
                             error!("RemoteDeliveryService: fatal auth error, stopping agent");
@@ -78,7 +78,7 @@ impl RemoteDeliveryService {
             match rx.recv().await {
                 Some(batch) => {
                     let payload = self.logs_to_otlp(&batch);
-                    let url = format!("{}/v1/logs", self.api_endpoint);
+                    let url = format!("{}/api/agent/ingest/logs", self.api_endpoint);
                     if let Err(fatal) = self.post_otlp(&url, &payload).await {
                         if fatal {
                             error!("RemoteDeliveryService: fatal auth error, stopping agent");
@@ -149,7 +149,7 @@ impl RemoteDeliveryService {
                     continue;
                 }
             };
-            let url = format!("{}/v1/metrics", self.api_endpoint);
+            let url = format!("{}/api/agent/ingest/metrics", self.api_endpoint);
             let result = self
                 .client
                 .post(&url)
@@ -192,7 +192,7 @@ impl RemoteDeliveryService {
                     Ok(v) => v,
                     Err(_) => continue,
                 };
-                let url = format!("{}/v1/metrics", self.api_endpoint);
+                let url = format!("{}/api/agent/ingest/metrics", self.api_endpoint);
                 let _ = self
                     .client
                     .post(&url)

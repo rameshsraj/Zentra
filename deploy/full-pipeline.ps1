@@ -148,6 +148,8 @@ fi
 rustup toolchain install stable --no-self-update 2>/dev/null || true
 rustup default stable 2>/dev/null || true
 export PATH="/root/.cargo/bin:`$PATH"
+export CARGO_INCREMENTAL=0
+export RUSTFLAGS="-Awarnings"
 echo "rustc: `$(rustc --version)"
 echo "cargo: `$(cargo --version)"
 cd '$WslRepoPath'
@@ -173,6 +175,8 @@ echo "Frontend files: `$(find dist -type f | wc -l)"
 set -euo pipefail
 [[ -f /root/.cargo/env ]] && source /root/.cargo/env || true
 export PATH="/root/.cargo/bin:`$PATH"
+export CARGO_INCREMENTAL=0
+export RUSTFLAGS="-Awarnings"
 cd '$WslRepoPath'
 cargo build --release --bin zentra-agent
 mkdir -p '$WslRepoPath/bin/dl'

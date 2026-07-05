@@ -115,7 +115,7 @@ impl HeartbeatLoop {
                 "ip_address": local_ip,
             });
 
-            let url = format!("{}/api/agents/heartbeat", self.api_endpoint);
+            let url = format!("{}/api/agent/ingest/heartbeat", self.api_endpoint);
             match self
                 .client
                 .post(&url)

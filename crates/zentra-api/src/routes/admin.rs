@@ -1,4 +1,5 @@
 use axum::{Router, routing::{get, post, put, delete}};
+use axum::middleware;
 use crate::state::AppState;
 use crate::handlers;
 
@@ -71,4 +72,5 @@ pub fn router() -> Router<AppState> {
 
         // Connection Pool Health & Status
         .route("/api/system/pool-status", get(handlers::pool_status::pool_status))
+        .layer(middleware::from_fn(crate::auth_middleware::require_admin_role))
 }

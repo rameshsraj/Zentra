@@ -17,7 +17,6 @@ use uuid::Uuid;
 
 use crate::auth_middleware::AuthContext;
 use crate::error::ApiError;
-use crate::handlers::otlp::validate_otlp_key;
 use crate::state::AppState;
 
 const AGENT_KEY_HEADER: &str = "x-zentra-key";
@@ -25,9 +24,20 @@ const AGENT_LOG_BUFFER_CAP: usize = 500;
 
 #[derive(Debug, Deserialize)]
 pub struct RegisterAgentRequest {
-    pub datacenter_name: String,
+    pub datacenter_name: Option<String>,
+    pub hostname: Option<String>,
+    pub ip_address: Option<String>,
+    pub os: Option<String>,
+    pub agent_version: Option<String>,
     pub description: Option<String>,
     pub region_label: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct AgentKeyIdentity {
+    org_id: Uuid,
+    agent_id: Uuid,
+    key_id: Uuid,
 }
 
 /// A single agent log line shipped with a heartbeat.
@@ -86,6 +96,9 @@ struct AgentListRow {
     active_target_count: i32,
     ip_address: Option<String>,
     region_label: Option<String>,
+    key_expires_at: Option<DateTime<Utc>>,
+    key_enabled: Option<bool>,
+    registered_ip: Option<String>,
 }
 
 fn is_agent_admin(ctx: &AuthContext) -> bool {
@@ -114,6 +127,21 @@ fn generate_agent_api_key() -> String {
             }
         })
         .collect::<String>();
+    format!("isak_{suffix}")
+}
+
+fn generate_org_enrollment_key() -> String {
+    let mut rng = rand::thread_rng();
+    let suffix = (0..40)
+        .map(|_| {
+            let idx = rng.gen_range(0..36);
+            if idx < 10 {
+                (b'0' + idx) as char
+            } else {
+                (b'a' + idx - 10) as char
+            }
+        })
+        .collect::<String>();
     format!("isok_{suffix}")
 }
 
@@ -121,6 +149,20 @@ fn hash_api_key(raw_key: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(raw_key.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+fn split_host_port(address: &str) -> (String, Option<i32>) {
+    let trimmed = address.trim();
+    if let Some(host) = trimmed.strip_prefix('[').and_then(|rest| rest.split_once(']').map(|(host, _)| host)) {
+        return (host.to_string(), None);
+    }
+    match trimmed.rsplit_once(':') {
+        Some((host, port)) if !host.contains(':') => {
+            let parsed_port = port.parse::<i32>().ok();
+            (host.to_string(), parsed_port)
+        }
+        _ => (trimmed.to_string(), None),
+    }
 }
 
 fn extract_agent_key(headers: &HeaderMap) -> Result<String, ApiError> {
@@ -133,74 +175,323 @@ fn extract_agent_key(headers: &HeaderMap) -> Result<String, ApiError> {
         .ok_or_else(|| ApiError::Unauthorized("Missing X-Zentra-Key header".into()))
 }
 
+fn extract_bearer(headers: &HeaderMap) -> Result<String, ApiError> {
+    headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| ApiError::Unauthorized("Missing Authorization header".into()))
+}
+
+fn extract_request_ip(headers: &HeaderMap, remote: Option<&SocketAddr>) -> Option<String> {
+    headers
+        .get("X-Real-IP")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            headers
+                .get("X-Forwarded-For")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.split(',').next())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToOwned::to_owned)
+        })
+        .or_else(|| remote.map(|r| r.ip().to_string()))
+}
+
+async fn validate_agent_key(
+    state: &AppState,
+    headers: &HeaderMap,
+    remote: Option<&SocketAddr>,
+) -> Result<AgentKeyIdentity, ApiError> {
+    let raw_key = extract_bearer(headers)
+        .or_else(|_| extract_agent_key(headers))?;
+    if !raw_key.starts_with("isak_") {
+        return Err(ApiError::Forbidden("Agent operational key (isak_) required".into()));
+    }
+
+    let key_hash = hash_api_key(&raw_key);
+    let request_ip = extract_request_ip(headers, remote);
+
+    let row = sqlx::query(
+        "SELECT id, org_id, agent_id, ip_locked, registered_ip::text AS registered_ip
+         FROM agent_api_keys
+         WHERE key_hash = $1
+           AND enabled = true
+           AND (expires_at > NOW() OR (grace_until IS NOT NULL AND grace_until > NOW()))
+           AND revoked_at IS NULL
+         ORDER BY created_at DESC
+         LIMIT 1",
+    )
+    .bind(&key_hash)
+    .fetch_optional(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?
+    .ok_or_else(|| ApiError::Unauthorized("Invalid, revoked, or expired agent key".into()))?;
+
+    let key_id: Uuid = row.get("id");
+    let org_id: Uuid = row.get("org_id");
+    let agent_id: Uuid = row.get("agent_id");
+    let ip_locked: bool = row.get("ip_locked");
+    let registered_ip: Option<String> = row.get("registered_ip");
+
+    if ip_locked {
+        if let (Some(expected), Some(actual)) = (registered_ip.as_deref(), request_ip.as_deref()) {
+            if expected != actual {
+                return Err(ApiError::Forbidden("ip mismatch".into()));
+            }
+        }
+    }
+
+    let pool = state.tsdb_pool.clone();
+    let update_key_id = key_id;
+    tokio::spawn(async move {
+        let _ = sqlx::query("UPDATE agent_api_keys SET last_used = NOW(), updated_at = NOW() WHERE id = $1")
+            .bind(update_key_id)
+            .execute(&pool)
+            .await;
+    });
+
+    Ok(AgentKeyIdentity {
+        org_id,
+        agent_id,
+        key_id,
+    })
+}
+
 pub async fn register_agent(
     State(state): State<AppState>,
-    Extension(ctx): Extension<AuthContext>,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    maybe_ctx: Option<Extension<AuthContext>>,
     Json(body): Json<RegisterAgentRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    let bearer = extract_bearer(&headers).ok();
+
+    if let Some(raw_org_key) = bearer.filter(|k| k.starts_with("isok_")) {
+        let request_ip = body
+            .ip_address
+            .clone()
+            .or_else(|| extract_request_ip(&headers, Some(&remote_addr)))
+            .ok_or_else(|| ApiError::BadRequest("ip_address is required".into()))?;
+
+        let datacenter_name = body
+            .datacenter_name
+            .as_deref()
+            .or(body.hostname.as_deref())
+            .unwrap_or("agent")
+            .trim()
+            .to_string();
+        if datacenter_name.is_empty() {
+            return Err(ApiError::BadRequest("datacenter_name or hostname is required".into()));
+        }
+        let hostname = body.hostname.clone().unwrap_or_else(|| datacenter_name.clone());
+
+        let org_key_hash = hash_api_key(&raw_org_key);
+        let row = sqlx::query(
+            "SELECT id, org_id, max_registrations_per_hour, allowed_cidr::text AS allowed_cidr, require_approval
+             FROM org_enrollment_keys
+             WHERE key_hash = $1
+               AND enabled = true
+               AND (expires_at IS NULL OR expires_at > NOW())",
+        )
+        .bind(&org_key_hash)
+        .fetch_optional(&state.tsdb_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+        .ok_or_else(|| ApiError::Unauthorized("Invalid or expired org enrollment key".into()))?;
+
+        let enrollment_key_id: Uuid = row.get("id");
+        let org_id: Uuid = row.get("org_id");
+        let max_registrations_per_hour: i32 = row.get("max_registrations_per_hour");
+        let allowed_cidr: Option<String> = row.get("allowed_cidr");
+        let require_approval: bool = row.get("require_approval");
+
+        if let Some(cidr) = allowed_cidr.as_deref() {
+            let ip_allowed: bool = sqlx::query_scalar("SELECT $1::inet <<= $2::cidr")
+                .bind(&request_ip)
+                .bind(cidr)
+                .fetch_one(&state.tsdb_pool)
+                .await
+                .unwrap_or(false);
+            if !ip_allowed {
+                return Err(ApiError::Forbidden("Registration request IP not in allowed CIDR".into()));
+            }
+        }
+
+        let recent_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM agent_registration_audit
+             WHERE enrollment_key_id = $1
+               AND created_at >= NOW() - INTERVAL '1 hour'
+               AND status IN ('registered', 'pending_approval')",
+        )
+        .bind(enrollment_key_id)
+        .fetch_one(&state.tsdb_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+        if recent_count >= max_registrations_per_hour as i64 {
+            return Err(ApiError::TooManyRequests("Registration rate limit exceeded for this enrollment key".into()));
+        }
+
+        let raw_agent_key = generate_agent_api_key();
+        let agent_key_hash = hash_api_key(&raw_agent_key);
+        let agent_key_prefix = raw_agent_key.chars().take(18).collect::<String>();
+        let agent_id = Uuid::now_v7();
+        let status = if require_approval { "pending_approval" } else { "active" };
+
+        let mut tx = state
+            .tsdb_pool
+            .begin()
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+        let otlp_api_key_id: Uuid = sqlx::query_scalar(
+            "INSERT INTO otlp_api_keys
+             (org_id, name, key_hash, key_prefix, permissions, rate_limit_rpm, max_payload_bytes, enabled, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, ARRAY['metrics','logs'], 10000, 5242880, $5, NOW(), NOW())
+             RETURNING id",
+        )
+        .bind(org_id)
+        .bind(format!("agent:{datacenter_name}"))
+        .bind(&agent_key_hash)
+        .bind(&agent_key_prefix)
+        .bind(!require_approval)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+        sqlx::query(
+            "INSERT INTO agent_fleet
+             (agent_id, org_id, otlp_api_key_id, api_key_hash, datacenter_name, hostname,
+              description, region_label, agent_version, ip_address, os_name, status,
+              enrollment_key_id, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())",
+        )
+        .bind(agent_id)
+        .bind(org_id)
+        .bind(otlp_api_key_id)
+        .bind(&agent_key_hash)
+        .bind(&datacenter_name)
+        .bind(&hostname)
+        .bind(body.description.as_deref())
+        .bind(body.region_label.as_deref())
+        .bind(body.agent_version.as_deref())
+        .bind(&request_ip)
+        .bind(body.os.as_deref())
+        .bind(status)
+        .bind(enrollment_key_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+        sqlx::query(
+            "INSERT INTO agent_api_keys
+             (org_id, agent_id, key_hash, display_prefix, enabled, registered_ip, ip_locked,
+              expires_at, last_rotated_at, enrollment_key_id, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6::inet, true, NOW() + INTERVAL '1 year', NOW(), $7, NOW(), NOW())",
+        )
+        .bind(org_id)
+        .bind(agent_id)
+        .bind(&agent_key_hash)
+        .bind(&agent_key_prefix)
+        .bind(!require_approval)
+        .bind(&request_ip)
+        .bind(enrollment_key_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+        sqlx::query(
+            "UPDATE org_enrollment_keys
+             SET last_used_at = NOW(), registration_count = registration_count + 1
+             WHERE id = $1",
+        )
+        .bind(enrollment_key_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+        sqlx::query(
+            "INSERT INTO agent_registration_audit
+             (org_id, enrollment_key_id, agent_id, request_ip, hostname, status, payload)
+             VALUES ($1, $2, $3, $4::inet, $5, $6, $7::jsonb)",
+        )
+        .bind(org_id)
+        .bind(enrollment_key_id)
+        .bind(agent_id)
+        .bind(&request_ip)
+        .bind(&hostname)
+        .bind(if require_approval { "pending_approval" } else { "registered" })
+        .bind(json!({
+            "datacenter_name": datacenter_name,
+            "agent_version": body.agent_version,
+            "os": body.os,
+        }))
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+        if require_approval {
+            return Ok(Json(json!({
+                "agent_id": agent_id,
+                "status": "pending_approval",
+            })));
+        }
+
+        return Ok(Json(json!({
+            "agent_id": agent_id,
+            "agent_key": raw_agent_key,
+            "expires_at": Utc::now() + chrono::Duration::days(365),
+        })));
+    }
+
+    let ctx = maybe_ctx
+        .map(|e| e.0)
+        .ok_or_else(|| ApiError::Unauthorized("Missing authentication context".into()))?;
     require_agent_admin(&ctx)?;
 
-    let datacenter_name = body.datacenter_name.trim();
+    let datacenter_name = body
+        .datacenter_name
+        .as_deref()
+        .unwrap_or("")
+        .trim();
     if datacenter_name.is_empty() {
         return Err(ApiError::BadRequest("datacenter_name is required".into()));
     }
 
-    let raw_key = generate_agent_api_key();
+    let raw_key = generate_org_enrollment_key();
     let key_hash = hash_api_key(&raw_key);
     let key_prefix = raw_key.chars().take(13).collect::<String>();
-    let agent_id = Uuid::now_v7();
-
-    let mut tx = state
-        .tsdb_pool
-        .begin()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-
-    let otlp_api_key_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO otlp_api_keys
-         (org_id, name, key_hash, key_prefix, permissions, rate_limit_rpm, max_payload_bytes, enabled, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, true, NOW(), NOW())
-         RETURNING id",
-    )
-    .bind(ctx.org_id)
-    .bind(format!("agent:{datacenter_name}"))
-    .bind(&key_hash)
-    .bind(&key_prefix)
-    .bind(vec![
-        "traces".to_string(),
-        "metrics".to_string(),
-        "logs".to_string(),
-        "profiles".to_string(),
-    ])
-    .bind(10_000_i32)
-    .bind(5_242_880_i32)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let key_id = Uuid::now_v7();
 
     sqlx::query(
-        "INSERT INTO agent_fleet
-         (agent_id, org_id, otlp_api_key_id, api_key_hash, datacenter_name, description, region_label, status, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', NOW(), NOW())",
+        "INSERT INTO org_enrollment_keys
+         (id, org_id, key_hash, display_prefix, enabled, max_registrations_per_hour, created_by, created_at)
+         VALUES ($1, $2, $3, $4, true, 5, $5, NOW())",
     )
-    .bind(agent_id)
+    .bind(key_id)
     .bind(ctx.org_id)
-    .bind(otlp_api_key_id)
     .bind(&key_hash)
-    .bind(datacenter_name)
-    .bind(body.description.as_deref())
-    .bind(body.region_label.as_deref())
-    .execute(&mut *tx)
+    .bind(&key_prefix)
+    .bind(ctx.user_id)
+    .execute(&state.tsdb_pool)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    tx.commit()
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-
     Ok(Json(json!({
-        "agent_id": agent_id,
-        "api_key": raw_key,
+        "id": key_id,
+        "org_key": raw_key,
         "warning": "Store this key securely. It will not be shown again.",
     })))
 }
@@ -211,22 +502,8 @@ pub async fn heartbeat(
     headers: HeaderMap,
     Json(body): Json<AgentHeartbeatRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let raw_key = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "))
-        .map(|s| s.to_string())
-        .or_else(|| {
-            headers
-                .get(AGENT_KEY_HEADER)
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string())
-        })
-        .ok_or_else(|| ApiError::Unauthorized("Missing Authorization header".into()))?;
-    let (org_id, _) = validate_otlp_key(&state, &raw_key)
-        .await
-        .map_err(ApiError::Unauthorized)?;
-    let key_hash = hash_api_key(&raw_key);
+    let auth = validate_agent_key(&state, &headers, Some(&remote_addr)).await?;
+    let org_id = auth.org_id;
 
     // Use X-Real-IP (set by nginx to the real client IP) as the authoritative source.
     // The agent-reported IP is unreliable: UDP routing picks whichever interface the
@@ -249,26 +526,26 @@ pub async fn heartbeat(
         .unwrap_or_else(|| remote_addr.ip().to_string());
 
     sqlx::query(
-        "INSERT INTO agent_fleet
-         (org_id, otlp_api_key_id, api_key_hash, datacenter_name, agent_version, active_target_count, last_seen, ip_address, os_name, status, created_at, updated_at)
-         VALUES ($1, (SELECT id FROM otlp_api_keys WHERE key_hash = $2 LIMIT 1), $2, $3, $4, $5, NOW(), $6, $7, 'active', NOW(), NOW())
-         ON CONFLICT (api_key_hash) DO UPDATE
-         SET datacenter_name = EXCLUDED.datacenter_name,
-             agent_version = EXCLUDED.agent_version,
-             active_target_count = EXCLUDED.active_target_count,
+        "UPDATE agent_fleet
+         SET datacenter_name = $3,
+             agent_version = $4,
+             active_target_count = $5,
              last_seen = NOW(),
-             ip_address = EXCLUDED.ip_address,
-             os_name = EXCLUDED.os_name,
-             status = 'active',
-             updated_at = NOW()",
+             ip_address = $6,
+             os_name = $7,
+             hostname = COALESCE($8, hostname),
+             status = CASE WHEN status = 'deregistered' THEN status ELSE 'active' END,
+             updated_at = NOW()
+         WHERE org_id = $1 AND agent_id = $2",
     )
     .bind(org_id)
-    .bind(&key_hash)
+    .bind(auth.agent_id)
     .bind(body.dc_name.trim())
     .bind(body.agent_version.trim())
     .bind(body.active_targets)
     .bind(&effective_ip)
     .bind(body.os_name.trim())
+    .bind(body.hostname.as_deref())
     .execute(&state.tsdb_pool)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -277,15 +554,7 @@ pub async fn heartbeat(
     // that are still set to 127.0.0.1 (stale from initial discovery before real IP was known).
     // Also sync targets.host so monitoring uses the correct IP for every component type.
     if effective_ip != "127.0.0.1" {
-        let agent_row: Option<Uuid> = sqlx::query_scalar(
-            "SELECT agent_id FROM agent_fleet WHERE api_key_hash = $1 LIMIT 1"
-        )
-        .bind(&key_hash)
-        .fetch_optional(&state.tsdb_pool)
-        .await
-        .unwrap_or(None);
-
-        if let Some(aid) = agent_row {
+        let aid = auth.agent_id;
             // Update component addresses: replace 127.0.0.1 (bare or with port) with real IP.
             // For components with a port (e.g. "127.0.0.1:80"), preserve the port suffix.
             let _ = sqlx::query(
@@ -333,18 +602,7 @@ pub async fn heartbeat(
             .bind(aid)
             .execute(&state.tsdb_pool)
             .await;
-        }
     }
-
-    // Look up the agent_id for this key so we can return it in the response.
-    // The agent uses this to self-discover its UUID on first heartbeat.
-    let agent_id: Option<Uuid> = sqlx::query_scalar(
-        "SELECT agent_id FROM agent_fleet WHERE api_key_hash = $1 LIMIT 1",
-    )
-    .bind(&key_hash)
-    .fetch_optional(&state.tsdb_pool)
-    .await
-    .unwrap_or(None);
 
     // Stash recent logs (if any) so the install wizard can tail them live,
     // and also persist them in the Log Explorer store keyed by service/dc.
@@ -366,7 +624,7 @@ pub async fn heartbeat(
 
     Ok(Json(json!({
         "server_timestamp_utc": Utc::now(),
-        "agent_id": agent_id,
+        "agent_id": auth.agent_id,
     })))
 }
 
@@ -391,28 +649,15 @@ pub async fn agent_targets(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    // Accept Authorization: Bearer <key> (preferred) or legacy X-Zentra-Key header
-    let raw_key = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "))
-        .map(|s| s.to_string())
-        .or_else(|| {
-            headers
-                .get(AGENT_KEY_HEADER)
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string())
-        })
-        .ok_or_else(|| ApiError::Unauthorized("Missing Authorization header".into()))?;
-
-    let (org_id, _) = validate_otlp_key(&state, &raw_key)
-        .await
-        .map_err(ApiError::Unauthorized)?;
+    let auth = validate_agent_key(&state, &headers, None).await?;
+    let org_id = auth.org_id;
+    let agent_id = auth.agent_id;
 
     let targets = zentra_db::repositories::targets::list_targets(&state.pool, org_id, None, true)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .into_iter()
+        .filter(|target| target.agent_id == Some(agent_id))
         .filter(|target| {
             !(matches!(target.status, zentra_core::models::target::TargetStatus::Critical)
                 && target.consecutive_failures >= 5)
@@ -429,9 +674,19 @@ pub async fn list_agents(
     require_agent_admin(&ctx)?;
 
     let rows = sqlx::query_as::<_, AgentListRow>(
-        "SELECT agent_id, datacenter_name, status, last_seen, agent_version, active_target_count, ip_address, region_label
-         FROM agent_fleet
-         WHERE org_id = $1
+        "SELECT af.agent_id, af.datacenter_name, af.status, af.last_seen, af.agent_version,
+            af.active_target_count, af.ip_address, af.region_label,
+            ak.expires_at AS key_expires_at, ak.enabled AS key_enabled,
+            ak.registered_ip::text AS registered_ip
+         FROM agent_fleet af
+         LEFT JOIN LATERAL (
+            SELECT expires_at, enabled, registered_ip
+            FROM agent_api_keys
+            WHERE agent_id = af.agent_id
+            ORDER BY created_at DESC
+            LIMIT 1
+         ) ak ON TRUE
+         WHERE af.org_id = $1
          ORDER BY datacenter_name ASC",
     )
     .bind(ctx.org_id)
@@ -442,15 +697,25 @@ pub async fn list_agents(
     let agents = rows
         .into_iter()
         .map(|row| {
+            let key_status = match (row.key_enabled.unwrap_or(false), row.key_expires_at) {
+                (false, _) => "revoked",
+                (true, Some(expires_at)) if expires_at <= Utc::now() => "expired",
+                (true, Some(expires_at)) if expires_at <= Utc::now() + chrono::Duration::days(30) => "expiring_soon",
+                (true, Some(_)) => "active",
+                (true, None) => "active",
+            };
             json!({
                 "agent_id": row.agent_id,
                 "datacenter_name": row.datacenter_name,
                 "status": row.status,
                 "last_seen": row.last_seen,
-                "version": row.agent_version,
+                "agent_version": row.agent_version,
                 "active_target_count": row.active_target_count,
                 "ip_address": row.ip_address,
                 "region_label": row.region_label,
+                "key_status": key_status,
+                "key_expires_at": row.key_expires_at,
+                "registered_ip": row.registered_ip,
             })
         })
         .collect::<Vec<_>>();
@@ -548,6 +813,125 @@ pub async fn deregister_agent(
     Ok(Json(json!({
         "deleted": true,
         "agent_id": agent_id,
+    })))
+}
+
+pub async fn rotate_agent_key(
+    State(state): State<AppState>,
+    Path(agent_id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let auth = validate_agent_key(&state, &headers, None).await?;
+    if auth.agent_id != agent_id {
+        return Err(ApiError::Forbidden("Agent key cannot rotate another agent".into()));
+    }
+
+    let raw_new_key = generate_agent_api_key();
+    let new_hash = hash_api_key(&raw_new_key);
+    let new_prefix = raw_new_key.chars().take(18).collect::<String>();
+
+    let mut tx = state
+        .tsdb_pool
+        .begin()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let old_row = sqlx::query(
+        "SELECT key_hash, registered_ip::text AS registered_ip, enrollment_key_id
+         FROM agent_api_keys
+         WHERE id = $1 AND org_id = $2",
+    )
+    .bind(auth.key_id)
+    .bind(auth.org_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?
+    .ok_or_else(|| ApiError::Unauthorized("Current agent key not found".into()))?;
+
+    let old_hash: String = old_row.get("key_hash");
+    let registered_ip: Option<String> = old_row.get("registered_ip");
+    let enrollment_key_id: Option<Uuid> = old_row.get("enrollment_key_id");
+
+    let new_key_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO agent_api_keys
+         (org_id, agent_id, key_hash, display_prefix, enabled, registered_ip, ip_locked,
+          expires_at, last_rotated_at, enrollment_key_id, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, true, $5::inet, true, NOW() + INTERVAL '1 year', NOW(), $6, NOW(), NOW())
+         RETURNING id",
+    )
+    .bind(auth.org_id)
+    .bind(agent_id)
+    .bind(&new_hash)
+    .bind(&new_prefix)
+    .bind(registered_ip.as_deref())
+    .bind(enrollment_key_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    sqlx::query(
+        "UPDATE agent_api_keys
+         SET replaced_by_key_id = $2,
+             grace_until = NOW() + INTERVAL '7 days',
+             last_rotated_at = NOW(),
+             updated_at = NOW()
+         WHERE id = $1",
+    )
+    .bind(auth.key_id)
+    .bind(new_key_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let new_otlp_key_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO otlp_api_keys
+         (org_id, name, key_hash, key_prefix, permissions, rate_limit_rpm, max_payload_bytes, enabled, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, ARRAY['metrics','logs'], 10000, 5242880, true, NOW(), NOW())
+         RETURNING id",
+    )
+    .bind(auth.org_id)
+    .bind(format!("agent:{}", agent_id))
+    .bind(&new_hash)
+    .bind(&new_prefix)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    sqlx::query(
+        "UPDATE otlp_api_keys
+         SET expires_at = NOW() + INTERVAL '7 days', updated_at = NOW()
+         WHERE org_id = $1 AND key_hash = $2",
+    )
+    .bind(auth.org_id)
+    .bind(&old_hash)
+    .execute(&mut *tx)
+    .await
+    .ok();
+
+    sqlx::query(
+        "UPDATE agent_fleet
+         SET api_key_hash = $3,
+             otlp_api_key_id = $4,
+             updated_at = NOW()
+         WHERE org_id = $1 AND agent_id = $2",
+    )
+    .bind(auth.org_id)
+    .bind(agent_id)
+    .bind(&new_hash)
+    .bind(new_otlp_key_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    Ok(Json(json!({
+        "agent_id": agent_id,
+        "agent_key": raw_new_key,
+        "expires_at": Utc::now() + chrono::Duration::days(365),
+        "old_key_grace_until": Utc::now() + chrono::Duration::days(7),
     })))
 }
 
@@ -697,29 +1081,10 @@ pub async fn report_discovered(
     headers: HeaderMap,
     Json(body): Json<ReportDiscoveredRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let raw_key = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "))
-        .map(|s| s.to_string())
-        .ok_or_else(|| ApiError::Unauthorized("Missing Authorization header".into()))?;
-
-    let (org_id, _) = validate_otlp_key(&state, &raw_key)
-        .await
-        .map_err(ApiError::Unauthorized)?;
-
-    // Verify the agent_id belongs to this org
-    let exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM agent_fleet WHERE agent_id = $1 AND org_id = $2)"
-    )
-    .bind(agent_id)
-    .bind(org_id)
-    .fetch_one(&state.tsdb_pool)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-
-    if !exists {
-        return Err(ApiError::Forbidden("Agent not found for this org".into()));
+    let auth = validate_agent_key(&state, &headers, None).await?;
+    let org_id = auth.org_id;
+    if auth.agent_id != agent_id {
+        return Err(ApiError::Forbidden("Agent key cannot report for another agent_id".into()));
     }
 
     let mut upserted = 0usize;
@@ -947,28 +1312,19 @@ pub async fn report_components(
     headers: HeaderMap,
     Json(body): Json<ReportComponentsRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let raw_key = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "))
-        .map(|s| s.to_string())
-        .ok_or_else(|| ApiError::Unauthorized("Missing Authorization header".into()))?;
+    let auth = validate_agent_key(&state, &headers, None).await?;
+    let org_id = auth.org_id;
+    let agent_id = auth.agent_id;
 
-    let (org_id, _) = validate_otlp_key(&state, &raw_key)
-        .await
-        .map_err(ApiError::Unauthorized)?;
-
-    // Resolve the agent_id for this dc_name + org
-    let agent_id: Option<Uuid> = sqlx::query_scalar(
-        "SELECT agent_id FROM agent_fleet WHERE org_id = $1 AND datacenter_name = $2 AND status = 'active' LIMIT 1"
+    // Update datacenter name from agent report to keep Fleet labels current.
+    let _ = sqlx::query(
+        "UPDATE agent_fleet SET datacenter_name = $3, updated_at = NOW() WHERE org_id = $1 AND agent_id = $2"
     )
     .bind(org_id)
+    .bind(agent_id)
     .bind(dc_name.trim())
-    .fetch_optional(&state.tsdb_pool)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-
-    let agent_id = agent_id.ok_or_else(|| ApiError::NotFound("No active agent for this datacenter".into()))?;
+    .execute(&state.tsdb_pool)
+    .await;
 
     let mut upserted = 0usize;
     for comp in &body.components {
@@ -1149,7 +1505,8 @@ pub async fn confirm_components(
             "memcached"         => ("middleware", "memcached",    11211),
             _                   => ("server",     "linux",           22),
         };
-        let effective_port = port.unwrap_or(fallback_port);
+        let (host, address_port) = split_host_port(&address);
+        let effective_port = port.or(address_port).unwrap_or(fallback_port);
 
         let display_name = if let Some(v) = &version {
             format!("{} ({})", comp_name, v)
@@ -1168,7 +1525,7 @@ pub async fn confirm_components(
         )
         .bind(ctx.org_id)
         .bind(agent_id)
-        .bind(&address)
+        .bind(&host)
         .bind(subtype)
         .fetch_optional(&state.tsdb_pool)
         .await
@@ -1193,7 +1550,7 @@ pub async fn confirm_components(
             .bind(&display_name) // $3 name
             .bind(ttype)         // $4 target_type
             .bind(subtype)       // $5 target_subtype
-            .bind(&address)      // $6 host
+            .bind(&host)         // $6 host
             .bind(effective_port)// $7 port
             .bind(agent_id)      // $8 agent_id
             .bind(now)           // $9 created_at / updated_at
@@ -1243,7 +1600,7 @@ pub async fn confirm_components(
             .bind(&mw_id)
             .bind(mw)
             .bind(&display_name)
-            .bind(&address)
+            .bind(&host)
             .bind(effective_port)
             .bind(&extra)
             .execute(&state.pool)
@@ -1253,7 +1610,8 @@ pub async fn confirm_components(
         created_targets.push(json!({
             "target_id":    target_id,
             "name":         display_name,
-            "host":         address,
+            "host":         host,
+            "port":         effective_port,
             "subtype":      subtype,
             "component_id": comp_id,
         }));
@@ -1273,16 +1631,8 @@ pub async fn agent_log_dirs(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    // Authenticate via agent API key
-    let key_raw = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .ok_or_else(|| ApiError::Unauthorized("Missing Bearer token".into()))?;
-
-    let (org_id, _perms) = validate_otlp_key(&state, key_raw)
-        .await
-        .map_err(|_| ApiError::Unauthorized("Invalid agent API key".into()))?;
+    let auth = validate_agent_key(&state, &headers, None).await?;
+    let org_id = auth.org_id;
 
     // The agent may pass its own agent_id as a query param for precise filtering.
     // If not provided, return all confirmed log dirs for the org.
@@ -1290,6 +1640,12 @@ pub async fn agent_log_dirs(
         .get("x-zentra-agent-id")
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse().ok());
+
+    if let Some(aid) = agent_id_param {
+        if aid != auth.agent_id {
+            return Err(ApiError::Forbidden("agent_id header does not match authenticated key".into()));
+        }
+    }
 
     let rows = if let Some(aid) = agent_id_param {
         sqlx::query(
