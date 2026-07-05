@@ -273,8 +273,9 @@ pub async fn heartbeat(
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    // Update discovered_components address for linux/host components of this agent
-    // so that when confirmed, the target gets the real IP not 127.0.0.1
+    // On every heartbeat, refresh ALL discovered_components addresses for this agent
+    // that are still set to 127.0.0.1 (stale from initial discovery before real IP was known).
+    // Also sync targets.host so monitoring uses the correct IP for every component type.
     if effective_ip != "127.0.0.1" {
         let agent_row: Option<Uuid> = sqlx::query_scalar(
             "SELECT agent_id FROM agent_fleet WHERE api_key_hash = $1 LIMIT 1"
@@ -285,6 +286,24 @@ pub async fn heartbeat(
         .unwrap_or(None);
 
         if let Some(aid) = agent_row {
+            // Update component addresses: replace 127.0.0.1 (bare or with port) with real IP.
+            // For components with a port (e.g. "127.0.0.1:80"), preserve the port suffix.
+            let _ = sqlx::query(
+                "UPDATE discovered_components
+                 SET address = CASE
+                   WHEN address = '127.0.0.1' THEN $1
+                   WHEN address LIKE '127.0.0.1:%' THEN $1 || substr(address, 10)
+                   ELSE address
+                 END
+                 WHERE agent_id = $2
+                   AND (address = '127.0.0.1' OR address LIKE '127.0.0.1:%')"
+            )
+            .bind(&effective_ip)
+            .bind(aid)
+            .execute(&state.tsdb_pool)
+            .await;
+
+            // Also update the linux host component unconditionally to real IP
             let _ = sqlx::query(
                 "UPDATE discovered_components
                  SET address = $1
@@ -295,10 +314,20 @@ pub async fn heartbeat(
             .execute(&state.tsdb_pool)
             .await;
 
-            // Also fix any already-created targets for this agent
+            // Sync targets: fix bare 127.0.0.1 hosts
             let _ = sqlx::query(
                 "UPDATE targets SET host = $1
                  WHERE agent_id = $2 AND host = '127.0.0.1'"
+            )
+            .bind(&effective_ip)
+            .bind(aid)
+            .execute(&state.tsdb_pool)
+            .await;
+
+            // Sync targets: fix host:port style (e.g. "127.0.0.1:80" → "real_ip:80")
+            let _ = sqlx::query(
+                "UPDATE targets SET host = $1 || substr(host, 10)
+                 WHERE agent_id = $2 AND host LIKE '127.0.0.1:%'"
             )
             .bind(&effective_ip)
             .bind(aid)
@@ -950,6 +979,7 @@ pub async fn report_components(
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
              ON CONFLICT (agent_id, component_type, COALESCE(port, -1)) DO UPDATE
              SET component_name = EXCLUDED.component_name,
+                 address        = EXCLUDED.address,
                  version        = COALESCE(EXCLUDED.version, discovered_components.version),
                  extra          = EXCLUDED.extra,
                  last_seen      = NOW()"
