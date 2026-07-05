@@ -175,10 +175,11 @@ async fn discover_local_components(api_endpoint: &str) -> Vec<DiscoveredComponen
     for port in &listening {
         if let Some(def) = port_to_component(*port) {
             let key = format!("{}:{}", def.component_type, port);
+            let addr = format!("{}:{}", real_ip, port);
             components.entry(key).or_insert_with(|| DiscoveredComponent {
                 component_type: def.component_type.clone(),
                 component_name: def.component_name.clone(),
-                address: "127.0.0.1".into(),
+                address: addr,
                 port: Some(*port as i32),
                 version: probe_version(&def.component_type),
                 extra: json!({ "detected_via": "port_scan" }),
@@ -191,10 +192,14 @@ async fn discover_local_components(api_endpoint: &str) -> Vec<DiscoveredComponen
     for proc_name in &procs {
         if let Some(def) = proc_to_component(proc_name) {
             let key = format!("proc:{}", def.component_type);
+            let addr = match def.default_port {
+                Some(p) => format!("{}:{}", real_ip, p),
+                None    => real_ip.clone(),
+            };
             components.entry(key).or_insert_with(|| DiscoveredComponent {
                 component_type: def.component_type.clone(),
                 component_name: def.component_name.clone(),
-                address: "127.0.0.1".into(),
+                address: addr,
                 port: def.default_port,
                 version: probe_version(&def.component_type),
                 extra: json!({ "detected_via": "process", "process_name": proc_name }),
@@ -213,7 +218,7 @@ async fn discover_local_components(api_endpoint: &str) -> Vec<DiscoveredComponen
         components.entry(key).or_insert_with(|| DiscoveredComponent {
             component_type: "log_directory".into(),
             component_name: format!("Log Directory ({})", log_dir),
-            address: "127.0.0.1".into(),
+            address: real_ip.clone(),
             port: None,
             version: None,
             extra: json!({ "path": log_dir }),

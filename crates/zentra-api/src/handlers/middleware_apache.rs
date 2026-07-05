@@ -99,8 +99,12 @@ pub async fn get_status(State(state): State<AppState>, Path(id): Path<String>) -
                 }
             }
             let _ = sqlx::query(
-                "INSERT INTO middleware_metrics (instance_id, instance_type, metric_name, value, collected_at) VALUES ($1,'apache','busy_workers',$2,now()),($1,'apache','req_per_sec',$3,now())"
-            ).bind(&id).bind(s.busy_workers as f64).bind(s.req_per_sec).execute(&state.pool).await;
+                "INSERT INTO middleware_metrics (instance_id, instance_type, metric_name, value, collected_at)
+                 VALUES ($1,'apache','busy_workers',$2,now()),
+                        ($1,'apache','idle_workers',$3,now()),
+                        ($1,'apache','req_per_sec',$4,now()),
+                        ($1,'apache','bytes_per_sec',$5,now())"
+            ).bind(&id).bind(s.busy_workers as f64).bind(s.idle_workers as f64).bind(s.req_per_sec).bind(s.bytes_per_sec).execute(&state.pool).await;
             Ok(Json(s))
         }
         Ok(resp) => {
@@ -120,8 +124,10 @@ pub async fn performance_history(State(s): State<AppState>, Path(id): Path<Strin
     }
     let rows = sqlx::query(
         r#"SELECT time_bucket('1 minute', collected_at) AS bucket,
-           avg(CASE WHEN metric_name = 'busy_workers' THEN value END) AS busy_workers,
-           avg(CASE WHEN metric_name = 'req_per_sec' THEN value END) AS req_per_sec
+           avg(CASE WHEN metric_name = 'busy_workers'  THEN value END) AS busy_workers,
+           avg(CASE WHEN metric_name = 'idle_workers'  THEN value END) AS idle_workers,
+           avg(CASE WHEN metric_name = 'req_per_sec'   THEN value END) AS req_per_sec,
+           avg(CASE WHEN metric_name = 'bytes_per_sec' THEN value END) AS bytes_per_sec
            FROM middleware_metrics
            WHERE instance_id = $1 AND instance_type = 'apache'
              AND collected_at > now() - INTERVAL '1 hour'
@@ -131,11 +137,11 @@ pub async fn performance_history(State(s): State<AppState>, Path(id): Path<Strin
         use sqlx::Row;
         let bucket: chrono::DateTime<Utc> = r.get("bucket");
         ApacheHistoryPoint {
-            timestamp: bucket.to_rfc3339(),
-            busy_workers: r.get::<Option<f64>, _>("busy_workers").unwrap_or(0.0) as u64,
-            idle_workers: 0,
-            req_per_sec: r.get::<Option<f64>, _>("req_per_sec").unwrap_or(0.0),
-            bytes_per_sec: 0.0,
+            timestamp:     bucket.to_rfc3339(),
+            busy_workers:  r.get::<Option<f64>, _>("busy_workers").unwrap_or(0.0) as u64,
+            idle_workers:  r.get::<Option<f64>, _>("idle_workers").unwrap_or(0.0) as u64,
+            req_per_sec:   r.get::<Option<f64>, _>("req_per_sec").unwrap_or(0.0),
+            bytes_per_sec: r.get::<Option<f64>, _>("bytes_per_sec").unwrap_or(0.0),
         }
     }).collect();
     Ok(Json(points))

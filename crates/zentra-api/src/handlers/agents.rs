@@ -273,8 +273,9 @@ pub async fn heartbeat(
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-    // Update discovered_components address for linux/host components of this agent
-    // so that when confirmed, the target gets the real IP not 127.0.0.1
+    // On every heartbeat, refresh ALL discovered_components addresses for this agent
+    // that are still set to 127.0.0.1 (stale from initial discovery before real IP was known).
+    // Also sync targets.host so monitoring uses the correct IP for every component type.
     if effective_ip != "127.0.0.1" {
         let agent_row: Option<Uuid> = sqlx::query_scalar(
             "SELECT agent_id FROM agent_fleet WHERE api_key_hash = $1 LIMIT 1"
@@ -285,6 +286,24 @@ pub async fn heartbeat(
         .unwrap_or(None);
 
         if let Some(aid) = agent_row {
+            // Update component addresses: replace 127.0.0.1 (bare or with port) with real IP.
+            // For components with a port (e.g. "127.0.0.1:80"), preserve the port suffix.
+            let _ = sqlx::query(
+                "UPDATE discovered_components
+                 SET address = CASE
+                   WHEN address = '127.0.0.1' THEN $1
+                   WHEN address LIKE '127.0.0.1:%' THEN $1 || substr(address, 10)
+                   ELSE address
+                 END
+                 WHERE agent_id = $2
+                   AND (address = '127.0.0.1' OR address LIKE '127.0.0.1:%')"
+            )
+            .bind(&effective_ip)
+            .bind(aid)
+            .execute(&state.tsdb_pool)
+            .await;
+
+            // Also update the linux host component unconditionally to real IP
             let _ = sqlx::query(
                 "UPDATE discovered_components
                  SET address = $1
@@ -295,10 +314,20 @@ pub async fn heartbeat(
             .execute(&state.tsdb_pool)
             .await;
 
-            // Also fix any already-created targets for this agent
+            // Sync targets: fix bare 127.0.0.1 hosts
             let _ = sqlx::query(
                 "UPDATE targets SET host = $1
                  WHERE agent_id = $2 AND host = '127.0.0.1'"
+            )
+            .bind(&effective_ip)
+            .bind(aid)
+            .execute(&state.tsdb_pool)
+            .await;
+
+            // Sync targets: fix host:port style (e.g. "127.0.0.1:80" → "real_ip:80")
+            let _ = sqlx::query(
+                "UPDATE targets SET host = $1 || substr(host, 10)
+                 WHERE agent_id = $2 AND host LIKE '127.0.0.1:%'"
             )
             .bind(&effective_ip)
             .bind(aid)
@@ -950,6 +979,7 @@ pub async fn report_components(
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
              ON CONFLICT (agent_id, component_type, COALESCE(port, -1)) DO UPDATE
              SET component_name = EXCLUDED.component_name,
+                 address        = EXCLUDED.address,
                  version        = COALESCE(EXCLUDED.version, discovered_components.version),
                  extra          = EXCLUDED.extra,
                  last_seen      = NOW()"
@@ -1093,20 +1123,31 @@ pub async fn confirm_components(
             continue;
         }
 
-        // Map component_type → (target_subtype, default_port)
-        let (subtype, fallback_port): (&str, i32) = match comp_type.as_str() {
-            "linux" | "server"                          => ("linux",         22),
-            "windows"                                   => ("windows",       3389),
-            "oracle"                                    => ("oracle",        1521),
-            "redis"                                     => ("redis",         6379),
-            "nginx" | "apache" | "haproxy"              => ("linux",         80),
-            "tomcat"                                    => ("linux",         8080),
-            "phpfpm"                                    => ("linux",         9000),
-            "elasticsearch"                             => ("linux",        9200),
-            "kafka"                                     => ("linux",         9092),
-            "rabbitmq"                                  => ("linux",         5672),
-            "memcached"                                 => ("linux",        11211),
-            _                                           => ("linux",         22),
+        // Map component_type → (target_type, target_subtype, default_port)
+        // target_type MUST match what each UI section queries:
+        //   "server"     → Servers page, load_middleware_from_db skips these
+        //   "middleware"  → Middleware pages (nginx/apache/haproxy/tomcat/etc)
+        //   "database"   → Database pages (oracle/redis/postgres/mysql)
+        //   "storage"    → Storage pages
+        let (ttype, subtype, fallback_port): (&str, &str, i32) = match comp_type.as_str() {
+            "linux" | "server"  => ("server",     "linux",          22),
+            "windows"           => ("server",     "windows",       3389),
+            "oracle"            => ("database",   "oracle",        1521),
+            "postgresql"        => ("database",   "postgresql",    5432),
+            "mysql"             => ("database",   "mysql",         3306),
+            "mariadb"           => ("database",   "mariadb",       3306),
+            "mongodb"           => ("database",   "mongodb",      27017),
+            "redis"             => ("database",   "redis",         6379),
+            "nginx"             => ("middleware", "nginx",           80),
+            "apache"            => ("middleware", "apache",          80),
+            "haproxy"           => ("middleware", "haproxy",         80),
+            "tomcat"            => ("middleware", "tomcat",        8080),
+            "phpfpm"            => ("middleware", "phpfpm",        9000),
+            "elasticsearch"     => ("middleware", "elasticsearch", 9200),
+            "kafka"             => ("middleware", "kafka",         9092),
+            "rabbitmq"          => ("middleware", "rabbitmq",      5672),
+            "memcached"         => ("middleware", "memcached",    11211),
+            _                   => ("server",     "linux",           22),
         };
         let effective_port = port.unwrap_or(fallback_port);
 
@@ -1144,17 +1185,18 @@ pub async fn confirm_components(
                 "INSERT INTO targets
                  (target_id, org_id, name, target_type, target_subtype, host, port,
                   agent_id, status, consecutive_failures, created_at, updated_at)
-                 VALUES ($1, $2, $3, 'server', $4, $5, $6, $7, 'active', 0, $8, $8)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', 0, $9, $9)
                  ON CONFLICT (target_id) DO NOTHING"
             )
-            .bind(new_id)
-            .bind(ctx.org_id)
-            .bind(&display_name)
-            .bind(subtype)
-            .bind(&address)
-            .bind(effective_port)
-            .bind(agent_id)
-            .bind(now)
+            .bind(new_id)        // $1 target_id
+            .bind(ctx.org_id)    // $2 org_id
+            .bind(&display_name) // $3 name
+            .bind(ttype)         // $4 target_type
+            .bind(subtype)       // $5 target_subtype
+            .bind(&address)      // $6 host
+            .bind(effective_port)// $7 port
+            .bind(agent_id)      // $8 agent_id
+            .bind(now)           // $9 created_at / updated_at
             .execute(&state.tsdb_pool)
             .await
             .map_err(|e| ApiError::Internal(e.to_string()))?;
@@ -1169,6 +1211,44 @@ pub async fn confirm_components(
         .execute(&state.tsdb_pool)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+        // For middleware types, also upsert into middleware_instances so the middleware
+        // UI pages (Nginx, Apache, HAProxy, Redis, etc.) show this instance automatically.
+        let mw_type = match comp_type.as_str() {
+            "nginx"         => Some("nginx"),
+            "apache"        => Some("apache"),
+            "haproxy"       => Some("haproxy"),
+            "redis"         => Some("redis"),
+            "memcached"     => Some("memcached"),
+            "elasticsearch" => Some("elasticsearch"),
+            "kafka"         => Some("kafka"),
+            "rabbitmq"      => Some("rabbitmq"),
+            "tomcat"        => Some("tomcat"),
+            "phpfpm"        => Some("phpfpm"),
+            _               => None,
+        };
+        if let Some(mw) = mw_type {
+            let mw_id = format!("{}-{}", mw, &target_id.to_string()[..8]);
+            let extra = serde_json::json!({
+                "agent_id":  agent_id,
+                "target_id": target_id,
+                "stub_status_path": "/nginx_status",
+            });
+            let _ = sqlx::query(
+                "INSERT INTO middleware_instances (id, instance_type, name, host, port, extra)
+                 VALUES ($1, $2, $3, $4, $5, $6)
+                 ON CONFLICT (id) DO UPDATE
+                 SET name = EXCLUDED.name, host = EXCLUDED.host, port = EXCLUDED.port"
+            )
+            .bind(&mw_id)
+            .bind(mw)
+            .bind(&display_name)
+            .bind(&address)
+            .bind(effective_port)
+            .bind(&extra)
+            .execute(&state.pool)
+            .await;
+        }
 
         created_targets.push(json!({
             "target_id":    target_id,

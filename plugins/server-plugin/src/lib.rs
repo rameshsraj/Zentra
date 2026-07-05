@@ -3,6 +3,7 @@ pub mod linux_deep;
 pub mod smart_disk_health;
 pub mod redfish_inventory;
 pub mod wmi_collector;
+pub mod middleware_collector;
 
 use zentra_core::models::target::Target;
 use zentra_core::traits::plugin::{Plugin, PluginMetadata, PluginCapability};
@@ -33,6 +34,9 @@ impl Plugin for ServerPlugin {
                 "idrac".into(), "ilo".into(), "xcc".into(), "redfish".into(),
                 "vsphere".into(), "esxi".into(), "vcenter".into(),
                 "kubernetes".into(), "k8s".into(),
+                "nginx".into(), "apache".into(), "haproxy".into(),
+                "tomcat".into(), "phpfpm".into(), "elasticsearch".into(),
+                "kafka".into(), "rabbitmq".into(), "memcached".into(), "redis".into(),
             ],
             capabilities: vec![
                 PluginCapability::CollectMetrics,
@@ -78,6 +82,15 @@ impl Plugin for ServerPlugin {
         if matches!(subtype.as_str(), "bmc" | "idrac" | "ilo" | "xcc" | "redfish" | "ipmi") {
             let redfish = redfish_inventory::RedfishCollector::collect(target).await;
             metrics.extend(redfish);
+        }
+
+        // Middleware HTTP-based collection (nginx, apache, haproxy, redis, etc.)
+        if matches!(subtype.as_str(),
+            "nginx" | "apache" | "haproxy" | "tomcat" | "phpfpm"
+            | "elasticsearch" | "kafka" | "rabbitmq" | "memcached" | "redis"
+        ) {
+            let mw = middleware_collector::collect(target).await;
+            metrics.extend(mw);
         }
 
         Ok(metrics)

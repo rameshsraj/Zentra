@@ -166,9 +166,24 @@ pub async fn create_target(
 /// stores. Called once at server startup so middleware pages are populated
 /// immediately without waiting for a crawl or manual target creation.
 pub async fn load_middleware_from_db(pool: &sqlx::PgPool, org_id: Uuid) {
-    let targets = zentra_db::repositories::targets::list_targets(pool, org_id, Some("middleware"), true)
+    // Fetch all active targets and keep only middleware subtypes.
+    // Uses the public list_targets API to avoid depending on the private TargetRow struct.
+    // This captures both target_type='middleware' (manual) and target_type='server' (legacy agent).
+    let all = zentra_db::repositories::targets::list_targets(pool, org_id, None, true)
         .await
         .unwrap_or_default();
+
+    let mw_subtypes = [
+        TargetSubtype::Nginx, TargetSubtype::Apache, TargetSubtype::HAProxy,
+        TargetSubtype::Tomcat, TargetSubtype::PhpFpm, TargetSubtype::Elasticsearch,
+        TargetSubtype::Kafka, TargetSubtype::RabbitMQ, TargetSubtype::Memcached,
+        TargetSubtype::Redis,
+    ];
+    let targets: Vec<zentra_core::models::target::Target> = all
+        .into_iter()
+        .filter(|t| mw_subtypes.contains(&t.target_subtype))
+        .collect();
+
     let mut count = 0usize;
     for t in &targets {
         register_middleware_instance(t);

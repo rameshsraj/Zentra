@@ -63,21 +63,41 @@ impl PluginInstance {
 /// Instantiates the appropriate plugin for a given target subtype
 pub fn create_plugin_for_target(target: &Target) -> Option<PluginInstance> {
     match &target.target_subtype {
-        TargetSubtype::Linux | TargetSubtype::Windows => {
+        // ── Server / OS ──────────────────────────────────────────────────────
+        TargetSubtype::Linux | TargetSubtype::Windows
+        | TargetSubtype::Snmp | TargetSubtype::Ipmi | TargetSubtype::BMC
+        | TargetSubtype::VSphere | TargetSubtype::ESXi | TargetSubtype::VCenter
+        | TargetSubtype::Kubernetes | TargetSubtype::Container => {
             Some(PluginInstance::Server(server_plugin::ServerPlugin::new()))
         }
-        TargetSubtype::Oracle => {
+
+        // ── Middleware (HTTP-based collection via server plugin) ──────────────
+        TargetSubtype::Nginx | TargetSubtype::Apache | TargetSubtype::HAProxy
+        | TargetSubtype::Tomcat | TargetSubtype::PhpFpm | TargetSubtype::Elasticsearch
+        | TargetSubtype::Kafka | TargetSubtype::RabbitMQ | TargetSubtype::Memcached => {
+            Some(PluginInstance::Server(server_plugin::ServerPlugin::new()))
+        }
+
+        // ── Databases ────────────────────────────────────────────────────────
+        TargetSubtype::Oracle | TargetSubtype::PostgreSQL | TargetSubtype::MySQL
+        | TargetSubtype::MariaDB | TargetSubtype::MongoDB | TargetSubtype::Redis => {
             Some(PluginInstance::Database(database_plugin::DatabasePlugin::new()))
         }
-        TargetSubtype::LocalDisk | TargetSubtype::NFS | TargetSubtype::SAN | TargetSubtype::HP3PAR => {
+
+        // ── Storage ──────────────────────────────────────────────────────────
+        TargetSubtype::LocalDisk | TargetSubtype::NFS | TargetSubtype::SAN
+        | TargetSubtype::HP3PAR | TargetSubtype::S3 | TargetSubtype::MinIO
+        | TargetSubtype::Ceph | TargetSubtype::NetApp | TargetSubtype::PureStorage
+        | TargetSubtype::Veeam | TargetSubtype::SanFabric => {
             Some(PluginInstance::Storage(storage_plugin::StoragePlugin::new()))
         }
-        TargetSubtype::Interface | TargetSubtype::Switch | TargetSubtype::Router | TargetSubtype::Firewall => {
+
+        // ── Network ──────────────────────────────────────────────────────────
+        TargetSubtype::Interface | TargetSubtype::Switch | TargetSubtype::Router
+        | TargetSubtype::Firewall | TargetSubtype::Bgp | TargetSubtype::Ospf
+        | TargetSubtype::Vpn | TargetSubtype::Dns | TargetSubtype::Dhcp
+        | TargetSubtype::NetFlow | TargetSubtype::SFlow | TargetSubtype::Ipfix => {
             Some(PluginInstance::Network(network_plugin::NetworkPlugin::new()))
-        }
-        other => {
-            warn!(subtype = ?other, "No plugin available for target subtype");
-            None
         }
     }
 }

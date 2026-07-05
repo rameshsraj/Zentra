@@ -10,7 +10,7 @@ import PageHeader from '@/components/PageHeader'
 import {
   Server, Copy, Check, Loader2, CheckCircle2,
   AlertTriangle, ChevronRight, ChevronDown, Terminal,
-  RefreshCw, Package, Database, Globe, Cpu, Network, FolderOpen,
+  RefreshCw, Package, Database, Globe, Cpu, Network, FolderOpen, Router,
 } from 'lucide-react'
 
 type Step = 1 | 2 | 3 | 4
@@ -215,16 +215,36 @@ function StepRegister({ onComplete }: { onComplete: (apiKey: string, dc: string)
 
 // ── Step 2: Install the Agent ──────────────────────────────────────
 
-function StepInstall({ apiKey, dcName, onNext }: { apiKey: string; dcName: string; onNext: () => void }) {
-  const [tab, setTab] = useState<'linux' | 'windows'>('linux')
+function CopyBlock({ text, label }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false)
-  const [showSystemd, setShowSystemd] = useState(false)
-  // downloadUrl: frontend origin (nginx at :5010 serves /dl/)
-  const downloadUrl = window.location.origin
-  // apiEndpoint: same host, direct to API port 5006
-  const apiEndpoint = `${window.location.protocol}//${window.location.hostname}:5006`
+  return (
+    <div className="relative">
+      {label && <p className="text-xs text-muted-foreground mb-1.5 font-medium uppercase tracking-wide">{label}</p>}
+      <pre className="rounded-lg bg-zinc-900 p-4 pr-12 text-sm font-mono text-green-400 overflow-x-auto whitespace-pre-wrap">
+        {text}
+      </pre>
+      <button
+        onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000) }}
+        className="absolute top-3 right-3 rounded p-1.5 hover:bg-zinc-700 transition-colors"
+        title="Copy"
+      >
+        {copied ? <Check className="h-4 w-4 text-green-400" /> : <Copy className="h-4 w-4 text-zinc-400" />}
+      </button>
+    </div>
+  )
+}
 
-  const linuxCmd = `curl -fsSL ${downloadUrl}/dl/zentra-agent-linux-x86_64 -o zentra-agent && \\
+function StepInstall({ apiKey, dcName, onNext }: { apiKey: string; dcName: string; onNext: () => void }) {
+  const [platform, setPlatform] = useState<'linux' | 'windows' | 'docker'>('linux')
+  const [agentType, setAgentType] = useState<'agent' | 'collector' | 'network'>('agent')
+  const [showSystemd, setShowSystemd] = useState(false)
+
+  const downloadUrl = window.location.origin
+  const apiEndpoint = `${window.location.protocol}//${window.location.hostname}:5006`
+  const otlpEndpoint = `${window.location.protocol}//${window.location.hostname}:4317`
+
+  // ── Linux ──────────────────────────────────────────────────────────
+  const linuxAgentCmd = `curl -fsSL ${downloadUrl}/dl/zentra-agent-linux-x86_64 -o zentra-agent && \\
 chmod +x zentra-agent && \\
 ZENTRA_AGENT_MODE=remote \\
 ZENTRA_API_ENDPOINT=${apiEndpoint} \\
@@ -232,14 +252,55 @@ ZENTRA_AGENT_API_KEY=${apiKey} \\
 ZENTRA_DC_NAME=${dcName} \\
 ./zentra-agent`
 
-  const windowsCmd = `Invoke-WebRequest -Uri "${downloadUrl}/dl/zentra-agent-windows-x86_64.exe" -OutFile zentra-agent.exe
-$env:ZENTRA_AGENT_MODE="remote"
-$env:ZENTRA_API_ENDPOINT="${apiEndpoint}"
-$env:ZENTRA_AGENT_API_KEY="${apiKey}"
-$env:ZENTRA_DC_NAME="${dcName}"
-.\\zentra-agent.exe`
+  const linuxCollectorCmd = `# Install OpenTelemetry Collector (contrib)
+curl -fsSL https://github.com/open-telemetry/opentelemetry-collector-releases/releases/latest/download/otelcol-contrib_linux_amd64.tar.gz | tar -xz
+chmod +x otelcol-contrib
 
-  const systemdUnit = `[Unit]
+# Create config.yaml
+cat > otel-config.yaml << 'EOF'
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  hostmetrics:
+    collection_interval: 30s
+    scrapers:
+      cpu:
+      memory:
+      disk:
+      filesystem:
+      load:
+      network:
+      process:
+
+exporters:
+  otlp:
+    endpoint: ${otlpEndpoint}
+    tls:
+      insecure: true
+    headers:
+      Authorization: "Bearer ${apiKey}"
+      X-Zentra-DC: "${dcName}"
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp, hostmetrics]
+      exporters: [otlp]
+    traces:
+      receivers: [otlp]
+      exporters: [otlp]
+    logs:
+      receivers: [otlp]
+      exporters: [otlp]
+EOF
+
+./otelcol-contrib --config=otel-config.yaml`
+
+  const systemdAgentUnit = `[Unit]
 Description=Zentra Monitoring Agent
 After=network.target
 
@@ -256,40 +317,310 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target`
 
-  const cmd = tab === 'linux' ? linuxCmd : windowsCmd
-  const handleCopy = () => {
-    navigator.clipboard.writeText(cmd)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+  const systemdCollectorUnit = `[Unit]
+Description=Zentra OTel Collector
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/otelcol-contrib --config=/etc/zentra/otel-config.yaml
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target`
+
+  // ── Windows ────────────────────────────────────────────────────────
+  const windowsAgentCmd = `Invoke-WebRequest -Uri "${downloadUrl}/dl/zentra-agent-windows-x86_64.exe" -OutFile zentra-agent.exe
+$env:ZENTRA_AGENT_MODE="remote"
+$env:ZENTRA_API_ENDPOINT="${apiEndpoint}"
+$env:ZENTRA_AGENT_API_KEY="${apiKey}"
+$env:ZENTRA_DC_NAME="${dcName}"
+.\\zentra-agent.exe`
+
+  const windowsCollectorCmd = `# Download OTel Collector for Windows
+Invoke-WebRequest -Uri "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/latest/download/otelcol-contrib_windows_amd64.tar.gz" -OutFile otelcol.tar.gz
+tar -xf otelcol.tar.gz
+
+# Create config (save as otel-config.yaml)
+$config = @"
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  hostmetrics:
+    collection_interval: 30s
+    scrapers: { cpu: , memory: , disk: , filesystem: , load: , network: }
+
+exporters:
+  otlp:
+    endpoint: ${otlpEndpoint}
+    tls:
+      insecure: true
+    headers:
+      Authorization: "Bearer ${apiKey}"
+      X-Zentra-DC: "${dcName}"
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp, hostmetrics]
+      exporters: [otlp]
+"@
+$config | Out-File -FilePath otel-config.yaml -Encoding utf8
+
+.\\otelcol-contrib.exe --config=otel-config.yaml`
+
+  // ── Docker ─────────────────────────────────────────────────────────
+  const dockerAgentCmd = `docker run -d \\
+  --name zentra-agent \\
+  --restart unless-stopped \\
+  --network host \\
+  --pid host \\
+  -v /proc:/host/proc:ro \\
+  -v /sys:/host/sys:ro \\
+  -v /etc:/host/etc:ro \\
+  -e ZENTRA_AGENT_MODE=remote \\
+  -e ZENTRA_API_ENDPOINT=${apiEndpoint} \\
+  -e ZENTRA_AGENT_API_KEY=${apiKey} \\
+  -e ZENTRA_DC_NAME=${dcName} \\
+  zentraio/agent:latest`
+
+  const dockerCollectorCmd = `# docker-compose.yaml
+version: "3.8"
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./otel-config.yaml:/etc/otel/config.yaml
+    command: ["--config", "/etc/otel/config.yaml"]
+
+# otel-config.yaml
+# receivers:
+#   otlp:
+#     protocols:
+#       grpc:
+#         endpoint: 0.0.0.0:4317
+#   hostmetrics:
+#     collection_interval: 30s
+#     scrapers: { cpu: , memory: , disk: , filesystem: , load: , network: }
+# exporters:
+#   otlp:
+#     endpoint: ${otlpEndpoint}
+#     tls:
+#       insecure: true
+#     headers:
+#       Authorization: "Bearer ${apiKey}"
+#       X-Zentra-DC: "${dcName}"
+# service:
+#   pipelines:
+#     metrics:
+#       receivers: [otlp, hostmetrics]
+#       exporters: [otlp]`
+
+  // ── Network Device (SNMP) ───────────────────────────────────────────
+  // Same config for all platforms — runs an OTel Collector with SNMP receiver
+  const snmpConfig = `# otel-snmp-config.yaml — monitors network devices via SNMP
+# Replace device_ip / community string / SNMP version as needed.
+receivers:
+  snmp:
+    collection_interval: 60s
+    endpoint: udp://DEVICE_IP:161
+    version: v2c
+    community: public
+    # For SNMPv3:
+    # version: v3
+    # user: snmp_user
+    # security_level: auth_priv
+    # auth_protocol: MD5
+    # auth_password: auth_pass
+    # privacy_protocol: DES
+    # privacy_password: priv_pass
+    attributes:
+      device_name:
+        oid: 1.3.6.1.2.1.1.5.0
+        enum:
+          - sysName
+    metrics:
+      # Interface metrics
+      network.interface.in.packets:
+        unit: packets
+        gauge:
+          value_type: int
+        oid: 1.3.6.1.2.1.2.2.1.11
+      network.interface.out.packets:
+        unit: packets
+        gauge:
+          value_type: int
+        oid: 1.3.6.1.2.1.2.2.1.17
+      network.interface.in.errors:
+        unit: errors
+        gauge:
+          value_type: int
+        oid: 1.3.6.1.2.1.2.2.1.14
+      network.interface.out.errors:
+        unit: errors
+        gauge:
+          value_type: int
+        oid: 1.3.6.1.2.1.2.2.1.20
+      # CPU & Memory (Cisco-style)
+      system.cpu.utilization:
+        unit: percent
+        gauge:
+          value_type: double
+        oid: 1.3.6.1.4.1.9.9.109.1.1.1.1.7.1
+      system.memory.utilization:
+        unit: percent
+        gauge:
+          value_type: double
+        oid: 1.3.6.1.4.1.9.9.109.1.1.1.1.12.1
+
+exporters:
+  otlp:
+    endpoint: ${otlpEndpoint}
+    tls:
+      insecure: true
+    headers:
+      Authorization: "Bearer ${apiKey}"
+      X-Zentra-DC: "${dcName}"
+
+service:
+  pipelines:
+    metrics:
+      receivers: [snmp]
+      exporters: [otlp]`
+
+  const linuxNetworkCmd = `# 1. Download OTel Collector contrib (includes SNMP receiver)
+curl -fsSL https://github.com/open-telemetry/opentelemetry-collector-releases/releases/latest/download/otelcol-contrib_linux_amd64.tar.gz | tar -xz
+chmod +x otelcol-contrib
+
+# 2. Save the config below as otel-snmp-config.yaml
+#    (edit DEVICE_IP and SNMP credentials first)
+
+# 3. Run the collector
+./otelcol-contrib --config=otel-snmp-config.yaml`
+
+  const windowsNetworkCmd = `# 1. Download OTel Collector contrib (includes SNMP receiver)
+Invoke-WebRequest -Uri "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/latest/download/otelcol-contrib_windows_amd64.tar.gz" -OutFile otelcol.tar.gz
+tar -xf otelcol.tar.gz
+
+# 2. Save the config below as otel-snmp-config.yaml
+#    (edit DEVICE_IP and SNMP credentials first)
+
+# 3. Run the collector
+.\otelcol-contrib.exe --config=otel-snmp-config.yaml`
+
+  const dockerNetworkCmd = `# docker-compose.yaml — SNMP Network Device Collector
+version: "3.8"
+services:
+  snmp-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    restart: unless-stopped
+    volumes:
+      - ./otel-snmp-config.yaml:/etc/otel/config.yaml
+    command: ["--config", "/etc/otel/config.yaml"]
+    ports:
+      - "4317:4317"
+
+# Save otel-snmp-config.yaml next to docker-compose.yaml
+# (edit DEVICE_IP and SNMP credentials before running)`
+
+  const platformCmds: Record<string, Record<string, string>> = {
+    linux:   { agent: linuxAgentCmd,   collector: linuxCollectorCmd,   network: linuxNetworkCmd },
+    windows: { agent: windowsAgentCmd, collector: windowsCollectorCmd, network: windowsNetworkCmd },
+    docker:  { agent: dockerAgentCmd,  collector: dockerCollectorCmd,  network: dockerNetworkCmd },
   }
+  const currentCmd = platformCmds[platform][agentType]
 
   return (
     <div className="space-y-6">
-      <div className="flex gap-1 rounded-lg bg-muted p-1 w-fit">
-        <button
-          onClick={() => setTab('linux')}
-          className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${tab === 'linux' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-        >
-          Linux
-        </button>
-        <button
-          onClick={() => setTab('windows')}
-          className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${tab === 'windows' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-        >
-          Windows
-        </button>
+      {/* Platform tabs */}
+      <div>
+        <p className="text-xs text-muted-foreground mb-2 font-medium uppercase tracking-wide">Platform</p>
+        <div className="flex gap-1 rounded-lg bg-muted p-1 w-fit">
+          {(['linux', 'windows', 'docker'] as const).map(p => (
+            <button
+              key={p}
+              onClick={() => setPlatform(p)}
+              className={`rounded-md px-4 py-1.5 text-sm font-medium capitalize transition-colors ${platform === p ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              {p === 'docker' ? '🐳 Docker' : p === 'linux' ? '🐧 Linux' : '🪟 Windows'}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <div className="relative">
-        <pre className="rounded-lg bg-zinc-900 p-4 pr-12 text-sm font-mono text-green-400 overflow-x-auto whitespace-pre-wrap">
-          {cmd}
-        </pre>
-        <button onClick={handleCopy} className="absolute top-3 right-3 rounded p-1.5 hover:bg-zinc-700 transition-colors" title="Copy">
-          {copied ? <Check className="h-4 w-4 text-green-400" /> : <Copy className="h-4 w-4 text-zinc-400" />}
-        </button>
+      {/* Agent type sub-tabs */}
+      <div>
+        <p className="text-xs text-muted-foreground mb-2 font-medium uppercase tracking-wide">Agent Type</p>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => setAgentType('agent')}
+            className={`flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-medium transition-colors ${
+              agentType === 'agent'
+                ? 'border-blue-500 bg-blue-500/10 text-blue-400'
+                : 'border-border text-muted-foreground hover:border-blue-500/50 hover:text-foreground'
+            }`}
+          >
+            <Server className="h-4 w-4" />
+            <div className="text-left">
+              <div>Zentra Agent</div>
+              <div className="text-xs opacity-70">Full monitoring — metrics, logs, discovery</div>
+            </div>
+          </button>
+          <button
+            onClick={() => setAgentType('collector')}
+            className={`flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-medium transition-colors ${
+              agentType === 'collector'
+                ? 'border-purple-500 bg-purple-500/10 text-purple-400'
+                : 'border-border text-muted-foreground hover:border-purple-500/50 hover:text-foreground'
+            }`}
+          >
+            <Package className="h-4 w-4" />
+            <div className="text-left">
+              <div>OTel Collector Agent</div>
+              <div className="text-xs opacity-70">OTLP pipeline — traces, metrics, logs</div>
+            </div>
+          </button>
+          <button
+            onClick={() => setAgentType('network')}
+            className={`flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-medium transition-colors ${
+              agentType === 'network'
+                ? 'border-cyan-500 bg-cyan-500/10 text-cyan-400'
+                : 'border-border text-muted-foreground hover:border-cyan-500/50 hover:text-foreground'
+            }`}
+          >
+            <Router className="h-4 w-4" />
+            <div className="text-left">
+              <div>Network Device Agent</div>
+              <div className="text-xs opacity-70">SNMP polling — switches, routers, firewalls</div>
+            </div>
+          </button>
+        </div>
       </div>
 
-      {tab === 'linux' && (
+      {/* Command block */}
+      <CopyBlock text={currentCmd} />
+
+      {/* SNMP config block shown alongside the network device run command */}
+      {agentType === 'network' && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-xs text-cyan-400 font-medium uppercase tracking-wide">
+            <Router className="h-3.5 w-3.5" />
+            SNMP Collector Config (otel-snmp-config.yaml)
+          </div>
+          <p className="text-xs text-muted-foreground">Edit <code className="text-cyan-400">DEVICE_IP</code> and SNMP credentials before starting the collector.</p>
+          <CopyBlock text={snmpConfig} />
+        </div>
+      )}
+
+      {/* systemd helper for Linux native installs */}
+      {platform === 'linux' && (
         <div>
           <button
             onClick={() => setShowSystemd(!showSystemd)}
@@ -299,9 +630,9 @@ WantedBy=multi-user.target`
             systemd service file (persistent background service)
           </button>
           {showSystemd && (
-            <pre className="mt-2 rounded-lg bg-zinc-900 p-4 text-sm font-mono text-zinc-300 overflow-x-auto whitespace-pre-wrap">
-              {systemdUnit}
-            </pre>
+            <div className="mt-2">
+              <CopyBlock text={agentType === 'agent' ? systemdAgentUnit : systemdCollectorUnit} />
+            </div>
           )}
         </div>
       )}
