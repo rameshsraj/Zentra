@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getTargets, getTargetStats, setupSsh, deleteTarget, type Target, type ServerStats } from '@/lib/api'
+import { deregisterAgent } from '@/lib/api/fleet'
 import GaugeChart from '@/components/charts/GaugeChart'
 import Sparkline from '@/components/charts/Sparkline'
 import PageHeader from '@/components/PageHeader'
@@ -14,6 +15,7 @@ const spark = (base: number, len = 20) =>
 
 interface ServerView {
   target_id: string
+  agent_id?: string | null
   name: string
   os: string
   cpu: number
@@ -45,6 +47,7 @@ interface ServerView {
 function targetToPlaceholder(t: Target): ServerView {
   return {
     target_id: t.target_id,
+    agent_id: t.agent_id,
     name: t.name,
     os: t.target_subtype || 'linux',
     cpu: 0, mem: 0, disk: 0,
@@ -111,14 +114,18 @@ export default function ServersPage() {
   const [sshForm, setSshForm] = useState({ username: 'root', password: '' })
   const [sshSetupLoading, setSshSetupLoading] = useState(false)
   const [sshSetupResult, setSshSetupResult] = useState<{ success: boolean; message: string } | null>(null)
-  const [deleteConfirm, setDeleteConfirm] = useState<{ open: boolean; targetId: string; name: string } | null>(null)
+  const [deleteConfirm, setDeleteConfirm] = useState<{ open: boolean; targetId: string; name: string; agentId?: string | null } | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [diskDrilldown, setDiskDrilldown] = useState(false)
 
-  const handleDelete = async (targetId: string) => {
+  const handleDelete = async (targetId: string, agentId?: string | null) => {
     setDeleting(true)
     try {
-      await deleteTarget(targetId)
+      if (agentId) {
+        await deregisterAgent(agentId)
+      } else {
+        await deleteTarget(targetId)
+      }
       setDeleteConfirm(null)
       setSelected(null)
       setServerMap(prev => {
@@ -254,7 +261,7 @@ export default function ServersPage() {
               <div className="flex items-center gap-2">
                 <span className="text-[10px] text-slate-600">Up: {server.uptime}</span>
                 <button
-                  onClick={e => { e.stopPropagation(); setDeleteConfirm({ open: true, targetId: server.target_id, name: server.name }) }}
+                  onClick={e => { e.stopPropagation(); setDeleteConfirm({ open: true, targetId: server.target_id, name: server.name, agentId: server.agent_id }) }}
                   className="p-1 rounded-md hover:bg-red-500/20 text-slate-600 hover:text-red-400 transition-colors"
                   title="Remove server"
                 >
@@ -266,7 +273,7 @@ export default function ServersPage() {
             {server.loading ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="w-8 h-8 animate-spin text-slate-500" />
-                <span className="ml-2 text-sm text-slate-500">Collecting real metrics via SSH...</span>
+                <span className="ml-2 text-sm text-slate-500">{server.agent_id ? 'Fetching agent metrics...' : 'Collecting real metrics via SSH...'}</span>
               </div>
             ) : server.error ? (
               <div className="px-3 py-4 bg-red-500/10 border border-red-500/20 rounded-lg text-xs text-red-400">
@@ -540,7 +547,7 @@ export default function ServersPage() {
                 Cancel
               </button>
               <button
-                onClick={() => handleDelete(deleteConfirm.targetId)}
+                onClick={() => handleDelete(deleteConfirm.targetId, deleteConfirm.agentId)}
                 disabled={deleting}
                 className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-red-600 hover:bg-red-700 rounded-xl text-sm font-medium text-white transition-colors disabled:opacity-50"
               >

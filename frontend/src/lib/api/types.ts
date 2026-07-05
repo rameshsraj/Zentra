@@ -41,6 +41,7 @@ export interface Target {
   org_id: string
   port: number
   error: string | null
+  agent_id?: string | null
 }
 
 export interface ServerStats {

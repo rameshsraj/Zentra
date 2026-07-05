@@ -9,15 +9,30 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-/// Returns the first non-loopback IPv4 address of this machine.
-fn local_ip_address() -> String {
+/// Returns the local IPv4 address used to reach the given destination host.
+/// We connect to the Zentra API server IP rather than a public address so the
+/// OS picks the interface that actually reaches the Zentra network.
+fn local_ip_for_destination(host: &str) -> String {
     use std::net::UdpSocket;
-    // Connect to a routable address (doesn't actually send traffic) to let
-    // the OS pick the right source interface.
+    // Use port 80 or 443; traffic is never actually sent.
+    let dest = format!("{}:80", host);
     UdpSocket::bind("0.0.0.0:0")
-        .and_then(|s| { s.connect("8.8.8.8:80")?; s.local_addr() })
+        .and_then(|s| { s.connect(&dest)?; s.local_addr() })
         .map(|a| a.ip().to_string())
         .unwrap_or_default()
+}
+
+/// Extract the host from an http://host:port URL.
+fn host_from_url(url: &str) -> String {
+    url.trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .to_string()
 }
 
 /// Shared cell that holds the agent's own UUID once the first successful
@@ -89,7 +104,7 @@ impl HeartbeatLoop {
                 .ok()
                 .and_then(|h| h.into_string().ok())
                 .unwrap_or_default();
-            let local_ip = local_ip_address();
+            let local_ip = local_ip_for_destination(&host_from_url(&self.api_endpoint));
             let body = json!({
                 "agent_version": env!("CARGO_PKG_VERSION"),
                 "active_targets": target_count as i32,

@@ -228,11 +228,24 @@ pub async fn heartbeat(
         .map_err(ApiError::Unauthorized)?;
     let key_hash = hash_api_key(&raw_key);
 
-    // Prefer the agent-reported IP (accurate behind nginx) over remote_addr (127.0.0.1)
-    let effective_ip = body.ip_address
-        .as_deref()
+    // Use X-Real-IP (set by nginx to the real client IP) as the authoritative source.
+    // The agent-reported IP is unreliable: UDP routing picks whichever interface the
+    // OS happens to route through, which may be an internal/bridge IP (e.g. 172.16.x.x).
+    // X-Real-IP reflects the actual TCP connection source as seen by the reverse proxy.
+    let effective_ip = headers
+        .get("X-Real-IP")
+        .and_then(|v| v.to_str().ok())
         .filter(|s| !s.is_empty() && *s != "127.0.0.1")
         .map(|s| s.to_string())
+        .or_else(|| {
+            // Fallback: first IP in X-Forwarded-For
+            headers
+                .get("X-Forwarded-For")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.split(',').next())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty() && s != "127.0.0.1")
+        })
         .unwrap_or_else(|| remote_addr.ip().to_string());
 
     sqlx::query(
@@ -444,10 +457,13 @@ pub async fn deregister_agent(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
+    // Hard delete: remove the agent, its discovered components, its targets,
+    // and any metrics tied to those targets so the datacenter truly disappears.
     sqlx::query(
-        "UPDATE agent_fleet
-         SET status = 'deregistered', updated_at = NOW()
-         WHERE agent_id = $1 AND org_id = $2",
+        "DELETE FROM metrics
+         WHERE target_id IN (
+             SELECT target_id FROM targets WHERE agent_id = $1 AND org_id = $2
+         )"
     )
     .bind(agent_id)
     .bind(ctx.org_id)
@@ -456,9 +472,37 @@ pub async fn deregister_agent(
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     sqlx::query(
-        "UPDATE otlp_api_keys
-         SET enabled = false, updated_at = NOW()
-         WHERE id = $1 AND org_id = $2",
+        "DELETE FROM targets
+         WHERE agent_id = $1 AND org_id = $2"
+    )
+    .bind(agent_id)
+    .bind(ctx.org_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    sqlx::query(
+        "DELETE FROM discovered_components
+         WHERE agent_id = $1"
+    )
+    .bind(agent_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    sqlx::query(
+        "DELETE FROM agent_fleet
+         WHERE agent_id = $1 AND org_id = $2"
+    )
+    .bind(agent_id)
+    .bind(ctx.org_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    sqlx::query(
+        "DELETE FROM otlp_api_keys
+         WHERE id = $1 AND org_id = $2"
     )
     .bind(otlp_api_key_id)
     .bind(ctx.org_id)
@@ -473,7 +517,7 @@ pub async fn deregister_agent(
     state.otlp_key_cache.remove(&api_key_hash);
 
     Ok(Json(json!({
-        "deregistered": true,
+        "deleted": true,
         "agent_id": agent_id,
     })))
 }
@@ -1015,7 +1059,7 @@ pub async fn confirm_components(
         "SELECT dc.id, dc.component_type, dc.component_name, dc.address, dc.port, dc.version
          FROM discovered_components dc
          JOIN agent_fleet af ON af.agent_id = dc.agent_id
-         WHERE dc.id = ANY($1) AND af.org_id = $2 AND dc.confirmed = FALSE"
+         WHERE dc.id = ANY($1) AND af.org_id = $2"
     )
     .bind(&body.component_ids)
     .bind(ctx.org_id)
@@ -1033,21 +1077,13 @@ pub async fn confirm_components(
         let port: Option<i32> = row.get("port");
         let version: Option<String> = row.get("version");
 
-        // network_interface, log_directory, and linux/windows components that belong
-        // to an agent-managed host are metadata only — mark confirmed, no SSH target row.
-        // The agent ships its own metrics via OTLP; creating an SSH target here would
-        // cause the server to try to SSH into 127.0.0.1 / the wrong IP.
-        // SSH targets are only created for agentless/collector-managed hosts (agent_id IS NULL).
-        let is_agent_owned_host = (comp_type == "linux" || comp_type == "windows" || comp_type == "server")
-            && agent_id != Uuid::nil();
-        if comp_type == "network_interface" || comp_type == "log_directory" || is_agent_owned_host {
-            sqlx::query(
-                "UPDATE discovered_components SET confirmed = TRUE WHERE id = $1"
-            )
-            .bind(comp_id)
-            .execute(&state.tsdb_pool)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
+        // network_interface and log_directory are metadata only — no target row needed.
+        if comp_type == "network_interface" || comp_type == "log_directory" {
+            sqlx::query("UPDATE discovered_components SET confirmed = TRUE WHERE id = $1")
+                .bind(comp_id)
+                .execute(&state.tsdb_pool)
+                .await
+                .map_err(|e| ApiError::Internal(e.to_string()))?;
             created_targets.push(json!({
                 "component_id": comp_id,
                 "name":         comp_name,
@@ -1080,46 +1116,67 @@ pub async fn confirm_components(
             comp_name.clone()
         };
 
-        let target_id = Uuid::now_v7();
         let now = Utc::now();
 
-        let insert_ok = sqlx::query(
-            "INSERT INTO targets
-             (target_id, org_id, name, target_type, target_subtype, host, port,
-              agent_id, status, consecutive_failures, created_at, updated_at)
-             VALUES ($1, $2, $3, 'server', $4, $5, $6, $7, 'active', 0, $8, $8)
-             ON CONFLICT (target_id) DO NOTHING"
+        // Check if a target already exists for this agent + host + subtype.
+        // Handles idempotent re-confirms (already-confirmed components).
+        let existing_target_id: Option<Uuid> = sqlx::query_scalar(
+            "SELECT target_id FROM targets
+             WHERE org_id = $1 AND agent_id = $2 AND host = $3 AND target_subtype = $4
+             LIMIT 1"
         )
-        .bind(target_id)
         .bind(ctx.org_id)
-        .bind(&display_name)
-        .bind(subtype)
-        .bind(&address)
-        .bind(effective_port)
         .bind(agent_id)
-        .bind(now)
+        .bind(&address)
+        .bind(subtype)
+        .fetch_optional(&state.tsdb_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+        let target_id = if let Some(existing) = existing_target_id {
+            // Target already exists — just re-confirm the component
+            existing
+        } else {
+            // Create new target row with agent_id set.
+            // agent_id != NULL means the server NEVER tries SSH — metrics come via OTLP.
+            let new_id = Uuid::now_v7();
+            sqlx::query(
+                "INSERT INTO targets
+                 (target_id, org_id, name, target_type, target_subtype, host, port,
+                  agent_id, status, consecutive_failures, created_at, updated_at)
+                 VALUES ($1, $2, $3, 'server', $4, $5, $6, $7, 'active', 0, $8, $8)
+                 ON CONFLICT (target_id) DO NOTHING"
+            )
+            .bind(new_id)
+            .bind(ctx.org_id)
+            .bind(&display_name)
+            .bind(subtype)
+            .bind(&address)
+            .bind(effective_port)
+            .bind(agent_id)
+            .bind(now)
+            .execute(&state.tsdb_pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+            new_id
+        };
+
+        sqlx::query(
+            "UPDATE discovered_components SET confirmed = TRUE, target_id = $2 WHERE id = $1"
+        )
+        .bind(comp_id)
+        .bind(target_id)
         .execute(&state.tsdb_pool)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
-        if insert_ok.rows_affected() > 0 {
-            sqlx::query(
-                "UPDATE discovered_components SET confirmed = TRUE, target_id = $2 WHERE id = $1"
-            )
-            .bind(comp_id)
-            .bind(target_id)
-            .execute(&state.tsdb_pool)
-            .await
-            .map_err(|e| ApiError::Internal(e.to_string()))?;
-
-            created_targets.push(json!({
-                "target_id":    target_id,
-                "name":         display_name,
-                "host":         address,
-                "subtype":      subtype,
-                "component_id": comp_id,
-            }));
-        }
+        created_targets.push(json!({
+            "target_id":    target_id,
+            "name":         display_name,
+            "host":         address,
+            "subtype":      subtype,
+            "component_id": comp_id,
+        }));
     }
 
     Ok(Json(json!({

@@ -77,7 +77,7 @@ impl ComponentDiscovery {
                 _ = ticker.tick() => {}
             }
 
-            let components = discover_local_components().await;
+            let components = discover_local_components(&self.api_endpoint).await;
             if components.is_empty() {
                 debug!("No local components discovered");
                 continue;
@@ -154,12 +154,12 @@ struct DiscoveredComponent {
 ///   - Database: Oracle only (postgres/mysql/mongodb are NOT monitored by this product)
 ///   - Network interfaces
 ///   - Log directories
-async fn discover_local_components() -> Vec<DiscoveredComponent> {
+async fn discover_local_components(api_endpoint: &str) -> Vec<DiscoveredComponent> {
     let mut components: HashMap<String, DiscoveredComponent> = HashMap::new();
 
     // 1. Linux host OS — use real outbound IP so the server stores a reachable address.
     let os_version = read_os_version();
-    let real_ip = local_outbound_ip();
+    let real_ip = local_outbound_ip(api_endpoint);
     let hostname = hostname_str();
     components.insert("host:linux".into(), DiscoveredComponent {
         component_type: "linux".into(),
@@ -229,11 +229,23 @@ struct ComponentDef {
     default_port: Option<i32>,
 }
 
-/// Returns the real outbound IP of this host (not 127.0.0.1, not a docker bridge).
-fn local_outbound_ip() -> String {
+/// Returns the local IP used to reach the Zentra API server.
+fn local_outbound_ip(api_endpoint: &str) -> String {
     use std::net::UdpSocket;
+    let host = api_endpoint
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("");
+    if host.is_empty() {
+        return "127.0.0.1".to_string();
+    }
     UdpSocket::bind("0.0.0.0:0")
-        .and_then(|s| { s.connect("8.8.8.8:80")?; s.local_addr() })
+        .and_then(|s| { s.connect(format!("{}:80", host))?; s.local_addr() })
         .map(|a| a.ip().to_string())
         .unwrap_or_else(|_| "127.0.0.1".to_string())
 }

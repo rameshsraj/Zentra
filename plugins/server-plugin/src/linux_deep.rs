@@ -27,37 +27,36 @@ impl LinuxDeepCollector {
     /// All commands are read-only — no writes, no installs.
     const COLLECTION_SCRIPT: &'static str = r#"
 #!/bin/bash
-set -e
+# No set -e — individual section failures must not abort the whole script
 
 # ── CPU cores ────────────────────────────────────────────────────────────────
 echo "===CPU_CORES==="
 awk '/^cpu[0-9]/ {
-    idle=$5; iowait=$6; steal=$9;
     total=$2+$3+$4+$5+$6+$7+$8+$9+$10;
-    user=$2; sys=$4; irq=$7; softirq=$8;
+    if (total == 0) next;
     printf "%s user=%.2f system=%.2f iowait=%.2f steal=%.2f irq=%.2f softirq=%.2f total=%d idle=%d\n",
       $1, ($2/total)*100, ($4/total)*100, ($6/total)*100, ($9/total)*100,
-      ($7/total)*100, ($8/total)*100, total, idle
-}' /proc/stat
+      ($7/total)*100, ($8/total)*100, total, $5
+}' /proc/stat 2>/dev/null || true
 
 # ── Top-20 processes by CPU ──────────────────────────────────────────────────
 echo "===PROCS_CPU==="
 ps aux --sort=-%cpu 2>/dev/null | awk 'NR>1 && NR<=21 {
     printf "pid=%s name=%s cpu=%.2f mem=%.2f rss=%s vsz=%s user=%s\n",
       $2, $11, $3, $4, $6, $5, $1
-}'
+}' || true
 
 # ── Top-20 processes by memory ───────────────────────────────────────────────
 echo "===PROCS_MEM==="
 ps aux --sort=-%mem 2>/dev/null | awk 'NR>1 && NR<=21 {
     printf "pid=%s name=%s cpu=%.2f mem=%.2f rss=%s vsz=%s user=%s\n",
       $2, $11, $3, $4, $6, $5, $1
-}'
+}' || true
 
 # ── TCP socket state histogram ───────────────────────────────────────────────
 echo "===TCP_STATES==="
-ss -ant 2>/dev/null | awk 'NR>1 {counts[$1]++} END {for(s in counts) print s, counts[s]}' \
-  || cat /proc/net/tcp 2>/dev/null | awk 'NR>1 {
+{ ss -ant 2>/dev/null | awk 'NR>1 {counts[$1]++} END {for(s in counts) print s, counts[s]}'; } || \
+  { cat /proc/net/tcp 2>/dev/null | awk 'NR>1 {
     state=$4;
     if(state=="01") s="ESTABLISHED";
     else if(state=="02") s="SYN_SENT";
@@ -72,18 +71,18 @@ ss -ant 2>/dev/null | awk 'NR>1 {counts[$1]++} END {for(s in counts) print s, co
     else if(state=="0B") s="CLOSING";
     else s="UNKNOWN";
     counts[s]++
-  } END {for(s in counts) print s, counts[s]}'
+  } END {for(s in counts) print s, counts[s]}'; } || true
 
 # ── Deep memory ──────────────────────────────────────────────────────────────
 echo "===MEMORY==="
-awk '{print $1, $2}' /proc/meminfo 2>/dev/null
+awk '{print $1, $2}' /proc/meminfo 2>/dev/null || true
 
 # ── Disk I/O (iostat-compatible from /proc/diskstats) ───────────────────────
 echo "===DISKSTATS==="
 awk '$3 !~ /^(loop|ram|fd)/ && $3 !~ /[0-9]$/ {
     printf "dev=%s reads=%s reads_merged=%s sectors_read=%s ms_read=%s writes=%s writes_merged=%s sectors_written=%s ms_write=%s ios_in_progress=%s ms_ios=%s ms_weighted=%s\n",
       $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14
-}' /proc/diskstats 2>/dev/null
+}' /proc/diskstats 2>/dev/null || true
 
 # ── Network interface deep stats ─────────────────────────────────────────────
 echo "===NET_IFACES==="
@@ -120,8 +119,21 @@ for key in \
     echo "$key=$val"
 done
 
+echo "===UPTIME==="
+cat /proc/uptime 2>/dev/null | awk '{print int($1)}' || echo 0
+
+echo "===LOADAVG==="
+cat /proc/loadavg 2>/dev/null | awk '{print $1, $2, $3}' || echo "0 0 0"
+
+echo "===PROCS==="
+ps aux 2>/dev/null | wc -l || echo 0
+
+echo "===DISK_USAGE==="
+df -B1 -x tmpfs -x devtmpfs -x squashfs 2>/dev/null | awk 'NR>1 && $6 !~ /^\/sys|^\/proc|^\/dev/ {print $1"|"$6"|"$2"|"$3"|"$4"|"$5}' || true
+
 echo "===END==="
 "#;
+
 
     pub async fn collect(target: &Target) -> Vec<Metric> {
         let mut metrics = Vec::new();
@@ -153,9 +165,15 @@ echo "===END==="
         };
 
         let output = match output {
-            Ok(o) if o.status.success() || !o.stdout.is_empty() => o,
+            Ok(o) if o.status.success() || !o.stdout.is_empty() => {
+                if !o.stderr.is_empty() {
+                    let stderr = String::from_utf8_lossy(&o.stderr);
+                    debug!(target = %target.name, stderr = %stderr, "collection script stderr (non-fatal)");
+                }
+                o
+            }
             Ok(o) => {
-                warn!(target = %target.name, err = %String::from_utf8_lossy(&o.stderr), "collection failed");
+                warn!(target = %target.name, err = %String::from_utf8_lossy(&o.stderr), "collection failed (no stdout)");
                 return metrics;
             }
             Err(e) => {
@@ -183,6 +201,39 @@ echo "===END==="
                 "===DISKSTATS===" => Self::parse_diskstat(line, target, &mut metrics),
                 "===NET_IFACES===" => Self::parse_net_iface(line, target, &mut metrics),
                 "===SYSCTL===" => Self::parse_sysctl(line, target, &mut metrics),
+                "===UPTIME===" => {
+                    if let Ok(v) = line.parse::<f64>() {
+                        metrics.push(srv("server.uptime_seconds", v, "system", target).with_unit("seconds"));
+                    }
+                }
+                "===LOADAVG===" => {
+                    let parts: Vec<f64> = line.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+                    if parts.len() >= 3 {
+                        metrics.push(srv("server.load.1m",  parts[0], "system", target));
+                        metrics.push(srv("server.load.5m",  parts[1], "system", target));
+                        metrics.push(srv("server.load.15m", parts[2], "system", target));
+                    }
+                }
+                "===PROCS===" => {
+                    if let Ok(v) = line.parse::<f64>() {
+                        metrics.push(srv("server.process_count", (v - 1.0).max(0.0), "system", target).with_unit("count"));
+                    }
+                }
+                "===DISK_USAGE===" => {
+                    let parts: Vec<&str> = line.split('|').collect();
+                    if parts.len() >= 6 {
+                        let mount = parts[1];
+                        let total_b: f64 = parts[2].parse().unwrap_or(0.0);
+                        let used_b:  f64 = parts[3].parse().unwrap_or(0.0);
+                        let pct_s = parts[5].trim_end_matches('%');
+                        let pct: f64 = pct_s.parse().unwrap_or(if total_b > 0.0 { used_b / total_b * 100.0 } else { 0.0 });
+                        let total_gb = total_b / 1_073_741_824.0;
+                        let used_gb  = used_b  / 1_073_741_824.0;
+                        metrics.push(srv("server.fs.total_gb",       total_gb, mount, target).with_tag("mount", mount).with_unit("gigabytes"));
+                        metrics.push(srv("server.fs.used_gb",        used_gb,  mount, target).with_tag("mount", mount).with_unit("gigabytes"));
+                        metrics.push(srv("server.fs.usage_percent",  pct,      mount, target).with_tag("mount", mount).with_unit("percent"));
+                    }
+                }
                 _ => {}
             }
         }

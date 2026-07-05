@@ -1199,19 +1199,23 @@ async fn agent_stats_from_metrics(
     pool: &sqlx::PgPool,
     target_id: Uuid,
 ) -> Result<Json<ServerStats>, ApiError> {
-    // Fetch the latest value for each metric for this target
+    // Fetch the latest value for each (metric_name, mount) for this target.
+    // server.fs.* metrics have mount in tags; all others use empty string as mount key.
     let rows = sqlx::query(
-        "SELECT metric_name, value
+        "SELECT DISTINCT ON (metric_name, tags->>'mount') metric_name, value, tags
          FROM metrics
          WHERE target_id = $1
-         ORDER BY timestamp DESC"
+         ORDER BY metric_name, tags->>'mount', timestamp DESC"
     )
     .bind(target_id)
     .fetch_all(pool)
     .await
     .unwrap_or_default();
 
+    // Scalar metrics keyed by name (first occurrence wins for non-fs metrics)
     let mut m: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    // Per-mount disk data: mount -> (total_gb, used_gb, pct)
+    let mut mounts: std::collections::BTreeMap<String, (f64, f64, f64)> = std::collections::BTreeMap::new();
     let mut hostname = String::new();
     let mut os = String::new();
     let mut kernel = String::new();
@@ -1219,8 +1223,23 @@ async fn agent_stats_from_metrics(
 
     for row in &rows {
         let name: String = row.get("metric_name");
-        let val: f64 = row.get("value");
-        m.entry(name).or_insert(val);
+        let val: f64    = row.get("value");
+        let tags: serde_json::Value = row.try_get("tags").unwrap_or(serde_json::Value::Null);
+        let mount = tags.get("mount").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+        if name.starts_with("server.fs.") {
+            if let Some(ref mp) = mount {
+                let entry = mounts.entry(mp.clone()).or_insert((0.0, 0.0, 0.0));
+                match name.as_str() {
+                    "server.fs.total_gb"      => entry.0 = val,
+                    "server.fs.used_gb"       => entry.1 = val,
+                    "server.fs.usage_percent" => entry.2 = val,
+                    _ => {}
+                }
+            }
+        } else {
+            m.entry(name).or_insert(val);
+        }
     }
 
     // Try fetching agent metadata from agent_fleet via discovered_components
@@ -1248,21 +1267,62 @@ async fn agent_stats_from_metrics(
         hostname = extra.get("hostname").and_then(|v| v.as_str()).unwrap_or("").to_string();
     }
 
-    let mem_total = *m.get("server.memory.total_mb").unwrap_or(&0.0) as u64;
-    let mem_used  = *m.get("server.memory.used_mb").unwrap_or(&0.0) as u64;
-    let mem_pct   = *m.get("server.memory.usage_percent").unwrap_or(&0.0);
-    let disk_total = *m.get("server.disk.total_gb").unwrap_or(&0.0);
-    let disk_used  = *m.get("server.disk.used_gb").unwrap_or(&0.0);
-    let disk_pct   = *m.get("server.disk.usage_percent").unwrap_or(&0.0);
-    let uptime     = *m.get("server.uptime_seconds").unwrap_or(&0.0) as u64;
-    let cpu_pct    = *m.get("server.cpu.usage_percent").unwrap_or(&0.0);
-    let cpu_cores  = *m.get("server.cpu.cores").unwrap_or(&0.0) as u32;
-    let load1      = *m.get("server.load.1m").unwrap_or(&0.0);
-    let load5      = *m.get("server.load.5m").unwrap_or(&0.0);
-    let load15     = *m.get("server.load.15m").unwrap_or(&0.0);
-    let swap_total = *m.get("server.swap.total_mb").unwrap_or(&0.0) as u64;
-    let swap_used  = *m.get("server.swap.used_mb").unwrap_or(&0.0) as u64;
-    let procs      = *m.get("server.process_count").unwrap_or(&0.0) as u32;
+    // Memory: stored as bytes → convert to MB
+    let mem_total_b = *m.get("server.mem.total_bytes").unwrap_or(&0.0);
+    let mem_avail_b = *m.get("server.mem.available_bytes").unwrap_or(&0.0);
+    let mem_free_b  = *m.get("server.mem.free_bytes").unwrap_or(&0.0);
+    let mem_total   = (mem_total_b / 1_048_576.0) as u64;
+    let mem_used    = if mem_total_b > 0.0 {
+        ((mem_total_b - mem_avail_b.max(mem_free_b)) / 1_048_576.0) as u64
+    } else { 0 };
+    let mem_pct = if mem_total > 0 {
+        (mem_used as f64 / mem_total as f64) * 100.0
+    } else { 0.0 };
+
+    // Swap: bytes → MB
+    let swap_total = (*m.get("server.mem.swap_total_bytes").unwrap_or(&0.0) / 1_048_576.0) as u64;
+    let swap_free  = (*m.get("server.mem.swap_free_bytes").unwrap_or(&0.0) / 1_048_576.0) as u64;
+    let swap_used  = swap_total.saturating_sub(swap_free);
+
+    // CPU: aggregate user+system across all cores, average
+    let core_names: Vec<String> = m.keys()
+        .filter(|k| k.starts_with("server.cpu.cpu") && k.ends_with(".user_percent"))
+        .cloned().collect();
+    let cpu_cores = core_names.len() as u32;
+    let cpu_pct = if cpu_cores > 0 {
+        let total_user: f64 = core_names.iter()
+            .map(|k| *m.get(k).unwrap_or(&0.0))
+            .sum::<f64>();
+        let sys_key = core_names[0].replace("user_percent", "system_percent");
+        let total_sys: f64 = (0..cpu_cores).map(|i| {
+            let k = format!("server.cpu.cpu{}.system_percent", i);
+            *m.get(&k).unwrap_or(&0.0)
+        }).sum();
+        let _ = sys_key;
+        ((total_user + total_sys) / cpu_cores as f64).min(100.0)
+    } else { 0.0 };
+
+    // Disk: aggregate across all mount points
+    let disk_total: f64 = mounts.values().map(|(t, _, _)| t).sum();
+    let disk_used:  f64 = mounts.values().map(|(_, u, _)| u).sum();
+    let disk_pct = if disk_total > 0.0 { (disk_used / disk_total) * 100.0 } else { 0.0 };
+
+    // Build per-partition list for the UI
+    let disks: Vec<DiskInfo> = mounts.iter().map(|(mp, (total, used, pct))| DiskInfo {
+        filesystem: mp.clone(),
+        mount: mp.clone(),
+        total_gb: (total * 100.0).round() / 100.0,
+        used_gb:  (used  * 100.0).round() / 100.0,
+        free_gb:  ((total - used) * 100.0).round() / 100.0,
+        usage_percent: (pct  * 10.0).round() / 10.0,
+        fs_type: String::new(),
+    }).collect();
+
+    let uptime  = *m.get("server.uptime_seconds").unwrap_or(&0.0) as u64;
+    let load1   = *m.get("server.load.1m").unwrap_or(&0.0);
+    let load5   = *m.get("server.load.5m").unwrap_or(&0.0);
+    let load15  = *m.get("server.load.15m").unwrap_or(&0.0);
+    let procs   = *m.get("server.process_count").unwrap_or(&0.0) as u32;
 
     let uptime_display = {
         let secs = uptime;
@@ -1303,7 +1363,7 @@ async fn agent_stats_from_metrics(
         logged_in_users: 0,
         reachable,
         error,
-        disks: vec![],
+        disks,
         nfs_mounts: vec![],
     }))
 }

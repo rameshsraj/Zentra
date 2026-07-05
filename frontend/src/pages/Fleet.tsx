@@ -1,14 +1,14 @@
 import { useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import {
-  listAgents, deregisterAgent, getComponentsByDc,
-  type Agent, type DiscoveredComponent,
+  listAgents, deregisterAgent, getComponentsByDc, confirmComponents, getAgentLogsByDc,
+  type Agent, type DiscoveredComponent, type AgentLogLine,
 } from '@/lib/api/fleet'
 import PageHeader from '@/components/PageHeader'
 import {
   Server, Trash2, Plus, Wifi, WifiOff, AlertTriangle,
-  ChevronDown, ChevronRight, CheckCircle2, XCircle,
+  ChevronDown, ChevronRight, CheckCircle2, ScrollText,
 } from 'lucide-react'
 
 const STATUS_STYLES: Record<string, { color: string; bg: string; label: string }> = {
@@ -41,10 +41,24 @@ const TYPE_LABELS: Record<string, string> = {
 }
 
 function DiscoveredComponentsPanel({ dcName }: { dcName: string }) {
+  const qc = useQueryClient()
   const { data, isLoading } = useQuery({
     queryKey: ['dc-components', dcName],
     queryFn: () => getComponentsByDc(dcName),
-    refetchInterval: 60_000,
+    refetchInterval: 30_000,
+  })
+
+  const [confirming, setConfirming] = useState<string | null>(null)
+
+  const confirmMutation = useMutation({
+    mutationFn: (componentId: string) =>
+      confirmComponents({ component_ids: [componentId], datacenter_name: dcName }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['dc-components', dcName] })
+      qc.invalidateQueries({ queryKey: ['targets'] })
+      setConfirming(null)
+    },
+    onSettled: () => setConfirming(null),
   })
 
   const components: DiscoveredComponent[] = data?.components ?? []
@@ -88,9 +102,13 @@ function DiscoveredComponentsPanel({ dcName }: { dcName: string }) {
                       <CheckCircle2 className="h-3.5 w-3.5" /> Monitoring
                     </span>
                   ) : (
-                    <span className="inline-flex items-center gap-1 text-yellow-400">
-                      <XCircle className="h-3.5 w-3.5" /> Pending
-                    </span>
+                    <button
+                      onClick={() => { setConfirming(c.id); confirmMutation.mutate(c.id) }}
+                      disabled={confirming === c.id}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 disabled:opacity-50 transition-colors"
+                    >
+                      {confirming === c.id ? 'Adding…' : '+ Monitor'}
+                    </button>
                   )}
                 </td>
               </tr>
@@ -98,6 +116,77 @@ function DiscoveredComponentsPanel({ dcName }: { dcName: string }) {
           </tbody>
         </table>
       </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Agent logs panel — shows tailed log lines shipped from the agent host
+// ─────────────────────────────────────────────────────────────────────────────
+const SEV_STYLES: Record<string, string> = {
+  ERROR: 'bg-red-500/20 text-red-400 border border-red-500/30',
+  WARN:  'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
+  WARNING: 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
+  INFO:  'bg-blue-500/20 text-blue-400 border border-blue-500/30',
+  DEBUG: 'bg-zinc-500/20 text-zinc-400 border border-zinc-500/30',
+}
+
+function AgentLogsPanel({ dcName }: { dcName: string }) {
+  const [filter, setFilter] = useState<string>('ALL')
+  const { data, isLoading } = useQuery({
+    queryKey: ['agent-logs', dcName],
+    queryFn: () => getAgentLogsByDc(dcName),
+    refetchInterval: 15_000,
+  })
+
+  const lines: AgentLogLine[] = data?.lines ?? []
+  const filtered = filter === 'ALL' ? lines : lines.filter(l => l.level.toUpperCase() === filter)
+
+  return (
+    <div className="px-4 py-4 space-y-3">
+      {/* Filter bar */}
+      <div className="flex items-center gap-2">
+        {['ALL', 'ERROR', 'WARN', 'INFO', 'DEBUG'].map(f => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            className={`px-2.5 py-0.5 rounded text-xs font-medium transition-colors ${
+              filter === f
+                ? 'bg-blue-600 text-white'
+                : 'bg-muted/40 text-muted-foreground hover:bg-muted/70'
+            }`}
+          >
+            {f}
+          </button>
+        ))}
+        <span className="ml-auto text-xs text-muted-foreground">{filtered.length} lines</span>
+      </div>
+
+      {isLoading ? (
+        <p className="text-xs text-muted-foreground animate-pulse">Loading logs…</p>
+      ) : filtered.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No log lines received yet. Agent ships logs from confirmed log directories.</p>
+      ) : (
+        <div className="rounded-lg border border-border bg-zinc-950 overflow-hidden">
+          <div className="max-h-72 overflow-y-auto font-mono text-xs divide-y divide-border/30">
+            {filtered.slice(-200).reverse().map((line, i) => {
+              const sev = (line.level ?? 'INFO').toUpperCase()
+              const sevStyle = SEV_STYLES[sev] ?? SEV_STYLES.INFO
+              const ts = line.timestamp ? new Date(line.timestamp).toLocaleTimeString() : ''
+              return (
+                <div key={i} className="flex items-start gap-2 px-3 py-1.5 hover:bg-white/5">
+                  <span className="shrink-0 text-zinc-600 w-20">{ts}</span>
+                  <span className={`shrink-0 inline-block px-1.5 py-0 rounded text-[10px] font-bold leading-5 ${sevStyle}`}>{sev}</span>
+                  {line.target && (
+                    <span className="shrink-0 text-purple-400 max-w-[120px] truncate">{line.target}</span>
+                  )}
+                  <span className="text-zinc-300 break-all">{line.message}</span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -252,6 +341,13 @@ export default function FleetPage() {
                               Discovered Components
                             </div>
                             <DiscoveredComponentsPanel dcName={a.datacenter_name} />
+                          </div>
+                          <div className="border-t border-dashed border-border/50">
+                            <div className="flex items-center gap-2 px-6 pt-3 pb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                              <ScrollText className="h-3.5 w-3.5" />
+                              Agent Logs
+                            </div>
+                            <AgentLogsPanel dcName={a.datacenter_name} />
                           </div>
                         </td>
                       </tr>
