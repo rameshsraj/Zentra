@@ -1,3 +1,4 @@
+use tracing::warn;
 use zentra_core::models::metric::Metric;
 use zentra_core::models::target::Target;
 
