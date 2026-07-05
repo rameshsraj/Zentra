@@ -1,0 +1,43 @@
+[Unit]
+Description=Zentra Collector — On-premises network/SNMP/agentless collector
+Documentation=https://docs.zentra.io/collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zentra
+Group=zentra
+WorkingDirectory=/var/lib/zentra-collector
+
+# ── Required settings — edit before starting ──────────────────────────────────
+Environment="ZENTRA_API_ENDPOINT=https://your-zentra-server:5006"
+Environment="ZENTRA_COLLECTOR_KEY=isok_REPLACE_WITH_YOUR_KEY"
+Environment="ZENTRA_DC_NAME=dc-primary"
+
+# ── Optional: set after first run to preserve identity across restarts ─────────
+# Get this value from: journalctl -u zentra-collector | grep "collector_id"
+#Environment="ZENTRA_COLLECTOR_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# ── Optional ──────────────────────────────────────────────────────────────────
+Environment="RUST_LOG=info"
+
+ExecStart=/usr/local/bin/zentra-collector
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=zentra-collector
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/zentra-collector
+
+[Install]
+WantedBy=multi-user.target

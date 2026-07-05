@@ -47,6 +47,10 @@ pub struct AgentHeartbeatRequest {
     pub dc_name: String,
     #[serde(default)]
     pub recent_logs: Vec<AgentLogLine>,
+    /// Agent-reported IP — preferred over remote_addr which is 127.0.0.1 behind nginx
+    pub ip_address: Option<String>,
+    /// Agent-reported hostname
+    pub hostname: Option<String>,
 }
 
 /// In-memory ring buffer of recent agent logs, keyed by (org_id, datacenter_name).
@@ -224,6 +228,26 @@ pub async fn heartbeat(
         .map_err(ApiError::Unauthorized)?;
     let key_hash = hash_api_key(&raw_key);
 
+    // Use X-Real-IP (set by nginx to the real client IP) as the authoritative source.
+    // The agent-reported IP is unreliable: UDP routing picks whichever interface the
+    // OS happens to route through, which may be an internal/bridge IP (e.g. 172.16.x.x).
+    // X-Real-IP reflects the actual TCP connection source as seen by the reverse proxy.
+    let effective_ip = headers
+        .get("X-Real-IP")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.is_empty() && *s != "127.0.0.1")
+        .map(|s| s.to_string())
+        .or_else(|| {
+            // Fallback: first IP in X-Forwarded-For
+            headers
+                .get("X-Forwarded-For")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.split(',').next())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty() && s != "127.0.0.1")
+        })
+        .unwrap_or_else(|| remote_addr.ip().to_string());
+
     sqlx::query(
         "INSERT INTO agent_fleet
          (org_id, otlp_api_key_id, api_key_hash, datacenter_name, agent_version, active_target_count, last_seen, ip_address, os_name, status, created_at, updated_at)
@@ -243,11 +267,55 @@ pub async fn heartbeat(
     .bind(body.dc_name.trim())
     .bind(body.agent_version.trim())
     .bind(body.active_targets)
-    .bind(remote_addr.ip().to_string())
+    .bind(&effective_ip)
     .bind(body.os_name.trim())
     .execute(&state.tsdb_pool)
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    // Update discovered_components address for linux/host components of this agent
+    // so that when confirmed, the target gets the real IP not 127.0.0.1
+    if effective_ip != "127.0.0.1" {
+        let agent_row: Option<Uuid> = sqlx::query_scalar(
+            "SELECT agent_id FROM agent_fleet WHERE api_key_hash = $1 LIMIT 1"
+        )
+        .bind(&key_hash)
+        .fetch_optional(&state.tsdb_pool)
+        .await
+        .unwrap_or(None);
+
+        if let Some(aid) = agent_row {
+            let _ = sqlx::query(
+                "UPDATE discovered_components
+                 SET address = $1
+                 WHERE agent_id = $2 AND component_type = 'linux'"
+            )
+            .bind(&effective_ip)
+            .bind(aid)
+            .execute(&state.tsdb_pool)
+            .await;
+
+            // Also fix any already-created targets for this agent
+            let _ = sqlx::query(
+                "UPDATE targets SET host = $1
+                 WHERE agent_id = $2 AND host = '127.0.0.1'"
+            )
+            .bind(&effective_ip)
+            .bind(aid)
+            .execute(&state.tsdb_pool)
+            .await;
+        }
+    }
+
+    // Look up the agent_id for this key so we can return it in the response.
+    // The agent uses this to self-discover its UUID on first heartbeat.
+    let agent_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT agent_id FROM agent_fleet WHERE api_key_hash = $1 LIMIT 1",
+    )
+    .bind(&key_hash)
+    .fetch_optional(&state.tsdb_pool)
+    .await
+    .unwrap_or(None);
 
     // Stash recent logs (if any) so the install wizard can tail them live,
     // and also persist them in the Log Explorer store keyed by service/dc.
@@ -269,6 +337,7 @@ pub async fn heartbeat(
 
     Ok(Json(json!({
         "server_timestamp_utc": Utc::now(),
+        "agent_id": agent_id,
     })))
 }
 
@@ -388,10 +457,13 @@ pub async fn deregister_agent(
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
+    // Hard delete: remove the agent, its discovered components, its targets,
+    // and any metrics tied to those targets so the datacenter truly disappears.
     sqlx::query(
-        "UPDATE agent_fleet
-         SET status = 'deregistered', updated_at = NOW()
-         WHERE agent_id = $1 AND org_id = $2",
+        "DELETE FROM metrics
+         WHERE target_id IN (
+             SELECT target_id FROM targets WHERE agent_id = $1 AND org_id = $2
+         )"
     )
     .bind(agent_id)
     .bind(ctx.org_id)
@@ -400,9 +472,37 @@ pub async fn deregister_agent(
     .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     sqlx::query(
-        "UPDATE otlp_api_keys
-         SET enabled = false, updated_at = NOW()
-         WHERE id = $1 AND org_id = $2",
+        "DELETE FROM targets
+         WHERE agent_id = $1 AND org_id = $2"
+    )
+    .bind(agent_id)
+    .bind(ctx.org_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    sqlx::query(
+        "DELETE FROM discovered_components
+         WHERE agent_id = $1"
+    )
+    .bind(agent_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    sqlx::query(
+        "DELETE FROM agent_fleet
+         WHERE agent_id = $1 AND org_id = $2"
+    )
+    .bind(agent_id)
+    .bind(ctx.org_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    sqlx::query(
+        "DELETE FROM otlp_api_keys
+         WHERE id = $1 AND org_id = $2"
     )
     .bind(otlp_api_key_id)
     .bind(ctx.org_id)
@@ -417,7 +517,7 @@ pub async fn deregister_agent(
     state.otlp_key_cache.remove(&api_key_hash);
 
     Ok(Json(json!({
-        "deregistered": true,
+        "deleted": true,
         "agent_id": agent_id,
     })))
 }
@@ -705,4 +805,451 @@ pub async fn update_discovered_host(
     }
 
     Ok(Json(json!({ "updated": true, "id": host_id })))
+}
+
+// ============================================================================
+// Agent binary download — GET /dl/:filename
+// Serves pre-built agent binaries from ZENTRA_DL_DIR (default: /store/Zentra/bin/dl).
+// Nginx proxies /dl/ to this handler so the SPA fallback is never served.
+// ============================================================================
+
+pub async fn download_agent(
+    Path(filename): Path<String>,
+) -> impl axum::response::IntoResponse {
+    use axum::http::{header, StatusCode};
+    use axum::response::Response;
+    use axum::body::Body;
+
+    // Reject path traversal attempts
+    if filename.contains('/') || filename.contains("..") || filename.starts_with('.') {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::from("Invalid filename"))
+            .unwrap();
+    }
+
+    // Only allow known agent binary names
+    let allowed = [
+        "zentra-agent-linux-x86_64",
+        "zentra-agent-linux-aarch64",
+        "zentra-agent-windows-x86_64.exe",
+        "zentra-collector-linux-x86_64",
+        "zentra-collector-linux-aarch64",
+    ];
+    if !allowed.contains(&filename.as_str()) {
+        return Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("Agent binary not found"))
+            .unwrap();
+    }
+
+    let dl_dir = std::env::var("ZENTRA_DL_DIR")
+        .unwrap_or_else(|_| "/store/Zentra/bin/dl".to_string());
+    let path = std::path::Path::new(&dl_dir).join(&filename);
+
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => {
+            let content_type = if filename.ends_with(".exe") {
+                "application/vnd.microsoft.portable-executable"
+            } else {
+                "application/octet-stream"
+            };
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, content_type)
+                .header(
+                    header::CONTENT_DISPOSITION,
+                    format!("attachment; filename=\"{}\"", filename),
+                )
+                .header(header::CONTENT_LENGTH, bytes.len().to_string())
+                .header("cache-control", "no-store")
+                .body(Body::from(bytes))
+                .unwrap()
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            tracing::warn!(file = %path.display(), "Agent binary not found on disk");
+            Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Body::from(format!(
+                    "Agent binary '{}' is not available on this server yet. \
+                     Place it at {} and try again.",
+                    filename,
+                    path.display()
+                )))
+                .unwrap()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to read agent binary");
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(Body::from("Failed to read binary"))
+                .unwrap()
+        }
+    }
+}
+
+// ============================================================================
+// Local Component Discovery (Feature 7 — agent self-inspection)
+// Agent reports which services are running on its own host; user confirms
+// selection → targets are auto-created with the agent_id set so no SSH needed.
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct ReportComponentEntry {
+    pub component_type: String,  // "linux","postgres","mysql","redis","nginx","apache","mongodb","oracle"
+    pub component_name: String,
+    pub address: String,
+    pub port: Option<i32>,
+    pub version: Option<String>,
+    #[serde(default)]
+    pub extra: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReportComponentsRequest {
+    pub components: Vec<ReportComponentEntry>,
+}
+
+/// POST /api/agents/by-dc/:dc_name/components — called by the agent to report
+/// locally-detected services. Uses Bearer auth (same as heartbeat).
+pub async fn report_components(
+    State(state): State<AppState>,
+    Path(dc_name): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<ReportComponentsRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let raw_key = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .map(|s| s.to_string())
+        .ok_or_else(|| ApiError::Unauthorized("Missing Authorization header".into()))?;
+
+    let (org_id, _) = validate_otlp_key(&state, &raw_key)
+        .await
+        .map_err(ApiError::Unauthorized)?;
+
+    // Resolve the agent_id for this dc_name + org
+    let agent_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT agent_id FROM agent_fleet WHERE org_id = $1 AND datacenter_name = $2 AND status = 'active' LIMIT 1"
+    )
+    .bind(org_id)
+    .bind(dc_name.trim())
+    .fetch_optional(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let agent_id = agent_id.ok_or_else(|| ApiError::NotFound("No active agent for this datacenter".into()))?;
+
+    let mut upserted = 0usize;
+    for comp in &body.components {
+        let extra = if comp.extra.is_null() { serde_json::Value::Object(Default::default()) } else { comp.extra.clone() };
+        sqlx::query(
+            "INSERT INTO discovered_components
+             (agent_id, org_id, component_type, component_name, address, port, version, extra, first_seen, last_seen)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+             ON CONFLICT (agent_id, component_type, COALESCE(port, -1)) DO UPDATE
+             SET component_name = EXCLUDED.component_name,
+                 version        = COALESCE(EXCLUDED.version, discovered_components.version),
+                 extra          = EXCLUDED.extra,
+                 last_seen      = NOW()"
+        )
+        .bind(agent_id)
+        .bind(org_id)
+        .bind(&comp.component_type)
+        .bind(&comp.component_name)
+        .bind(&comp.address)
+        .bind(comp.port)
+        .bind(comp.version.as_deref())
+        .bind(&extra)
+        .execute(&state.tsdb_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+        upserted += 1;
+    }
+
+    Ok(Json(json!({ "upserted": upserted, "agent_id": agent_id })))
+}
+
+/// GET /api/agents/by-dc/:dc_name/components — user-facing; lists discovered
+/// components for the given datacenter. Used by the Install Wizard Step 4.
+pub async fn list_components(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<AuthContext>,
+    Path(dc_name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    require_agent_admin(&ctx)?;
+
+    let rows = sqlx::query(
+        "SELECT dc.id, dc.component_type, dc.component_name, dc.address, dc.port,
+                dc.version, dc.extra, dc.confirmed, dc.ignored, dc.target_id,
+                dc.first_seen, dc.last_seen,
+                af.agent_id, af.status AS agent_status
+         FROM discovered_components dc
+         JOIN agent_fleet af ON af.agent_id = dc.agent_id
+         WHERE af.org_id = $1 AND af.datacenter_name = $2 AND dc.ignored = FALSE
+         ORDER BY dc.confirmed ASC, dc.last_seen DESC"
+    )
+    .bind(ctx.org_id)
+    .bind(dc_name.trim())
+    .fetch_all(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let components: Vec<Value> = rows.iter().map(|r| {
+        json!({
+            "id":             r.get::<Uuid, _>("id"),
+            "component_type": r.get::<String, _>("component_type"),
+            "component_name": r.get::<String, _>("component_name"),
+            "address":        r.get::<String, _>("address"),
+            "port":           r.get::<Option<i32>, _>("port"),
+            "version":        r.get::<Option<String>, _>("version"),
+            "extra":          r.get::<serde_json::Value, _>("extra"),
+            "confirmed":      r.get::<bool, _>("confirmed"),
+            "target_id":      r.get::<Option<Uuid>, _>("target_id"),
+            "first_seen":     r.get::<DateTime<Utc>, _>("first_seen"),
+            "last_seen":      r.get::<DateTime<Utc>, _>("last_seen"),
+            "agent_id":       r.get::<Uuid, _>("agent_id"),
+            "agent_status":   r.get::<String, _>("agent_status"),
+        })
+    }).collect();
+
+    Ok(Json(json!({
+        "components": components,
+        "datacenter": dc_name.trim(),
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConfirmComponentsRequest {
+    /// IDs of discovered_components rows the user selected
+    pub component_ids: Vec<Uuid>,
+    /// The datacenter name (used to set agent_id on created targets)
+    pub datacenter_name: String,
+}
+
+/// POST /api/agents/components/confirm — user selects components to monitor;
+/// we auto-create targets for each one and mark them confirmed.
+pub async fn confirm_components(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<AuthContext>,
+    Json(body): Json<ConfirmComponentsRequest>,
+) -> Result<Json<Value>, ApiError> {
+    require_agent_admin(&ctx)?;
+
+    if body.component_ids.is_empty() {
+        return Err(ApiError::BadRequest("component_ids must not be empty".into()));
+    }
+
+    // Fetch the agent_id for this datacenter
+    let agent_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT agent_id FROM agent_fleet WHERE org_id = $1 AND datacenter_name = $2 AND status = 'active' LIMIT 1"
+    )
+    .bind(ctx.org_id)
+    .bind(body.datacenter_name.trim())
+    .fetch_optional(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let agent_id = agent_id.ok_or_else(|| ApiError::NotFound("No active agent for this datacenter".into()))?;
+
+    // Fetch the selected components that belong to this org and aren't already confirmed
+    let rows = sqlx::query(
+        "SELECT dc.id, dc.component_type, dc.component_name, dc.address, dc.port, dc.version
+         FROM discovered_components dc
+         JOIN agent_fleet af ON af.agent_id = dc.agent_id
+         WHERE dc.id = ANY($1) AND af.org_id = $2"
+    )
+    .bind(&body.component_ids)
+    .bind(ctx.org_id)
+    .fetch_all(&state.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let mut created_targets: Vec<Value> = Vec::new();
+
+    for row in &rows {
+        let comp_id: Uuid = row.get("id");
+        let comp_type: String = row.get("component_type");
+        let comp_name: String = row.get("component_name");
+        let address: String = row.get("address");
+        let port: Option<i32> = row.get("port");
+        let version: Option<String> = row.get("version");
+
+        // network_interface and log_directory are metadata only — no target row needed.
+        if comp_type == "network_interface" || comp_type == "log_directory" {
+            sqlx::query("UPDATE discovered_components SET confirmed = TRUE WHERE id = $1")
+                .bind(comp_id)
+                .execute(&state.tsdb_pool)
+                .await
+                .map_err(|e| ApiError::Internal(e.to_string()))?;
+            created_targets.push(json!({
+                "component_id": comp_id,
+                "name":         comp_name,
+                "type":         comp_type,
+                "acknowledged": true,
+            }));
+            continue;
+        }
+
+        // Map component_type → (target_subtype, default_port)
+        let (subtype, fallback_port): (&str, i32) = match comp_type.as_str() {
+            "linux" | "server"                          => ("linux",         22),
+            "windows"                                   => ("windows",       3389),
+            "oracle"                                    => ("oracle",        1521),
+            "redis"                                     => ("redis",         6379),
+            "nginx" | "apache" | "haproxy"              => ("linux",         80),
+            "tomcat"                                    => ("linux",         8080),
+            "phpfpm"                                    => ("linux",         9000),
+            "elasticsearch"                             => ("linux",        9200),
+            "kafka"                                     => ("linux",         9092),
+            "rabbitmq"                                  => ("linux",         5672),
+            "memcached"                                 => ("linux",        11211),
+            _                                           => ("linux",         22),
+        };
+        let effective_port = port.unwrap_or(fallback_port);
+
+        let display_name = if let Some(v) = &version {
+            format!("{} ({})", comp_name, v)
+        } else {
+            comp_name.clone()
+        };
+
+        let now = Utc::now();
+
+        // Check if a target already exists for this agent + host + subtype.
+        // Handles idempotent re-confirms (already-confirmed components).
+        let existing_target_id: Option<Uuid> = sqlx::query_scalar(
+            "SELECT target_id FROM targets
+             WHERE org_id = $1 AND agent_id = $2 AND host = $3 AND target_subtype = $4
+             LIMIT 1"
+        )
+        .bind(ctx.org_id)
+        .bind(agent_id)
+        .bind(&address)
+        .bind(subtype)
+        .fetch_optional(&state.tsdb_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+        let target_id = if let Some(existing) = existing_target_id {
+            // Target already exists — just re-confirm the component
+            existing
+        } else {
+            // Create new target row with agent_id set.
+            // agent_id != NULL means the server NEVER tries SSH — metrics come via OTLP.
+            let new_id = Uuid::now_v7();
+            sqlx::query(
+                "INSERT INTO targets
+                 (target_id, org_id, name, target_type, target_subtype, host, port,
+                  agent_id, status, consecutive_failures, created_at, updated_at)
+                 VALUES ($1, $2, $3, 'server', $4, $5, $6, $7, 'active', 0, $8, $8)
+                 ON CONFLICT (target_id) DO NOTHING"
+            )
+            .bind(new_id)
+            .bind(ctx.org_id)
+            .bind(&display_name)
+            .bind(subtype)
+            .bind(&address)
+            .bind(effective_port)
+            .bind(agent_id)
+            .bind(now)
+            .execute(&state.tsdb_pool)
+            .await
+            .map_err(|e| ApiError::Internal(e.to_string()))?;
+            new_id
+        };
+
+        sqlx::query(
+            "UPDATE discovered_components SET confirmed = TRUE, target_id = $2 WHERE id = $1"
+        )
+        .bind(comp_id)
+        .bind(target_id)
+        .execute(&state.tsdb_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+        created_targets.push(json!({
+            "target_id":    target_id,
+            "name":         display_name,
+            "host":         address,
+            "subtype":      subtype,
+            "component_id": comp_id,
+        }));
+    }
+
+    Ok(Json(json!({
+        "created": created_targets.len(),
+        "targets": created_targets,
+    })))
+}
+
+/// GET /api/agents/log-dirs
+/// Agent calls this to discover which log directories it should tail.
+/// Returns confirmed log_directory components for the agent identified by its API key.
+/// Auth: Bearer <agent api key> (isok_ prefix)
+pub async fn agent_log_dirs(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    // Authenticate via agent API key
+    let key_raw = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or_else(|| ApiError::Unauthorized("Missing Bearer token".into()))?;
+
+    let (org_id, _perms) = validate_otlp_key(&state, key_raw)
+        .await
+        .map_err(|_| ApiError::Unauthorized("Invalid agent API key".into()))?;
+
+    // The agent may pass its own agent_id as a query param for precise filtering.
+    // If not provided, return all confirmed log dirs for the org.
+    let agent_id_param: Option<Uuid> = headers
+        .get("x-zentra-agent-id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse().ok());
+
+    let rows = if let Some(aid) = agent_id_param {
+        sqlx::query(
+            "SELECT id, component_name, extra
+             FROM discovered_components
+             WHERE agent_id = $1 AND org_id = $2
+               AND component_type = 'log_directory'
+               AND confirmed = TRUE AND ignored = FALSE
+             ORDER BY first_seen ASC"
+        )
+        .bind(aid)
+        .bind(org_id)
+        .fetch_all(&state.tsdb_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+    } else {
+        sqlx::query(
+            "SELECT id, component_name, extra
+             FROM discovered_components
+             WHERE org_id = $1
+               AND component_type = 'log_directory'
+               AND confirmed = TRUE AND ignored = FALSE
+             ORDER BY first_seen ASC"
+        )
+        .bind(org_id)
+        .fetch_all(&state.tsdb_pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?
+    };
+
+    let dirs: Vec<Value> = rows.iter().map(|r| {
+        let id: Uuid = r.get("id");
+        let name: String = r.get("component_name");
+        let extra: Value = r.get("extra");
+        let path = extra.get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        json!({ "id": id, "name": name, "path": path })
+    }).collect();
+
+    Ok(Json(json!({ "log_dirs": dirs })))
 }

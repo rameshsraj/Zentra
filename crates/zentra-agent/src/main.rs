@@ -2,10 +2,11 @@ use zentra_agent::leader_election;
 use zentra_agent::orchestrator::Orchestrator;
 use zentra_agent::plugin_manager::create_plugin_for_target;
 use zentra_agent::remote_delivery::RemoteDeliveryService;
-use zentra_agent::heartbeat::HeartbeatLoop;
+use zentra_agent::heartbeat::{HeartbeatLoop, new_agent_id_cell};
 use zentra_agent::remote_targets::RemoteTargetFetcher;
-use zentra_agent::network_scan::NetworkScanner;
 use zentra_agent::log_capture::{CaptureLayer, LogBuffer};
+use zentra_agent::component_discovery::ComponentDiscovery;
+use zentra_agent::log_shipper::LogShipper;
 use zentra_core::models::metric::MetricBatch;
 use zentra_core::models::log_entry::LogBatch;
 use zentra_db::pool::create_pool;
@@ -88,7 +89,14 @@ async fn run_local_mode(config: zentra_core::AppConfig) {
     .await
     .expect("Failed to load targets");
 
-    info!(count = initial_targets.len(), "Loaded active targets");
+    // Skip agent-managed targets — they are collected by the remote zentra-agent,
+    // not by the server-side local mode. Collecting them here reads /proc on
+    // this machine (smarsh-nexus) instead of the remote agent's machine.
+    let initial_targets: Vec<_> = initial_targets.into_iter()
+        .filter(|t| t.agent_id.is_none())
+        .collect();
+
+    info!(count = initial_targets.len(), "Loaded active targets (agent-managed excluded)");
 
     {
         let mut ids = active_ids.lock().await;
@@ -136,7 +144,7 @@ async fn run_local_mode(config: zentra_core::AppConfig) {
             let targets = match zentra_db::repositories::targets::list_targets(
                 &reload_pool, reload_org_id, None, true,
             ).await {
-                Ok(t) => t,
+                Ok(t) => t.into_iter().filter(|t| t.agent_id.is_none()).collect::<Vec<_>>(),
                 Err(e) => { tracing::warn!(error = %e, "Target reload failed"); continue; }
             };
             let mut ids = reload_active.lock().await;
@@ -207,8 +215,16 @@ async fn run_remote_mode(config: zentra_core::AppConfig, log_buffer: LogBuffer) 
     let event_bus = EventBus::new();
     let active_targets = Arc::new(AtomicUsize::new(0));
 
+    // Shared cell — populated by HeartbeatLoop on first successful response.
+    // Seed it from env var if already known (e.g. systemd service after first run).
+    let agent_id_cell = new_agent_id_cell();
+    if let Some(id) = config.agent_id {
+        let _ = agent_id_cell.set(id);
+        info!(agent_id = %id, "Agent ID pre-loaded from ZENTRA_AGENT_ID env var");
+    }
+
     let (metric_tx, metric_rx) = mpsc::channel::<MetricBatch>(1024);
-    let (_log_tx, log_rx) = mpsc::channel::<LogBatch>(1024);
+    let (log_tx, log_rx) = mpsc::channel::<LogBatch>(1024);
 
     // Remote delivery service — replaces IngestionService
     let delivery_metrics = RemoteDeliveryService::new(
@@ -231,7 +247,7 @@ async fn run_remote_mode(config: zentra_core::AppConfig, log_buffer: LogBuffer) 
         delivery_logs.run_log_delivery(log_rx).await;
     }.instrument(tracing::info_span!("remote.log_delivery")));
 
-    // Heartbeat loop (30s)
+    // Heartbeat loop (30s) — fires immediately on startup to get agent_id fast
     let heartbeat = HeartbeatLoop::new(
         config.api_endpoint.clone(),
         config.agent_api_key.clone(),
@@ -239,6 +255,7 @@ async fn run_remote_mode(config: zentra_core::AppConfig, log_buffer: LogBuffer) 
         active_targets.clone(),
         cancel.clone(),
         log_buffer.clone(),
+        agent_id_cell.clone(),
     );
     tokio::spawn(async move {
         heartbeat.run().await;
@@ -258,21 +275,36 @@ async fn run_remote_mode(config: zentra_core::AppConfig, log_buffer: LogBuffer) 
         fetcher.run().await;
     }.instrument(tracing::info_span!("agent.target_fetcher")));
 
-    // Network scanner — discovers hosts in local subnets, reports to server (10min interval)
-    if let Some(agent_id) = config.agent_id {
-        let scanner = NetworkScanner::new(
+    // NOTE: NetworkScanner is intentionally disabled in agent (remote) mode.
+    // Agent mode is host-local only — it inventories only the machine it runs on.
+    // Network/subnet discovery is exclusively a Hybrid/Agentless mode feature (run_local_mode).
+
+    // Log shipper — tails confirmed log directories and ships via OTLP
+    {
+        let shipper = LogShipper::new(
             config.api_endpoint.clone(),
             config.agent_api_key.clone(),
-            agent_id,
+            config.buffer_dir.clone(),
+            log_tx,
             cancel.clone(),
+            config.agent_id,
         );
         tokio::spawn(async move {
-            scanner.run().await;
-        }.instrument(tracing::info_span!("agent.network_scanner", agent.id = %agent_id)));
-        info!(agent_id = %agent_id, "Network scanner spawned");
-    } else {
-        tracing::warn!("ZENTRA_AGENT_ID not set — network host discovery disabled");
+            shipper.run().await;
+        }.instrument(tracing::info_span!("agent.log_shipper")));
     }
+
+    // Component discovery — waits for agent_id then detects and reports local services
+    let comp_disc = ComponentDiscovery::new(
+        config.api_endpoint.clone(),
+        config.agent_api_key.clone(),
+        config.dc_name.clone(),
+        cancel.clone(),
+        agent_id_cell.clone(),
+    );
+    tokio::spawn(async move {
+        comp_disc.run().await;
+    }.instrument(tracing::info_span!("agent.component_discovery")));
 
     // Wait for shutdown
     tokio::signal::ctrl_c().await.ok();

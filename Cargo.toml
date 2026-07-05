@@ -9,6 +9,7 @@ members = [
     "crates/zentra-log-engine",
     "crates/zentra-api",
     "crates/zentra-agent",
+    "crates/zentra-collector",
     "crates/zentra-predict",
     "crates/zentra-scrape",
     "plugins/network-plugin",

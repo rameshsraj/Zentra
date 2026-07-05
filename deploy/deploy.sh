@@ -103,11 +103,13 @@ build_backend_remote() {
   # Clean macOS resource fork files that break cargo
   ${SSH} "find ${DEPLOY_PATH}/crates ${DEPLOY_PATH}/plugins -name '._*' -delete 2>/dev/null || true"
 
-  # Build on server, then stop service → replace binary → (restart happens in step 4)
+  # Build server + agent on the server, then stop service → replace binaries → (restart in step 4)
   ${SSH} "
     cd ${DEPLOY_PATH}
     source .env 2>/dev/null || true
     export SQLX_OFFLINE=true
+
+    # Build API server
     cargo build --release --bin zentra-server 2>&1 | tail -5
     # Stop service so binary isn't locked ('Text file busy')
     systemctl stop zentra-api 2>/dev/null || pkill -f zentra-server 2>/dev/null || true
@@ -116,6 +118,19 @@ build_backend_remote() {
     cp target/release/zentra-server bin/zentra-server
     chmod +x bin/zentra-server
     echo '  Backend build complete — binary at bin/zentra-server'
+
+    # Build agent binary and publish to download directory
+    cargo build --release --bin zentra-agent 2>&1 | tail -3
+    mkdir -p bin/dl
+    cp target/release/zentra-agent bin/dl/zentra-agent-linux-x86_64
+    chmod +x bin/dl/zentra-agent-linux-x86_64
+    echo '  Agent build complete — binary at bin/dl/zentra-agent-linux-x86_64'
+
+    # Build collector binary and publish to download directory
+    cargo build --release --bin zentra-collector 2>&1 | tail -3
+    cp target/release/zentra-collector bin/dl/zentra-collector-linux-x86_64
+    chmod +x bin/dl/zentra-collector-linux-x86_64
+    echo '  Collector build complete — binary at bin/dl/zentra-collector-linux-x86_64'
   "
 
   echo ">>> [2/4] Backend build complete."
@@ -155,15 +170,25 @@ restart_and_verify() {
     ls -t ${DEPLOY_PATH}/backups/zentra_pre_deploy_*.dump 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null || true
   "
 
-  # Run migrations
+  # Run any pending migrations directly via psql (no sqlx CLI required)
   ${SSH} "
-    cd ${DEPLOY_PATH}
-    source .env 2>/dev/null || true
-    if command -v sqlx >/dev/null 2>&1; then
-      sqlx migrate run --database-url \"\${DATABASE_URL}\" --source ./migrations 2>&1 || echo '  WARNING: Migration runner returned non-zero (tables may already exist)'
-    else
-      echo '  INFO: sqlx CLI not installed — migrations run by the app on startup'
-    fi
+    source ${DEPLOY_PATH}/.env 2>/dev/null || true
+    PG_CONN=\"-h localhost -p \${POSTGRES_PORT:-5434} -U postgres -d zentra\"
+    MIGDIR=\"${DEPLOY_PATH}/migrations\"
+    applied=0
+    for f in \$(ls \$MIGDIR/*.sql | sort); do
+      ver=\$(basename \$f | cut -d_ -f1)
+      exists=\$(psql \$PG_CONN -tAc \"SELECT 1 FROM _sqlx_migrations WHERE version = \$ver\" 2>/dev/null || echo '0')
+      if [ \"\$exists\" != '1' ]; then
+        echo \"  Applying migration: \$(basename \$f)\"
+        psql \$PG_CONN -f \"\$f\" 2>&1 | grep -v '^NOTICE' | grep -v '^\$' | tail -3 || true
+        checksum=\$(sha384sum \"\$f\" | awk '{print \$1}')
+        desc=\$(basename \"\$f\" .sql | sed \"s/^\${ver}_//;s/_/ /g\")
+        psql \$PG_CONN -c \"INSERT INTO _sqlx_migrations (version,description,installed_on,success,checksum,execution_time) VALUES (\$ver,'\$desc',NOW(),true,decode('\$checksum','hex'),0) ON CONFLICT (version) DO NOTHING\" 2>/dev/null || true
+        applied=\$((applied+1))
+      fi
+    done
+    echo \"  Migrations: \$applied new applied\"
   "
 
   # Restart services
@@ -182,10 +207,13 @@ restart_and_verify() {
       echo '  zentra-server started (nohup)'
     fi
 
-    # Restart nginx (serves frontend)
+    # Sync nginx config and reload
+    if [ -f ${DEPLOY_PATH}/deploy/nginx.conf ]; then
+      cp ${DEPLOY_PATH}/deploy/nginx.conf /etc/nginx/conf.d/zentra.conf
+      echo '  nginx config updated from deploy/nginx.conf'
+    fi
     if systemctl is-active --quiet nginx 2>/dev/null; then
-      systemctl reload nginx 2>/dev/null || systemctl restart nginx
-      echo '  nginx reloaded'
+      nginx -t 2>&1 && (systemctl reload nginx 2>/dev/null || systemctl restart nginx) && echo '  nginx reloaded'
     fi
   "
 

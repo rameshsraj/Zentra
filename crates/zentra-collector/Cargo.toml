@@ -1,0 +1,27 @@
+[package]
+name = "zentra-collector"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "zentra-collector"
+path = "src/main.rs"
+
+[dependencies]
+zentra-agent   = { path = "../zentra-agent" }
+zentra-core    = { path = "../zentra-core" }
+zentra-stream  = { path = "../zentra-stream" }
+
+tokio              = { workspace = true }
+tokio-util         = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+uuid               = { workspace = true }
+chrono             = { workspace = true }
+dotenvy            = { workspace = true }
+reqwest            = { workspace = true }
+metrics            = { workspace = true }

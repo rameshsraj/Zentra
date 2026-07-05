@@ -36,21 +36,30 @@ echo "===SMART_END==="
     pub async fn collect(target: &Target) -> Vec<Metric> {
         let mut metrics = Vec::new();
 
-        let host = &target.host;
-        let ssh_user = target.credentials.as_ref()
-            .and_then(|c| c.username.clone())
-            .unwrap_or_else(|| std::env::var("zentra_SSH_USER").unwrap_or_else(|_| "root".into()));
-
-        let output = Command::new("ssh")
-            .args([
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "ConnectTimeout=10",
-                "-o", "BatchMode=yes",
-                &format!("{}@{}", ssh_user, host),
-                Self::COLLECTION_SCRIPT,
-            ])
-            .output()
-            .await;
+        // When agent_id is set the agent runs on the target machine — collect locally,
+        // no SSH needed (and no SSH credentials available).
+        let output = if target.agent_id.is_some() {
+            debug!(target = %target.name, "SMART collection: running locally (agent-mode)");
+            Command::new("bash")
+                .args(["-c", Self::COLLECTION_SCRIPT])
+                .output()
+                .await
+        } else {
+            let host = &target.host;
+            let ssh_user = target.credentials.as_ref()
+                .and_then(|c| c.username.clone())
+                .unwrap_or_else(|| std::env::var("zentra_SSH_USER").unwrap_or_else(|_| "root".into()));
+            Command::new("ssh")
+                .args([
+                    "-o", "StrictHostKeyChecking=no",
+                    "-o", "ConnectTimeout=10",
+                    "-o", "BatchMode=yes",
+                    &format!("{}@{}", ssh_user, host),
+                    Self::COLLECTION_SCRIPT,
+                ])
+                .output()
+                .await
+        };
 
         let output = match output {
             Ok(o) if !o.stdout.is_empty() => o,
@@ -59,7 +68,7 @@ echo "===SMART_END==="
                 return metrics;
             }
             Err(e) => {
-                warn!(target = %target.name, err = %e, "SMART SSH exec error");
+                warn!(target = %target.name, err = %e, "SMART collection exec error");
                 return metrics;
             }
         };

@@ -5180,6 +5180,7 @@ dependencies = [
  "database-plugin",
  "dns-lookup",
  "dotenvy",
+ "hostname",
  "http 1.4.0",
  "network-plugin",
  "prost",
@@ -5263,6 +5264,26 @@ dependencies = [
  "zentra-ingestion",
  "zentra-log-engine",
  "zentra-query",
+ "zentra-stream",
+]
+
+[[package]]
+name = "zentra-collector"
+version = "1.0.0"
+dependencies = [
+ "chrono",
+ "dotenvy",
+ "metrics",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "zentra-agent",
+ "zentra-core",
  "zentra-stream",
 ]
 

@@ -127,3 +127,46 @@ export function optInHost(
     { method: 'PATCH', body: JSON.stringify(body) }
   )
 }
+
+export interface DiscoveredComponent {
+  id: string
+  component_type: string
+  component_name: string
+  address: string
+  port: number | null
+  version: string | null
+  extra: Record<string, unknown>
+  confirmed: boolean
+  target_id: string | null
+  first_seen: string
+  last_seen: string
+  agent_id: string
+  agent_status: string
+}
+
+export interface ComponentsResponse {
+  components: DiscoveredComponent[]
+  datacenter: string
+}
+
+export function getComponentsByDc(dcName: string): Promise<ComponentsResponse> {
+  return fetchJSON<ComponentsResponse>(`/agents/by-dc/${encodeURIComponent(dcName)}/components`)
+}
+
+export interface ConfirmedTarget {
+  target_id: string
+  name: string
+  host: string
+  subtype: string
+  component_id: string
+}
+
+export function confirmComponents(body: {
+  component_ids: string[]
+  datacenter_name: string
+}): Promise<{ created: number; targets: ConfirmedTarget[] }> {
+  return fetchJSON<{ created: number; targets: ConfirmedTarget[] }>(
+    '/agents/components/confirm',
+    { method: 'POST', body: JSON.stringify(body) }
+  )
+}

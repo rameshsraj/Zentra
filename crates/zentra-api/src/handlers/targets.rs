@@ -4,7 +4,8 @@ use crate::error::ApiError;
 use crate::tenant::OrgId;
 use zentra_core::ssh_utils;
 use crate::validation;
-use zentra_core::models::target::{CreateTargetRequest, Target, TargetCredentials, TargetSubtype};
+use zentra_core::models::target::{CreateTargetRequest, Target, TargetCredentials, TargetStatus, TargetSubtype};
+use sqlx::Row;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use tokio::process::Command;
@@ -25,7 +26,7 @@ pub async fn list_targets(
     OrgId(org_id): OrgId,
     Query(params): Query<ListTargetsQuery>,
 ) -> Result<Json<Vec<Target>>, ApiError> {
-    let targets = zentra_db::repositories::targets::list_targets(
+    let mut targets = zentra_db::repositories::targets::list_targets(
         &state.pool,
         org_id,
         params.target_type.as_deref(),
@@ -33,6 +34,63 @@ pub async fn list_targets(
     )
     .await
     .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    // Inject agent-managed hosts as virtual server targets.
+    // These agents ship metrics via OTLP — no SSH collection needed.
+    // We synthesise a Target from agent_fleet + discovered_components so the
+    // Server Fleet UI can display them with real IP / hostname / status.
+    let filter_type = params.target_type.as_deref();
+    if filter_type.is_none() || filter_type == Some("server") {
+        let agent_rows = sqlx::query(
+            "SELECT af.agent_id, af.datacenter_name, af.ip_address, af.os_name, af.status,
+                    dc.component_name, dc.version, dc.id AS comp_id, dc.target_id AS existing_target_id
+             FROM agent_fleet af
+             LEFT JOIN discovered_components dc
+               ON dc.agent_id = af.agent_id AND dc.component_type = 'linux' AND dc.confirmed = TRUE
+             WHERE af.org_id = $1 AND af.status IN ('active', 'stale')"
+        )
+        .bind(org_id)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default();
+
+        let existing_agent_ids: std::collections::HashSet<uuid::Uuid> = targets.iter()
+            .filter_map(|t| t.agent_id)
+            .collect();
+
+        for row in agent_rows {
+            let agent_id: uuid::Uuid = row.get("agent_id");
+            if existing_agent_ids.contains(&agent_id) { continue; }
+
+            let ip: String = row.get::<Option<String>, _>("ip_address").unwrap_or_else(|| "0.0.0.0".to_string());
+            let dc_name: String = row.get("datacenter_name");
+            let os_name: String = row.get::<Option<String>, _>("os_name").unwrap_or_else(|| "linux".to_string());
+            let af_status: String = row.get("status");
+            let comp_name: Option<String> = row.get("component_name");
+            let version: Option<String> = row.get("version");
+
+            let display_name = if let Some(ver) = &version {
+                format!("{} ({})", comp_name.as_deref().unwrap_or("Linux Host"), ver)
+            } else {
+                comp_name.unwrap_or_else(|| format!("Linux Host ({})", dc_name))
+            };
+
+            let t_status = if af_status == "active" { TargetStatus::Healthy } else { TargetStatus::Warning };
+
+            let mut vt = Target::new(
+                org_id,
+                &display_name,
+                TargetSubtype::Linux,
+                &ip,
+                22,
+            );
+            vt.agent_id = Some(agent_id);
+            vt.status = t_status;
+            vt.environment = dc_name;
+            vt.description = Some(os_name);
+            targets.push(vt);
+        }
+    }
 
     Ok(Json(targets))
 }
@@ -530,11 +588,17 @@ pub async fn get_target_stats(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<ServerStats>, ApiError> {
-    let target = zentra_db::repositories::targets::get_target(&state.pool, id)
+    let target_opt = zentra_db::repositories::targets::get_target(&state.pool, id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?
-        .ok_or_else(|| ApiError::NotFound("Target not found".into()))?;
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
 
+    // For agent-managed targets (or virtual targets not in DB), read from metrics table.
+    let is_agent_managed = target_opt.as_ref().map(|t| t.agent_id.is_some()).unwrap_or(false);
+    if is_agent_managed || target_opt.is_none() {
+        return agent_stats_from_metrics(&state.pool, id).await;
+    }
+
+    let target = target_opt.unwrap();
     let host = &target.host;
     let user = target.credentials.as_ref()
         .and_then(|c| c.username.clone())
@@ -1127,4 +1191,179 @@ struct HierarchyRow {
 struct HierarchyPathRow {
     hierarchy_depth: i32,
     hierarchy_path: Option<String>,
+}
+
+/// Returns ServerStats for agent-managed targets by reading from the metrics table.
+/// No SSH — the agent ships metrics via OTLP directly.
+async fn agent_stats_from_metrics(
+    pool: &sqlx::PgPool,
+    target_id: Uuid,
+) -> Result<Json<ServerStats>, ApiError> {
+    // Fetch the latest value for each (metric_name, mount) for this target.
+    // server.fs.* metrics have mount in tags; all others use empty string as mount key.
+    let rows = sqlx::query(
+        "SELECT DISTINCT ON (metric_name, tags->>'mount') metric_name, value, tags
+         FROM metrics
+         WHERE target_id = $1
+         ORDER BY metric_name, tags->>'mount', timestamp DESC"
+    )
+    .bind(target_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    // Scalar metrics keyed by name (first occurrence wins for non-fs metrics)
+    let mut m: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    // Per-mount disk data: mount -> (total_gb, used_gb, pct)
+    let mut mounts: std::collections::BTreeMap<String, (f64, f64, f64)> = std::collections::BTreeMap::new();
+    let mut hostname = String::new();
+    let mut os = String::new();
+    let mut kernel = String::new();
+    let mut cpu_model = String::new();
+
+    for row in &rows {
+        let name: String = row.get("metric_name");
+        let val: f64    = row.get("value");
+        let tags: serde_json::Value = row.try_get("tags").unwrap_or(serde_json::Value::Null);
+        let mount = tags.get("mount").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+        if name.starts_with("server.fs.") {
+            if let Some(ref mp) = mount {
+                let entry = mounts.entry(mp.clone()).or_insert((0.0, 0.0, 0.0));
+                match name.as_str() {
+                    "server.fs.total_gb"      => entry.0 = val,
+                    "server.fs.used_gb"       => entry.1 = val,
+                    "server.fs.usage_percent" => entry.2 = val,
+                    _ => {}
+                }
+            }
+        } else {
+            m.entry(name).or_insert(val);
+        }
+    }
+
+    // Try fetching agent metadata from agent_fleet via discovered_components
+    let meta = sqlx::query(
+        "SELECT af.ip_address, af.os_name, dc.extra
+         FROM agent_fleet af
+         LEFT JOIN discovered_components dc ON dc.agent_id = af.agent_id AND dc.component_type = 'linux'
+         WHERE af.agent_id = (
+           SELECT agent_id FROM discovered_components WHERE target_id = $1 LIMIT 1
+         )
+         LIMIT 1"
+    )
+    .bind(target_id)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+
+    let host_ip = meta.as_ref()
+        .and_then(|r| r.get::<Option<String>, _>("ip_address"))
+        .unwrap_or_else(|| "0.0.0.0".to_string());
+
+    if let Some(ref r) = meta {
+        os = r.get::<Option<String>, _>("os_name").unwrap_or_default();
+        let extra: serde_json::Value = r.get("extra");
+        hostname = extra.get("hostname").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    }
+
+    // Memory: stored as bytes → convert to MB
+    let mem_total_b = *m.get("server.mem.total_bytes").unwrap_or(&0.0);
+    let mem_avail_b = *m.get("server.mem.available_bytes").unwrap_or(&0.0);
+    let mem_free_b  = *m.get("server.mem.free_bytes").unwrap_or(&0.0);
+    let mem_total   = (mem_total_b / 1_048_576.0) as u64;
+    let mem_used    = if mem_total_b > 0.0 {
+        ((mem_total_b - mem_avail_b.max(mem_free_b)) / 1_048_576.0) as u64
+    } else { 0 };
+    let mem_pct = if mem_total > 0 {
+        (mem_used as f64 / mem_total as f64) * 100.0
+    } else { 0.0 };
+
+    // Swap: bytes → MB
+    let swap_total = (*m.get("server.mem.swap_total_bytes").unwrap_or(&0.0) / 1_048_576.0) as u64;
+    let swap_free  = (*m.get("server.mem.swap_free_bytes").unwrap_or(&0.0) / 1_048_576.0) as u64;
+    let swap_used  = swap_total.saturating_sub(swap_free);
+
+    // CPU: aggregate user+system across all cores, average
+    let core_names: Vec<String> = m.keys()
+        .filter(|k| k.starts_with("server.cpu.cpu") && k.ends_with(".user_percent"))
+        .cloned().collect();
+    let cpu_cores = core_names.len() as u32;
+    let cpu_pct = if cpu_cores > 0 {
+        let total_user: f64 = core_names.iter()
+            .map(|k| *m.get(k).unwrap_or(&0.0))
+            .sum::<f64>();
+        let sys_key = core_names[0].replace("user_percent", "system_percent");
+        let total_sys: f64 = (0..cpu_cores).map(|i| {
+            let k = format!("server.cpu.cpu{}.system_percent", i);
+            *m.get(&k).unwrap_or(&0.0)
+        }).sum();
+        let _ = sys_key;
+        ((total_user + total_sys) / cpu_cores as f64).min(100.0)
+    } else { 0.0 };
+
+    // Disk: aggregate across all mount points
+    let disk_total: f64 = mounts.values().map(|(t, _, _)| t).sum();
+    let disk_used:  f64 = mounts.values().map(|(_, u, _)| u).sum();
+    let disk_pct = if disk_total > 0.0 { (disk_used / disk_total) * 100.0 } else { 0.0 };
+
+    // Build per-partition list for the UI
+    let disks: Vec<DiskInfo> = mounts.iter().map(|(mp, (total, used, pct))| DiskInfo {
+        filesystem: mp.clone(),
+        mount: mp.clone(),
+        total_gb: (total * 100.0).round() / 100.0,
+        used_gb:  (used  * 100.0).round() / 100.0,
+        free_gb:  ((total - used) * 100.0).round() / 100.0,
+        usage_percent: (pct  * 10.0).round() / 10.0,
+        fs_type: String::new(),
+    }).collect();
+
+    let uptime  = *m.get("server.uptime_seconds").unwrap_or(&0.0) as u64;
+    let load1   = *m.get("server.load.1m").unwrap_or(&0.0);
+    let load5   = *m.get("server.load.5m").unwrap_or(&0.0);
+    let load15  = *m.get("server.load.15m").unwrap_or(&0.0);
+    let procs   = *m.get("server.process_count").unwrap_or(&0.0) as u32;
+
+    let uptime_display = {
+        let secs = uptime;
+        let days = secs / 86400;
+        let hrs  = (secs % 86400) / 3600;
+        let mins = (secs % 3600) / 60;
+        if days > 0 { format!("{}d {}h {}m", days, hrs, mins) }
+        else if hrs > 0 { format!("{}h {}m", hrs, mins) }
+        else { format!("{}m", mins) }
+    };
+
+    let reachable = !m.is_empty();
+    let error = if reachable { None } else { Some("No metrics received yet — agent may be starting up".to_string()) };
+
+    Ok(Json(ServerStats {
+        target_id: target_id.to_string(),
+        host: host_ip,
+        hostname,
+        os,
+        kernel,
+        cpu_cores,
+        cpu_usage_percent: cpu_pct,
+        cpu_model,
+        load_avg_1: load1,
+        load_avg_5: load5,
+        load_avg_15: load15,
+        memory_total_mb: mem_total,
+        memory_used_mb: mem_used,
+        memory_usage_percent: mem_pct,
+        swap_total_mb: swap_total,
+        swap_used_mb: swap_used,
+        disk_total_gb: disk_total,
+        disk_used_gb: disk_used,
+        disk_usage_percent: disk_pct,
+        uptime_seconds: uptime,
+        uptime_display,
+        process_count: procs,
+        logged_in_users: 0,
+        reachable,
+        error,
+        disks,
+        nfs_mounts: vec![],
+    }))
 }
