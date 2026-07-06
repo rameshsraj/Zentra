@@ -22,5 +22,6 @@ CREATE INDEX IF NOT EXISTS idx_llm_spans_model    ON llm_spans(model, started_at
 DO $$ BEGIN
     PERFORM add_retention_policy('llm_spans', INTERVAL '90 days', if_not_exists => TRUE);
 EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'llm_spans retention policy skipped (TimescaleDB Community license required): %', SQLERRM;
     RAISE NOTICE 'Retention policy skipped (TimescaleDB Community license required): %', SQLERRM;
 END $$;
