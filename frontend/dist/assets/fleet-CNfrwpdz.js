@@ -1,1 +1,0 @@
-import{e as t}from"./index-zGz0tQmY.js";function r(){return t("/agents")}function s(e){return t("/agents/register",{method:"POST",body:JSON.stringify(e)})}function i(e){return t(`/agents/${e}`,{method:"DELETE"})}function g(){return t("/onboarding/checklist")}export{i as d,g,r as l,s as r};

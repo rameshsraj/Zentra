@@ -99,7 +99,10 @@ pub async fn validate_otlp_key(
     state: &crate::state::AppState,
     key: &str,
 ) -> Result<(Uuid, Vec<String>), String> {
-    if !key.starts_with("isok_") {
+    if key.starts_with("isok_") {
+        return Err("Org enrollment key cannot ingest telemetry".into());
+    }
+    if !key.starts_with("isak_") {
         return Err("Invalid key format".into());
     }
 
@@ -116,8 +119,11 @@ pub async fn validate_otlp_key(
 
     // Check DB
     let row = sqlx::query(
-        "SELECT org_id, permissions FROM otlp_api_keys 
-         WHERE key_hash = $1 AND enabled = true AND (expires_at IS NULL OR expires_at > NOW())"
+        "SELECT org_id FROM agent_api_keys
+         WHERE key_hash = $1
+           AND enabled = true
+           AND revoked_at IS NULL
+           AND (expires_at > NOW() OR (grace_until IS NOT NULL AND grace_until > NOW()))"
     )
     .bind(&hash)
     .fetch_optional(&state.tsdb_pool)
@@ -127,14 +133,14 @@ pub async fn validate_otlp_key(
     if let Some(r) = row {
         use sqlx::Row;
         let org_id: Uuid = r.get("org_id");
-        let perms: Vec<String> = r.get("permissions");
+        let perms: Vec<String> = vec!["metrics".to_string(), "logs".to_string()];
         state.otlp_key_cache.insert(hash.clone(), (org_id, perms.clone()));
 
         // O12: Update last_used_at asynchronously (fire-and-forget)
         let pool = state.tsdb_pool.clone();
         let h = hash.clone();
         tokio::spawn(async move {
-            let _ = sqlx::query("UPDATE otlp_api_keys SET last_used_at = NOW() WHERE key_hash = $1")
+            let _ = sqlx::query("UPDATE agent_api_keys SET last_used = NOW(), updated_at = NOW() WHERE key_hash = $1")
                 .bind(&h)
                 .execute(&pool)
                 .await;

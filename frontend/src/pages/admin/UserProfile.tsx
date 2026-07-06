@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
-import { updateUser, authMfaSetup, authMfaVerify, authSessions, authRevokeSession, UserSession, MfaSetupResponse } from '../../lib/api'
+import { authUpdateProfile, authChangePassword, authMfaSetup, authMfaVerify, authSessions, authRevokeSession, UserSession, MfaSetupResponse } from '../../lib/api'
 import { User, Shield, Key, Monitor, Save, Loader2, QrCode, Trash2 } from 'lucide-react'
 
 export default function UserProfile() {
@@ -48,7 +48,7 @@ function ProfileTab({ user, onSaved }: { user: any; onSaved: () => void }) {
   const save = async () => {
     setSaving(true); setMsg('')
     try {
-      await updateUser(user.id, form)
+      await authUpdateProfile(form)
       onSaved()
       setMsg('Profile updated!')
     } catch (e: any) { setMsg(e.message) }
@@ -111,12 +111,7 @@ function SecurityTab() {
   const changePw = async () => {
     if (pwForm.new_password !== pwForm.confirm) { setPwMsg('Passwords do not match'); return }
     try {
-      const me = await fetch('/api/auth/me', { headers: { 'Authorization': `Bearer ${localStorage.getItem('Zentra_token')}` } }).then(r => r.json())
-      await fetch(`/api/users/${me.id}/password`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('Zentra_token')}` },
-        body: JSON.stringify({ new_password: pwForm.new_password }),
-      })
+      await authChangePassword(pwForm.current_password, pwForm.new_password)
       setPwMsg('Password changed!')
       setPwForm({ current_password: '', new_password: '', confirm: '' })
     } catch (e: any) { setPwMsg(e.message) }
@@ -162,6 +157,9 @@ function SecurityTab() {
           <h3 className="font-semibold text-white">Change Password</h3>
         </div>
         <div className="space-y-3">
+          <input type="password" placeholder="Current Password" value={pwForm.current_password}
+            onChange={e => setPwForm({ ...pwForm, current_password: e.target.value })}
+            className="w-full px-3 py-2 rounded-lg bg-gray-900 border border-gray-600 text-white text-sm outline-none focus:border-blue-500" />
           <input type="password" placeholder="New Password" value={pwForm.new_password}
             onChange={e => setPwForm({ ...pwForm, new_password: e.target.value })}
             className="w-full px-3 py-2 rounded-lg bg-gray-900 border border-gray-600 text-white text-sm outline-none focus:border-blue-500" />
@@ -169,7 +167,7 @@ function SecurityTab() {
             onChange={e => setPwForm({ ...pwForm, confirm: e.target.value })}
             className="w-full px-3 py-2 rounded-lg bg-gray-900 border border-gray-600 text-white text-sm outline-none focus:border-blue-500" />
           {pwMsg && <p className={`text-sm ${pwMsg.includes('changed') ? 'text-green-400' : 'text-red-400'}`}>{pwMsg}</p>}
-          <button onClick={changePw} disabled={!pwForm.new_password || !pwForm.confirm}
+          <button onClick={changePw} disabled={!pwForm.current_password || !pwForm.new_password || !pwForm.confirm}
             className="px-4 py-2 rounded-lg bg-yellow-600 hover:bg-yellow-700 disabled:bg-yellow-800 text-white text-sm font-medium">Change Password</button>
         </div>
       </div>

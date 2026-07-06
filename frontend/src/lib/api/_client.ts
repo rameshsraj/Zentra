@@ -1,7 +1,9 @@
+import { clearAuthTokens, getAccessToken, getRefreshToken, setAuthTokens } from '../authStorage'
+
 const BASE = '/api'
 
 function getAuthToken(): string | null {
-  return localStorage.getItem('Zentra_token')
+  return getAccessToken()
 }
 
 // ── Token refresh mutex ─────────────────────────────────────────────
@@ -9,7 +11,7 @@ function getAuthToken(): string | null {
 let refreshPromise: Promise<string | null> | null = null
 
 async function doTokenRefresh(): Promise<string | null> {
-  const refreshToken = localStorage.getItem('Zentra_refresh_token')
+  const refreshToken = getRefreshToken()
   if (!refreshToken) return null
   try {
     const res = await fetch(`${BASE}/auth/refresh`, {
@@ -19,10 +21,7 @@ async function doTokenRefresh(): Promise<string | null> {
     })
     if (res.ok) {
       const data = await res.json()
-      localStorage.setItem('Zentra_token', data.token)
-      if (data.refresh_token) {
-        localStorage.setItem('Zentra_refresh_token', data.refresh_token)
-      }
+      setAuthTokens(data.token, data.refresh_token)
       scheduleProactiveRefresh(data.expires_at)
       return data.token
     }
@@ -92,8 +91,7 @@ export async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T>
       return retryRes.json()
     }
     // Refresh failed — force logout
-    localStorage.removeItem('Zentra_token')
-    localStorage.removeItem('Zentra_refresh_token')
+    clearAuthTokens()
     window.dispatchEvent(new CustomEvent('auth:logout'))
     throw new Error('Session expired')
   }

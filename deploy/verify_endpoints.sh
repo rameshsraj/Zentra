@@ -1,62 +1,25 @@
 #!/bin/bash
-# Endpoint verification script that bypasses login by crafting a JWT directly.
+# Endpoint verification script for the local WSL deployment.
 
 cd /store/Zentra
-set -a; source .env 2>/dev/null; set +a
+set -euo pipefail
 
-JWT_SECRET="${JWT_SECRET:-zentra-secret-key}"
+BASE="${BASE:-http://127.0.0.1:5006}"
+LOGIN_EMAIL="${LOGIN_EMAIL:-admin@Zentra.local}"
+LOGIN_PASSWORD="${LOGIN_PASSWORD:-changeme}"
 
-# Get admin user info
-ADMIN_INFO=$(PGPASSWORD=zantaz psql -h 127.0.0.1 -p 5434 -U postgres -d postgres -t -A -F'|' -c \
-  "SELECT u.id, COALESCE(u.org_id, '00000000-0000-0000-0000-000000000001'), u.email, COALESCE(r.name, 'Admin')
-   FROM users u
-   LEFT JOIN user_roles ur ON ur.user_id = u.id
-   LEFT JOIN roles r ON r.role_id = ur.role_id
-   WHERE u.email='admin@smarsh-nexus.com' LIMIT 1;")
+LOGIN=$(curl -s -X POST "$BASE/api/auth/login" \
+  -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$LOGIN_EMAIL\",\"password\":\"$LOGIN_PASSWORD\"}")
+TOKEN=$(echo "$LOGIN" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("token",""))' 2>/dev/null || true)
 
-USER_ID=$(echo "$ADMIN_INFO" | cut -d'|' -f1)
-ORG_ID=$(echo "$ADMIN_INFO" | cut -d'|' -f2)
-EMAIL=$(echo "$ADMIN_INFO" | cut -d'|' -f3)
-ROLE=$(echo "$ADMIN_INFO" | cut -d'|' -f4)
-
-echo "User: $EMAIL  Org: $ORG_ID  Role: $ROLE"
-
-# Generate JWT using python
-NOW=$(date +%s)
-EXP=$((NOW + 28800))
-
-TOKEN=$(python3.11 -c "
-import json, base64, hmac, hashlib
-
-header = base64.urlsafe_b64encode(json.dumps({'alg':'HS256','typ':'JWT'}).encode()).rstrip(b'=').decode()
-payload = base64.urlsafe_b64encode(json.dumps({
-    'sub': '$USER_ID',
-    'org': '$ORG_ID',
-    'email': '$EMAIL',
-    'role': '$ROLE',
-    'exp': $EXP,
-    'iat': $NOW,
-    'jti': 'verify-$(date +%s)'
-}).encode()).rstrip(b'=').decode()
-sig_input = f'{header}.{payload}'.encode()
-sig = base64.urlsafe_b64encode(hmac.new('$JWT_SECRET'.encode(), sig_input, hashlib.sha256).digest()).rstrip(b'=').decode()
-print(f'{header}.{payload}.{sig}')
-")
-
-echo "Token generated (${#TOKEN} chars)"
-
-# Verify token works
-HEALTH_RESP=$(curl -s http://127.0.0.1:5006/api/system/status -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" --max-time 5 -w "\n%{http_code}" 2>/dev/null)
-HEALTH_CODE=$(echo "$HEALTH_RESP" | tail -1)
-echo "Auth test /api/system/status: $HEALTH_CODE"
-
-if [ "$HEALTH_CODE" != "200" ]; then
-  echo "Auth failed - response: $(echo "$HEALTH_RESP" | head -1)"
-  echo "Falling back to unauthenticated testing..."
-  AUTH=""
-else
-  AUTH="Authorization: Bearer $TOKEN"
+if [ -z "$TOKEN" ]; then
+  echo "Auth failed for $LOGIN_EMAIL - response: $LOGIN"
+  exit 1
 fi
+
+AUTH="Authorization: Bearer $TOKEN"
+echo "Authenticated as $LOGIN_EMAIL"
 
 # Test all endpoints
 ENDPOINTS=(
@@ -74,11 +37,11 @@ ENDPOINTS=(
   "/api/dashboards"
   "/api/logs"
   "/api/network/devices"
-  "/api/oracle/instances"
-  "/api/postgres/overview"
-  "/api/mysql/overview"
-  "/api/mongodb/overview"
-  "/api/sqlserver/overview"
+  "/api/oracle/overview"
+  "/api/oracle/connections"
+  "/api/oracle/metrics"
+  "/api/oracle/scrape/status"
+  "/api/oracle/txeventq"
   "/api/security/ids/rules"
   "/api/security/connections"
   "/api/security/firewall/stats"
@@ -105,20 +68,20 @@ ENDPOINTS=(
   "/api/mcp/tools"
   "/api/rca/history"
   "/api/otel/resources"
-  "/api/otel/collector/status"
-  "/api/otel/pipelines"
+  "/api/otel/status"
+  "/api/otel/pipeline"
   "/api/llm-security/overview"
   "/api/notifications/channels"
   "/api/notifications/escalation-chains"
-  "/api/admin/users"
-  "/api/admin/roles"
+  "/api/users"
+  "/api/roles"
   "/api/v1/status/buildinfo"
   "/api/v1/status/runtimeinfo"
   "/api/v1/status/config"
   "/api/v1/status/tsdb"
   "/api/auth/me"
   "/api/search?q=cpu"
-  "/api/drilldown?metric=cpu"
+  "/api/drilldown?level=global"
   "/api/events/stats"
 )
 
@@ -134,9 +97,9 @@ ERRORS=""
 
 for EP in "${ENDPOINTS[@]}"; do
   if [ -n "$AUTH" ]; then
-    CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:5006${EP}" -H "$AUTH" -H "Content-Type: application/json" --max-time 5 2>/dev/null)
+    CODE=$(curl -s -o /dev/null -w "%{http_code}" "${BASE}${EP}" -H "$AUTH" -H "Content-Type: application/json" --max-time 5 2>/dev/null)
   else
-    CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:5006${EP}" -H "Content-Type: application/json" --max-time 5 2>/dev/null)
+    CODE=$(curl -s -o /dev/null -w "%{http_code}" "${BASE}${EP}" -H "Content-Type: application/json" --max-time 5 2>/dev/null)
   fi
 
   if [ "$CODE" -ge 200 ] && [ "$CODE" -lt 300 ]; then
@@ -162,6 +125,9 @@ done
 
 echo ""
 echo "=========================================="
+if [ "$AUTH_FAIL" -ne 0 ] || [ "$FAIL" -ne 0 ]; then
+  exit 1
+fi
 echo " RESULTS: $PASS OK, $AUTH_FAIL auth-blocked, $FAIL failed"
 echo " Total: ${#ENDPOINTS[@]} endpoints"
 if [ -n "$ERRORS" ]; then

@@ -77,11 +77,12 @@ pub async fn create_role(
 
 pub async fn get_role(
     State(state): State<AppState>,
+    OrgId(org_id): OrgId,
     Path(role_id): Path<Uuid>,
 ) -> impl IntoResponse {
     let role = sqlx::query_as::<_, (Uuid, Uuid, String, Option<String>, bool, chrono::DateTime<chrono::Utc>)>(
-        "SELECT role_id, org_id, name, description, is_system, created_at FROM roles WHERE role_id = $1"
-    ).bind(role_id).fetch_optional(&state.pool).await;
+        "SELECT role_id, org_id, name, description, is_system, created_at FROM roles WHERE role_id = $1 AND org_id = $2"
+    ).bind(role_id).bind(org_id).fetch_optional(&state.pool).await;
 
     let role = match role {
         Ok(Some(r)) => r,
@@ -110,19 +111,24 @@ pub async fn get_role(
 
 pub async fn update_role(
     State(state): State<AppState>,
+    OrgId(org_id): OrgId,
     Path(role_id): Path<Uuid>,
     Json(req): Json<UpdateRoleRequest>,
 ) -> impl IntoResponse {
     // Check not system role for name changes
-    let is_system: bool = sqlx::query_scalar::<_, bool>("SELECT is_system FROM roles WHERE role_id = $1")
-        .bind(role_id).fetch_optional(&state.pool).await.unwrap_or(None).unwrap_or(false);
+    let is_system: Option<bool> = sqlx::query_scalar::<_, bool>("SELECT is_system FROM roles WHERE role_id = $1 AND org_id = $2")
+        .bind(role_id).bind(org_id).fetch_optional(&state.pool).await.unwrap_or(None);
+
+    let Some(is_system) = is_system else {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": "role_not_found"}))).into_response();
+    };
 
     if is_system && req.name.is_some() {
         return (StatusCode::FORBIDDEN, Json(json!({"error": "Cannot rename system roles"}))).into_response();
     }
 
-    let _ = sqlx::query("UPDATE roles SET name = COALESCE($1, name), description = COALESCE($2, description) WHERE role_id = $3")
-        .bind(&req.name).bind(&req.description).bind(role_id).execute(&state.pool).await;
+    let _ = sqlx::query("UPDATE roles SET name = COALESCE($1, name), description = COALESCE($2, description) WHERE role_id = $3 AND org_id = $4")
+        .bind(&req.name).bind(&req.description).bind(role_id).bind(org_id).execute(&state.pool).await;
 
     if let Some(perm_ids) = &req.permission_ids {
         let _ = sqlx::query("DELETE FROM role_permissions WHERE role_id = $1").bind(role_id).execute(&state.pool).await;
@@ -141,18 +147,23 @@ pub async fn update_role(
 
 pub async fn delete_role(
     State(state): State<AppState>,
+    OrgId(org_id): OrgId,
     Path(role_id): Path<Uuid>,
 ) -> impl IntoResponse {
-    let is_system: bool = sqlx::query_scalar::<_, bool>("SELECT is_system FROM roles WHERE role_id = $1")
-        .bind(role_id).fetch_optional(&state.pool).await.unwrap_or(None).unwrap_or(true);
+    let is_system: Option<bool> = sqlx::query_scalar::<_, bool>("SELECT is_system FROM roles WHERE role_id = $1 AND org_id = $2")
+        .bind(role_id).bind(org_id).fetch_optional(&state.pool).await.unwrap_or(None);
+
+    let Some(is_system) = is_system else {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": "role_not_found"}))).into_response();
+    };
 
     if is_system {
         return (StatusCode::FORBIDDEN, Json(json!({"error": "Cannot delete system roles"}))).into_response();
     }
 
     let _ = sqlx::query("DELETE FROM role_permissions WHERE role_id = $1").bind(role_id).execute(&state.pool).await;
-    let _ = sqlx::query("DELETE FROM user_roles WHERE role_id = $1").bind(role_id).execute(&state.pool).await;
-    let _ = sqlx::query("DELETE FROM roles WHERE role_id = $1").bind(role_id).execute(&state.pool).await;
+    let _ = sqlx::query("DELETE FROM user_roles WHERE role_id = $1 AND org_id = $2").bind(role_id).bind(org_id).execute(&state.pool).await;
+    let _ = sqlx::query("DELETE FROM roles WHERE role_id = $1 AND org_id = $2").bind(role_id).bind(org_id).execute(&state.pool).await;
 
     (StatusCode::OK, Json(json!({"message": "Role deleted"}))).into_response()
 }
@@ -189,6 +200,28 @@ pub async fn assign_user_roles(
     Path(user_id): Path<Uuid>,
     Json(req): Json<AssignRolesRequest>,
 ) -> impl IntoResponse {
+    let user_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND org_id = $2)")
+        .bind(user_id)
+        .bind(org_id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(false);
+    if !user_exists {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": "user_not_found"}))).into_response();
+    }
+
+    let role_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM roles WHERE org_id = $1 AND role_id = ANY($2::uuid[])",
+    )
+    .bind(org_id)
+    .bind(&req.role_ids)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(0);
+    if role_count != req.role_ids.len() as i64 {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_role", "message": "All roles must belong to the caller organization"}))).into_response();
+    }
+
     // Resolve Super Admin role_id
     let super_admin_role_id: Option<Uuid> = sqlx::query_scalar(
         "SELECT role_id FROM roles WHERE name = 'Super Admin' AND org_id = $1 LIMIT 1"

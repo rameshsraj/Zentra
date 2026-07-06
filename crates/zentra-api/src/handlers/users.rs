@@ -14,6 +14,14 @@ use crate::tenant::OrgId;
 use crate::auth_middleware::AuthContext;
 use zentra_core::models::auth::*;
 
+fn is_super_admin(ctx: &AuthContext) -> bool {
+    ctx.role == "Super Admin"
+}
+
+fn is_org_admin(ctx: &AuthContext) -> bool {
+    matches!(ctx.role.as_str(), "Admin" | "Org Admin" | "Super Admin")
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Query params
 // ═══════════════════════════════════════════════════════════════════════════
@@ -139,7 +147,7 @@ pub async fn create_user(
 
     // ── Role gate ────────────────────────────────────────────────────────
     let is_super = caller_role == "Super Admin";
-    let is_admin = caller_role == "Admin";
+    let is_admin = matches!(caller_role, "Admin" | "Org Admin");
 
     if !is_super && !is_admin {
         return (StatusCode::FORBIDDEN, Json(json!({
@@ -321,14 +329,19 @@ pub async fn create_user(
 
 pub async fn get_user(
     State(state): State<AppState>,
+    OrgId(caller_org_id): OrgId,
+    axum::Extension(ctx): axum::Extension<AuthContext>,
     Path(user_id): Path<Uuid>,
 ) -> impl IntoResponse {
+    let is_super = is_super_admin(&ctx);
     let user = sqlx::query_as::<_, (Uuid, Uuid, String, String, Option<String>, Option<String>, String, String, bool, bool, Option<chrono::DateTime<chrono::Utc>>, bool, Option<chrono::DateTime<chrono::Utc>>, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>(
         "SELECT id, org_id, email, username, display_name, avatar_url, timezone, theme, \
          is_active, is_locked, last_login, mfa_enabled, password_changed_at, created_at, updated_at \
-         FROM users WHERE id = $1"
+         FROM users WHERE id = $1 AND (org_id = $2 OR $3)"
     )
     .bind(user_id)
+    .bind(caller_org_id)
+    .bind(is_super)
     .fetch_optional(&state.pool)
     .await;
 
@@ -340,9 +353,12 @@ pub async fn get_user(
     };
 
     let roles: Vec<serde_json::Value> = sqlx::query_as::<_, (Uuid, String)>(
-        "SELECT r.role_id, r.name FROM roles r JOIN user_roles ur ON ur.role_id = r.role_id WHERE ur.user_id = $1"
+        "SELECT r.role_id, r.name FROM roles r JOIN user_roles ur ON ur.role_id = r.role_id \
+         WHERE ur.user_id = $1 AND (ur.org_id = $2 OR $3)"
     )
     .bind(user_id)
+    .bind(caller_org_id)
+    .bind(is_super)
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default()
@@ -351,9 +367,12 @@ pub async fn get_user(
     .collect();
 
     let groups: Vec<serde_json::Value> = sqlx::query_as::<_, (Uuid, String)>(
-        "SELECT g.group_id, g.name FROM user_groups g JOIN user_group_members m ON m.group_id = g.group_id WHERE m.user_id = $1"
+        "SELECT g.group_id, g.name FROM user_groups g JOIN user_group_members m ON m.group_id = g.group_id \
+         WHERE m.user_id = $1 AND (g.org_id = $2 OR $3)"
     )
     .bind(user_id)
+    .bind(caller_org_id)
+    .bind(is_super)
     .fetch_all(&state.pool)
     .await
     .unwrap_or_default()
@@ -388,9 +407,15 @@ pub async fn get_user(
 
 pub async fn update_user(
     State(state): State<AppState>,
+    OrgId(caller_org_id): OrgId,
+    axum::Extension(ctx): axum::Extension<AuthContext>,
     Path(user_id): Path<Uuid>,
     Json(req): Json<UpdateUserRequest>,
 ) -> impl IntoResponse {
+    if !is_org_admin(&ctx) {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))).into_response();
+    }
+    let is_super = is_super_admin(&ctx);
     let result = sqlx::query(
         "UPDATE users SET \
          email = COALESCE($1, email), \
@@ -401,7 +426,7 @@ pub async fn update_user(
          theme = COALESCE($6, theme), \
          is_active = COALESCE($7, is_active), \
          updated_at = NOW() \
-         WHERE id = $8"
+         WHERE id = $8 AND (org_id = $9 OR $10)"
     )
     .bind(&req.email)
     .bind(&req.username)
@@ -411,6 +436,8 @@ pub async fn update_user(
     .bind(&req.theme)
     .bind(&req.is_active)
     .bind(user_id)
+    .bind(caller_org_id)
+    .bind(is_super)
     .execute(&state.pool)
     .await;
 
@@ -433,22 +460,36 @@ pub async fn update_user(
 
 pub async fn delete_user(
     State(state): State<AppState>,
+    OrgId(caller_org_id): OrgId,
+    axum::Extension(ctx): axum::Extension<AuthContext>,
     Path(user_id): Path<Uuid>,
 ) -> impl IntoResponse {
+    if !is_org_admin(&ctx) {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))).into_response();
+    }
+    let is_super_actor = is_super_admin(&ctx);
     // Prevent deactivating the Super Admin
     let is_super: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM user_roles ur JOIN roles r ON r.role_id = ur.role_id WHERE ur.user_id = $1 AND r.name = 'Super Admin')"
-    ).bind(user_id).fetch_one(&state.pool).await.unwrap_or(false);
+        "SELECT EXISTS(SELECT 1 FROM user_roles ur JOIN roles r ON r.role_id = ur.role_id \
+         WHERE ur.user_id = $1 AND r.name = 'Super Admin' AND (ur.org_id = $2 OR $3))"
+    ).bind(user_id).bind(caller_org_id).bind(is_super_actor).fetch_one(&state.pool).await.unwrap_or(false);
     if is_super {
         return (StatusCode::FORBIDDEN, Json(json!({"error": "cannot_deactivate_super_admin", "message": "The Super Admin account cannot be deactivated."}))).into_response();
     }
 
-    let _ = sqlx::query("UPDATE users SET is_active = false, updated_at = NOW() WHERE id = $1")
+    let result = sqlx::query("UPDATE users SET is_active = false, updated_at = NOW() WHERE id = $1 AND (org_id = $2 OR $3)")
         .bind(user_id)
+        .bind(caller_org_id)
+        .bind(is_super_actor)
         .execute(&state.pool)
         .await;
 
-    (StatusCode::OK, Json(json!({"message": "User deactivated", "id": user_id}))).into_response()
+    match result {
+        Ok(r) if r.rows_affected() > 0 => {
+            (StatusCode::OK, Json(json!({"message": "User deactivated", "id": user_id}))).into_response()
+        }
+        _ => (StatusCode::NOT_FOUND, Json(json!({"error": "user_not_found"}))).into_response(),
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -457,22 +498,36 @@ pub async fn delete_user(
 
 pub async fn lock_user(
     State(state): State<AppState>,
+    OrgId(caller_org_id): OrgId,
+    axum::Extension(ctx): axum::Extension<AuthContext>,
     Path(user_id): Path<Uuid>,
 ) -> impl IntoResponse {
+    if !is_org_admin(&ctx) {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))).into_response();
+    }
+    let is_super_actor = is_super_admin(&ctx);
     // Prevent locking the Super Admin
     let is_super: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM user_roles ur JOIN roles r ON r.role_id = ur.role_id WHERE ur.user_id = $1 AND r.name = 'Super Admin')"
-    ).bind(user_id).fetch_one(&state.pool).await.unwrap_or(false);
+        "SELECT EXISTS(SELECT 1 FROM user_roles ur JOIN roles r ON r.role_id = ur.role_id \
+         WHERE ur.user_id = $1 AND r.name = 'Super Admin' AND (ur.org_id = $2 OR $3))"
+    ).bind(user_id).bind(caller_org_id).bind(is_super_actor).fetch_one(&state.pool).await.unwrap_or(false);
     if is_super {
         return (StatusCode::FORBIDDEN, Json(json!({"error": "cannot_lock_super_admin", "message": "The Super Admin account cannot be locked."}))).into_response();
     }
 
-    let _ = sqlx::query("UPDATE users SET is_locked = true, updated_at = NOW() WHERE id = $1")
+    let result = sqlx::query("UPDATE users SET is_locked = true, updated_at = NOW() WHERE id = $1 AND (org_id = $2 OR $3)")
         .bind(user_id)
+        .bind(caller_org_id)
+        .bind(is_super_actor)
         .execute(&state.pool)
         .await;
 
-    (StatusCode::OK, Json(json!({"message": "User locked", "id": user_id}))).into_response()
+    match result {
+        Ok(r) if r.rows_affected() > 0 => {
+            (StatusCode::OK, Json(json!({"message": "User locked", "id": user_id}))).into_response()
+        }
+        _ => (StatusCode::NOT_FOUND, Json(json!({"error": "user_not_found"}))).into_response(),
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -481,14 +536,26 @@ pub async fn lock_user(
 
 pub async fn unlock_user(
     State(state): State<AppState>,
+    OrgId(caller_org_id): OrgId,
+    axum::Extension(ctx): axum::Extension<AuthContext>,
     Path(user_id): Path<Uuid>,
 ) -> impl IntoResponse {
-    let _ = sqlx::query("UPDATE users SET is_locked = false, locked_until = NULL, updated_at = NOW() WHERE id = $1")
+    if !is_org_admin(&ctx) {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))).into_response();
+    }
+    let result = sqlx::query("UPDATE users SET is_locked = false, locked_until = NULL, updated_at = NOW() WHERE id = $1 AND (org_id = $2 OR $3)")
         .bind(user_id)
+        .bind(caller_org_id)
+        .bind(is_super_admin(&ctx))
         .execute(&state.pool)
         .await;
 
-    (StatusCode::OK, Json(json!({"message": "User unlocked", "id": user_id}))).into_response()
+    match result {
+        Ok(r) if r.rows_affected() > 0 => {
+            (StatusCode::OK, Json(json!({"message": "User unlocked", "id": user_id}))).into_response()
+        }
+        _ => (StatusCode::NOT_FOUND, Json(json!({"error": "user_not_found"}))).into_response(),
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -497,9 +564,14 @@ pub async fn unlock_user(
 
 pub async fn reset_password(
     State(state): State<AppState>,
+    OrgId(caller_org_id): OrgId,
+    axum::Extension(ctx): axum::Extension<AuthContext>,
     Path(user_id): Path<Uuid>,
     Json(req): Json<ChangePasswordRequest>,
 ) -> impl IntoResponse {
+    if !is_org_admin(&ctx) {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))).into_response();
+    }
     let password_hash = match bcrypt::hash(&req.new_password, 12) {
         Ok(h) => h,
         Err(_) => {
@@ -507,15 +579,23 @@ pub async fn reset_password(
         }
     };
 
-    let _ = sqlx::query(
-        "UPDATE users SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW() WHERE id = $2"
+    let result = sqlx::query(
+        "UPDATE users SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW() \
+         WHERE id = $2 AND (org_id = $3 OR $4)"
     )
     .bind(&password_hash)
     .bind(user_id)
+    .bind(caller_org_id)
+    .bind(is_super_admin(&ctx))
     .execute(&state.pool)
     .await;
 
-    (StatusCode::OK, Json(json!({"message": "Password reset successfully"}))).into_response()
+    match result {
+        Ok(r) if r.rows_affected() > 0 => {
+            (StatusCode::OK, Json(json!({"message": "Password reset successfully"}))).into_response()
+        }
+        _ => (StatusCode::NOT_FOUND, Json(json!({"error": "user_not_found"}))).into_response(),
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -524,31 +604,52 @@ pub async fn reset_password(
 
 pub async fn bulk_action(
     State(state): State<AppState>,
+    OrgId(caller_org_id): OrgId,
+    axum::Extension(ctx): axum::Extension<AuthContext>,
     Json(req): Json<BulkUserAction>,
 ) -> impl IntoResponse {
+    if !is_org_admin(&ctx) {
+        return (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))).into_response();
+    }
+    let is_super_actor = is_super_admin(&ctx);
     let mut affected = 0i64;
 
     for uid in &req.user_ids {
         let result = match req.action.as_str() {
             "enable" => {
-                sqlx::query("UPDATE users SET is_active = true, updated_at = NOW() WHERE id = $1")
-                    .bind(uid).execute(&state.pool).await
+                sqlx::query("UPDATE users SET is_active = true, updated_at = NOW() WHERE id = $1 AND (org_id = $2 OR $3)")
+                    .bind(uid).bind(caller_org_id).bind(is_super_actor).execute(&state.pool).await
             }
             "disable" => {
-                sqlx::query("UPDATE users SET is_active = false, updated_at = NOW() WHERE id = $1")
-                    .bind(uid).execute(&state.pool).await
+                sqlx::query(
+                    "UPDATE users SET is_active = false, updated_at = NOW() \
+                     WHERE id = $1 AND (org_id = $2 OR $3) \
+                     AND NOT EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.role_id = ur.role_id \
+                         WHERE ur.user_id = users.id AND r.name = 'Super Admin')"
+                )
+                    .bind(uid).bind(caller_org_id).bind(is_super_actor).execute(&state.pool).await
             }
             "lock" => {
-                sqlx::query("UPDATE users SET is_locked = true, updated_at = NOW() WHERE id = $1")
-                    .bind(uid).execute(&state.pool).await
+                sqlx::query(
+                    "UPDATE users SET is_locked = true, updated_at = NOW() \
+                     WHERE id = $1 AND (org_id = $2 OR $3) \
+                     AND NOT EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.role_id = ur.role_id \
+                         WHERE ur.user_id = users.id AND r.name = 'Super Admin')"
+                )
+                    .bind(uid).bind(caller_org_id).bind(is_super_actor).execute(&state.pool).await
             }
             "unlock" => {
-                sqlx::query("UPDATE users SET is_locked = false, locked_until = NULL, updated_at = NOW() WHERE id = $1")
-                    .bind(uid).execute(&state.pool).await
+                sqlx::query("UPDATE users SET is_locked = false, locked_until = NULL, updated_at = NOW() WHERE id = $1 AND (org_id = $2 OR $3)")
+                    .bind(uid).bind(caller_org_id).bind(is_super_actor).execute(&state.pool).await
             }
             "delete" => {
-                sqlx::query("UPDATE users SET is_active = false, updated_at = NOW() WHERE id = $1")
-                    .bind(uid).execute(&state.pool).await
+                sqlx::query(
+                    "UPDATE users SET is_active = false, updated_at = NOW() \
+                     WHERE id = $1 AND (org_id = $2 OR $3) \
+                     AND NOT EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.role_id = ur.role_id \
+                         WHERE ur.user_id = users.id AND r.name = 'Super Admin')"
+                )
+                    .bind(uid).bind(caller_org_id).bind(is_super_actor).execute(&state.pool).await
             }
             _ => {
                 return (StatusCode::BAD_REQUEST, Json(json!({

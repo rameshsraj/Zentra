@@ -2,6 +2,7 @@ use zentra_agent::leader_election;
 use zentra_agent::orchestrator::Orchestrator;
 use zentra_agent::plugin_manager::create_plugin_for_target;
 use zentra_agent::remote_delivery::RemoteDeliveryService;
+use zentra_agent::remote_transport::{auto_rotate_if_needed, ensure_agent_key};
 use zentra_agent::heartbeat::{HeartbeatLoop, new_agent_id_cell};
 use zentra_agent::remote_targets::RemoteTargetFetcher;
 use zentra_agent::log_capture::{CaptureLayer, LogBuffer};
@@ -205,6 +206,19 @@ async fn run_local_mode(config: zentra_core::AppConfig) {
 // ============================================================================
 
 async fn run_remote_mode(config: zentra_core::AppConfig, log_buffer: LogBuffer) {
+    let mut org_key = config.org_key.clone();
+    let mut key_material = ensure_agent_key(
+        &config.api_endpoint,
+        &config.dc_name,
+        &mut org_key,
+        &config.agent_key,
+        &config.agent_key_path,
+    )
+    .await
+    .expect("Failed to acquire agent operational key");
+
+    let _ = auto_rotate_if_needed(&config.api_endpoint, &config.agent_key_path, &mut key_material).await;
+
     info!(
         api_endpoint = %config.api_endpoint,
         dc_name = %config.dc_name,
@@ -218,7 +232,7 @@ async fn run_remote_mode(config: zentra_core::AppConfig, log_buffer: LogBuffer) 
     // Shared cell — populated by HeartbeatLoop on first successful response.
     // Seed it from env var if already known (e.g. systemd service after first run).
     let agent_id_cell = new_agent_id_cell();
-    if let Some(id) = config.agent_id {
+    if let Some(id) = config.agent_id.or(key_material.agent_id) {
         let _ = agent_id_cell.set(id);
         info!(agent_id = %id, "Agent ID pre-loaded from ZENTRA_AGENT_ID env var");
     }
@@ -229,13 +243,13 @@ async fn run_remote_mode(config: zentra_core::AppConfig, log_buffer: LogBuffer) 
     // Remote delivery service — replaces IngestionService
     let delivery_metrics = RemoteDeliveryService::new(
         config.api_endpoint.clone(),
-        config.agent_api_key.clone(),
+        key_material.agent_key.clone(),
         config.dc_name.clone(),
         config.buffer_dir.clone(),
     );
     let delivery_logs = RemoteDeliveryService::new(
         config.api_endpoint.clone(),
-        config.agent_api_key.clone(),
+        key_material.agent_key.clone(),
         config.dc_name.clone(),
         config.buffer_dir.clone(),
     );
@@ -250,7 +264,7 @@ async fn run_remote_mode(config: zentra_core::AppConfig, log_buffer: LogBuffer) 
     // Heartbeat loop (30s) — fires immediately on startup to get agent_id fast
     let heartbeat = HeartbeatLoop::new(
         config.api_endpoint.clone(),
-        config.agent_api_key.clone(),
+        key_material.agent_key.clone(),
         config.dc_name.clone(),
         active_targets.clone(),
         cancel.clone(),
@@ -264,7 +278,7 @@ async fn run_remote_mode(config: zentra_core::AppConfig, log_buffer: LogBuffer) 
     // Remote target fetcher (60s reconciliation)
     let fetcher = RemoteTargetFetcher::new(
         config.api_endpoint.clone(),
-        config.agent_api_key.clone(),
+        key_material.agent_key.clone(),
         event_bus.clone(),
         metric_tx.clone(),
         config.org_id,
@@ -283,11 +297,11 @@ async fn run_remote_mode(config: zentra_core::AppConfig, log_buffer: LogBuffer) 
     {
         let shipper = LogShipper::new(
             config.api_endpoint.clone(),
-            config.agent_api_key.clone(),
+            key_material.agent_key.clone(),
             config.buffer_dir.clone(),
             log_tx,
             cancel.clone(),
-            config.agent_id,
+            config.agent_id.or(key_material.agent_id),
         );
         tokio::spawn(async move {
             shipper.run().await;
@@ -297,7 +311,7 @@ async fn run_remote_mode(config: zentra_core::AppConfig, log_buffer: LogBuffer) 
     // Component discovery — waits for agent_id then detects and reports local services
     let comp_disc = ComponentDiscovery::new(
         config.api_endpoint.clone(),
-        config.agent_api_key.clone(),
+        key_material.agent_key.clone(),
         config.dc_name.clone(),
         cancel.clone(),
         agent_id_cell.clone(),
@@ -317,7 +331,7 @@ async fn run_remote_mode(config: zentra_core::AppConfig, log_buffer: LogBuffer) 
     // Flush offline buffer
     let mut flusher = RemoteDeliveryService::new(
         config.api_endpoint.clone(),
-        config.agent_api_key.clone(),
+        key_material.agent_key,
         config.dc_name.clone(),
         config.buffer_dir.clone(),
     );

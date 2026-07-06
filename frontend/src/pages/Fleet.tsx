@@ -270,6 +270,8 @@ export default function FleetPage() {
                 <th className="px-4 py-3 font-medium">Version</th>
                 <th className="px-4 py-3 font-medium">Targets</th>
                 <th className="px-4 py-3 font-medium">IP</th>
+                <th className="px-4 py-3 font-medium">Key Status</th>
+                <th className="px-4 py-3 font-medium">Key Expiry</th>
                 <th className="px-4 py-3 font-medium" />
               </tr>
             </thead>
@@ -308,7 +310,18 @@ export default function FleetPage() {
                       <td className="px-4 py-3 text-muted-foreground">{timeAgo(a.last_seen)}</td>
                       <td className="px-4 py-3 font-mono text-xs">{a.agent_version ?? '—'}</td>
                       <td className="px-4 py-3">{a.active_target_count}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{a.ip_address ?? '—'}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{a.registered_ip ?? a.ip_address ?? '—'}</td>
+                      <td className="px-4 py-3 text-xs">
+                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 ${
+                          a.key_status === 'active' ? 'bg-green-500/20 text-green-400' :
+                          a.key_status === 'expiring_soon' ? 'bg-yellow-500/20 text-yellow-300' :
+                          a.key_status === 'expired' ? 'bg-orange-500/20 text-orange-300' :
+                          'bg-red-500/20 text-red-300'
+                        }`}>
+                          {a.key_status ?? 'unknown'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground">{a.key_expires_at ? timeAgo(a.key_expires_at) : '—'}</td>
                       <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
                         {a.status !== 'deregistered' && (
                           confirmId === a.agent_id ? (
@@ -342,7 +355,7 @@ export default function FleetPage() {
                     </tr>
                     {isExpanded && (
                       <tr key={`${a.agent_id}-discovered`} className="bg-muted/10 border-b border-border">
-                        <td colSpan={8} className="p-0">
+                        <td colSpan={10} className="p-0">
                           <div className="border-t border-dashed border-border/50">
                             <div className="flex items-center gap-2 px-6 pt-3 pb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                               <Server className="h-3.5 w-3.5" />

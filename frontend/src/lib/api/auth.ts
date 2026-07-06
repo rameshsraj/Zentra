@@ -17,6 +17,18 @@ export const authLogout = () =>
 export const authRefresh = (refresh_token: string) =>
   fetchJSON<{ token: string; expires_at: string }>('/auth/refresh', { method: 'POST', body: JSON.stringify({ refresh_token }) })
 export const authMe = () => fetchJSON<UserProfile>('/auth/me')
+export const authUpdateProfile = (data: {
+  email?: string
+  display_name?: string
+  avatar_url?: string
+  timezone?: string
+  theme?: string
+}) => fetchJSON<{ message: string }>('/auth/profile', { method: 'PUT', body: JSON.stringify(data) })
+export const authChangePassword = (current_password: string, new_password: string) =>
+  fetchJSON<{ success: boolean; message: string }>('/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ current_password, new_password }),
+  })
 export const authMfaSetup = () =>
   fetchJSON<MfaSetupResponse>('/auth/mfa/setup', { method: 'POST' })
 export const authMfaVerify = (code: string) =>

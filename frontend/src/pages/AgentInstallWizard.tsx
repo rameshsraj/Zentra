@@ -4,7 +4,9 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import {
   registerAgent, listAgents, getAgentLogsByDc,
   getComponentsByDc, confirmComponents,
-  type AgentLogLine, type DiscoveredComponent,
+  listOrgEnrollmentKeys, createOrgEnrollmentKey, updateOrgEnrollmentKey, revokeOrgEnrollmentKey,
+  listOrgEnrollmentRegistrations,
+  type AgentLogLine, type DiscoveredComponent, type OrgEnrollmentKey,
 } from '@/lib/api/fleet'
 import PageHeader from '@/components/PageHeader'
 import {
@@ -16,6 +18,8 @@ import {
 type Step = 1 | 2 | 3 | 4
 
 const STEP_LABELS = ['Register Datacenter', 'Install Agent', 'Waiting for Connection', 'Targets Discovered']
+
+type StepOneTab = 'datacenter' | 'orgkey'
 
 // ── Agent Log Tail (live) ──────────────────────────────────────────
 
@@ -121,11 +125,42 @@ function AgentLogTail({ dcName, defaultOpen = true }: { dcName: string; defaultO
 // ── Step 1: Register Datacenter ────────────────────────────────────
 
 function StepRegister({ onComplete }: { onComplete: (apiKey: string, dc: string) => void }) {
+  const [tab, setTab] = useState<StepOneTab>('datacenter')
   const [dcName, setDcName] = useState('')
   const [region, setRegion] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [copied, setCopied] = useState(false)
   const [confirmed, setConfirmed] = useState(false)
+  const [newKey, setNewKey] = useState('')
+
+  const { data: keys = [] } = useQuery({
+    queryKey: ['org-enrollment-keys'],
+    queryFn: listOrgEnrollmentKeys,
+    refetchInterval: 30_000,
+    enabled: tab === 'orgkey',
+  })
+  const activeKey = keys[0] as OrgEnrollmentKey | undefined
+
+  const { data: registrations = [] } = useQuery({
+    queryKey: ['org-enrollment-registrations', activeKey?.id],
+    queryFn: () => listOrgEnrollmentRegistrations(activeKey!.id),
+    enabled: tab === 'orgkey' && !!activeKey?.id,
+    refetchInterval: 30_000,
+  })
+
+  const createKeyMut = useMutation({
+    mutationFn: () => createOrgEnrollmentKey({}),
+    onSuccess: (data) => setNewKey(data.org_key),
+  })
+
+  const revokeKeyMut = useMutation({
+    mutationFn: (id: string) => revokeOrgEnrollmentKey(id),
+  })
+
+  const toggleApprovalMut = useMutation({
+    mutationFn: ({ id, value }: { id: string; value: boolean }) =>
+      updateOrgEnrollmentKey(id, { require_approval: value }),
+  })
 
   const registerMut = useMutation({
     mutationFn: () => registerAgent({ datacenter_name: dcName, region_label: region || undefined }),
@@ -138,9 +173,127 @@ function StepRegister({ onComplete }: { onComplete: (apiKey: string, dc: string)
     setTimeout(() => setCopied(false), 2000)
   }
 
+  if (tab === 'orgkey') {
+    const installSnippet = `ZENTRA_AGENT_MODE=remote \\
+ZENTRA_API_ENDPOINT=${window.location.protocol}//${window.location.hostname}:5006 \\
+ZENTRA_ORG_KEY=${newKey || `${activeKey?.display_prefix}...`} \\
+./zentra-agent`
+
+    return (
+      <div className="space-y-6">
+        <div className="flex gap-1 rounded-lg bg-muted p-1 w-fit">
+          <button
+            onClick={() => setTab('datacenter')}
+            className="rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
+          >
+            Register Datacenter
+          </button>
+          <button
+            onClick={() => setTab('orgkey')}
+            className="rounded-md px-3 py-1.5 text-sm font-medium bg-background shadow-sm"
+          >
+            Organization Key
+          </button>
+        </div>
+
+        <div className="rounded-lg border border-border bg-card p-4 space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="text-base font-semibold">Organization Enrollment Key</h3>
+              <p className="text-xs text-muted-foreground mt-1">Use one shared isok_ key to install agents on any server in this org.</p>
+            </div>
+            <button
+              onClick={() => createKeyMut.mutate()}
+              className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+            >
+              Generate New Key
+            </button>
+          </div>
+
+          {(newKey || activeKey) && (
+            <div className="rounded-lg border border-border p-3 bg-muted/20 space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-sm">{newKey || `${activeKey?.display_prefix}••••••••••`}</span>
+                {newKey && (
+                  <button
+                    onClick={() => navigator.clipboard.writeText(newKey)}
+                    className="rounded px-2 py-1 text-xs bg-zinc-700 text-zinc-100 hover:bg-zinc-600"
+                  >
+                    Copy
+                  </button>
+                )}
+              </div>
+              {activeKey && (
+                <div className="flex flex-wrap items-center gap-3 text-xs">
+                  <span className="text-muted-foreground">Max registrations/hour: <span className="text-foreground">{activeKey.max_registrations_per_hour}</span></span>
+                  <span className="text-muted-foreground">Allowed CIDR: <span className="text-foreground">{activeKey.allowed_cidr ?? 'Any'}</span></span>
+                  <label className="inline-flex items-center gap-1 text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={activeKey.require_approval}
+                      onChange={(e) => toggleApprovalMut.mutate({ id: activeKey.id, value: e.target.checked })}
+                    />
+                    Require manual approval
+                  </label>
+                  <button
+                    onClick={() => revokeKeyMut.mutate(activeKey.id)}
+                    className="rounded bg-red-600 px-2 py-1 text-white hover:bg-red-700"
+                  >
+                    Revoke Key
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Install Steps</p>
+            <ol className="list-decimal list-inside text-sm text-muted-foreground space-y-1">
+              <li>Generate or copy the organization key above.</li>
+              <li>Run the install command on each server (same key for all servers).</li>
+              <li>Each server receives a unique isak_ key automatically at registration.</li>
+              <li>Continue in this wizard using Register Datacenter tab.</li>
+            </ol>
+            <CopyBlock text={installSnippet} label="Quick Install Command" />
+          </div>
+
+          {registrations.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Recent Registrations</p>
+              <div className="rounded-lg border border-border overflow-hidden">
+                {registrations.slice(0, 5).map((r) => (
+                  <div key={r.id} className="px-3 py-2 text-xs border-b last:border-b-0 border-border flex items-center justify-between">
+                    <span className="font-mono text-muted-foreground">{r.request_ip ?? 'n/a'}</span>
+                    <span>{r.hostname ?? 'unknown-host'}</span>
+                    <span className="text-muted-foreground">{new Date(r.created_at).toLocaleString()}</span>
+                    <span className={r.status === 'registered' ? 'text-green-400' : 'text-yellow-400'}>{r.status}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   if (apiKey) {
     return (
       <div className="space-y-6">
+        <div className="flex gap-1 rounded-lg bg-muted p-1 w-fit">
+          <button
+            onClick={() => setTab('datacenter')}
+            className="rounded-md px-3 py-1.5 text-sm font-medium bg-background shadow-sm"
+          >
+            Register Datacenter
+          </button>
+          <button
+            onClick={() => setTab('orgkey')}
+            className="rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
+          >
+            Organization Key
+          </button>
+        </div>
         <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-4">
           <div className="flex items-center gap-2 text-yellow-400 font-medium mb-2">
             <AlertTriangle className="h-5 w-5" />
@@ -175,41 +328,58 @@ function StepRegister({ onComplete }: { onComplete: (apiKey: string, dc: string)
   }
 
   return (
-    <form
-      onSubmit={(e) => { e.preventDefault(); registerMut.mutate() }}
-      className="space-y-4 max-w-md"
-    >
-      <div>
-        <label className="block text-sm font-medium text-slate-200 mb-1">Datacenter Name</label>
-        <input
-          value={dcName}
-          onChange={(e) => setDcName(e.target.value)}
-          required
-          placeholder="e.g. us-east-prod"
-          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
+    <div className="space-y-4">
+      <div className="flex gap-1 rounded-lg bg-muted p-1 w-fit">
+        <button
+          onClick={() => setTab('datacenter')}
+          className="rounded-md px-3 py-1.5 text-sm font-medium bg-background shadow-sm"
+        >
+          Register Datacenter
+        </button>
+        <button
+          onClick={() => setTab('orgkey')}
+          className="rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:text-foreground"
+        >
+          Organization Key
+        </button>
       </div>
-      <div>
-        <label className="block text-sm font-medium text-slate-200 mb-1">Region Label (optional)</label>
-        <input
-          value={region}
-          onChange={(e) => setRegion(e.target.value)}
-          placeholder="e.g. US East"
-          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-      </div>
-      <button
-        type="submit"
-        disabled={!dcName.trim() || registerMut.isPending}
-        className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40 transition-colors"
+
+      <form
+        onSubmit={(e) => { e.preventDefault(); registerMut.mutate() }}
+        className="space-y-4 max-w-md"
       >
-        {registerMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Server className="h-4 w-4" />}
-        Register
-      </button>
-      {registerMut.isError && (
-        <p className="text-sm text-red-400">{(registerMut.error as Error).message}</p>
-      )}
-    </form>
+        <div>
+          <label className="block text-sm font-medium text-slate-200 mb-1">Datacenter Name</label>
+          <input
+            value={dcName}
+            onChange={(e) => setDcName(e.target.value)}
+            required
+            placeholder="e.g. us-east-prod"
+            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-200 mb-1">Region Label (optional)</label>
+          <input
+            value={region}
+            onChange={(e) => setRegion(e.target.value)}
+            placeholder="e.g. US East"
+            className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={!dcName.trim() || registerMut.isPending}
+          className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40 transition-colors"
+        >
+          {registerMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Server className="h-4 w-4" />}
+          Register
+        </button>
+        {registerMut.isError && (
+          <p className="text-sm text-red-400">{(registerMut.error as Error).message}</p>
+        )}
+      </form>
+    </div>
   )
 }
 

@@ -12,6 +12,70 @@ export interface Agent {
   os_name: string | null
   active_target_count: number
   created_at: string
+  key_status?: 'active' | 'expiring_soon' | 'expired' | 'revoked'
+  key_expires_at?: string | null
+  registered_ip?: string | null
+}
+
+export interface OrgEnrollmentKey {
+  id: string
+  display_prefix: string
+  enabled: boolean
+  max_registrations_per_hour: number
+  allowed_cidr: string | null
+  require_approval: boolean
+  expires_at: string | null
+  created_at: string
+  last_used_at: string | null
+  registration_count: number
+}
+
+export function listOrgEnrollmentKeys(): Promise<OrgEnrollmentKey[]> {
+  return fetchJSON<OrgEnrollmentKey[]>('/org-enrollment-keys')
+}
+
+export function createOrgEnrollmentKey(body: {
+  max_registrations_per_hour?: number
+  allowed_cidr?: string
+  require_approval?: boolean
+  expires_at?: string
+}): Promise<{ id: string; org_key: string; display_prefix: string; warning: string }> {
+  return fetchJSON('/org-enrollment-keys', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export function updateOrgEnrollmentKey(
+  id: string,
+  body: {
+    enabled?: boolean
+    max_registrations_per_hour?: number
+    allowed_cidr?: string
+    require_approval?: boolean
+    expires_at?: string
+  }
+): Promise<{ updated: boolean; id: string }> {
+  return fetchJSON(`/org-enrollment-keys/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+}
+
+export function revokeOrgEnrollmentKey(id: string): Promise<{ revoked: boolean; id: string }> {
+  return fetchJSON(`/org-enrollment-keys/${id}`, { method: 'DELETE' })
+}
+
+export function listOrgEnrollmentRegistrations(id: string): Promise<Array<{
+  id: string
+  agent_id: string | null
+  request_ip: string | null
+  hostname: string | null
+  status: string
+  reason: string | null
+  created_at: string
+}>> {
+  return fetchJSON(`/org-enrollment-keys/${id}/registrations`)
 }
 
 export interface RegisterAgentResponse {

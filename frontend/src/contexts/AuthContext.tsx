@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
 import { authLogin, authLogout, authMe, LoginRequest, LoginResponse, UserProfile } from '../lib/api'
+import { clearAuthTokens, getAccessToken, setAuthTokens } from '../lib/authStorage'
 
 interface AuthState {
   user: UserProfile | null
@@ -27,13 +28,13 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({
     user: null,
-    isAuthenticated: !!localStorage.getItem('Zentra_token'),
+    isAuthenticated: !!getAccessToken(),
     isLoading: true,
     error: null,
   })
 
   const refreshProfile = useCallback(async () => {
-    const token = localStorage.getItem('Zentra_token')
+    const token = getAccessToken()
     if (!token) {
       setState({ user: null, isAuthenticated: false, isLoading: false, error: null })
       return
@@ -43,8 +44,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setState({ user: profile, isAuthenticated: true, isLoading: false, error: null })
     } catch {
       setState({ user: null, isAuthenticated: false, isLoading: false, error: null })
-      localStorage.removeItem('Zentra_token')
-      localStorage.removeItem('Zentra_refresh_token')
+      clearAuthTokens()
     }
   }, [])
 
@@ -69,8 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setState(s => ({ ...s, isLoading: false }))
         return res
       }
-      localStorage.setItem('Zentra_token', res.token)
-      localStorage.setItem('Zentra_refresh_token', res.refresh_token)
+      setAuthTokens(res.token, res.refresh_token)
       // Reset sidebar menu state on new login
       localStorage.removeItem('zentra-sidebar-expanded')
       // Fetch full profile
@@ -88,8 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await authLogout()
     } catch { /* ignore */ }
-    localStorage.removeItem('Zentra_token')
-    localStorage.removeItem('Zentra_refresh_token')
+    clearAuthTokens()
     // Reset sidebar menu state on logout
     localStorage.removeItem('zentra-sidebar-expanded')
     setState({ user: null, isAuthenticated: false, isLoading: false, error: null })
