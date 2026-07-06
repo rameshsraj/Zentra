@@ -59,69 +59,92 @@ CREATE INDEX IF NOT EXISTS idx_sam_org_time
 
 -- Retention policy: keep 90 days of detailed data
 -- (TimescaleDB will automatically drop old chunks)
-SELECT add_retention_policy('storage_array_metrics', INTERVAL '90 days',
-    if_not_exists => TRUE);
+DO $$ BEGIN
+    PERFORM add_retention_policy('storage_array_metrics', INTERVAL '90 days', if_not_exists => TRUE);
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'Retention policy skipped (TimescaleDB Community license required): %', SQLERRM;
+END $$;
 
 -- Continuous aggregate for hourly rollups (dashboard overview)
-CREATE MATERIALIZED VIEW IF NOT EXISTS storage_array_metrics_hourly
-WITH (timescaledb.continuous) AS
-SELECT
-    time_bucket('1 hour', timestamp) AS bucket,
-    org_id,
-    target_id,
-    array_name,
-    AVG(total_tb)           AS avg_total_tb,
-    AVG(used_tb)            AS avg_used_tb,
-    AVG(utilization_pct)    AS avg_utilization_pct,
-    AVG(iops)               AS avg_iops,
-    MAX(iops)               AS max_iops,
-    AVG(throughput_mb)      AS avg_throughput_mb,
-    MAX(throughput_mb)      AS max_throughput_mb,
-    AVG(latency_ms)         AS avg_latency_ms,
-    MAX(latency_ms)         AS max_latency_ms,
-    AVG(data_reduction_ratio) AS avg_data_reduction,
-    MAX(alert_count)        AS max_alerts,
-    COUNT(*)                AS sample_count
-FROM storage_array_metrics
-GROUP BY bucket, org_id, target_id, array_name
-WITH NO DATA;
+DO $$ BEGIN
+    EXECUTE $agg$
+    CREATE MATERIALIZED VIEW IF NOT EXISTS storage_array_metrics_hourly
+    WITH (timescaledb.continuous) AS
+    SELECT
+        time_bucket('1 hour', timestamp) AS bucket,
+        org_id,
+        target_id,
+        array_name,
+        AVG(total_tb)           AS avg_total_tb,
+        AVG(used_tb)            AS avg_used_tb,
+        AVG(utilization_pct)    AS avg_utilization_pct,
+        AVG(iops)               AS avg_iops,
+        MAX(iops)               AS max_iops,
+        AVG(throughput_mb)      AS avg_throughput_mb,
+        MAX(throughput_mb)      AS max_throughput_mb,
+        AVG(latency_ms)         AS avg_latency_ms,
+        MAX(latency_ms)         AS max_latency_ms,
+        AVG(data_reduction_ratio) AS avg_data_reduction,
+        MAX(alert_count)        AS max_alerts,
+        COUNT(*)                AS sample_count
+    FROM storage_array_metrics
+    GROUP BY bucket, org_id, target_id, array_name
+    WITH NO DATA
+    $agg$;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'storage_array_metrics_hourly aggregate skipped (TimescaleDB Community license required): %', SQLERRM;
+END $$;
 
 -- Refresh policy: compute hourly rollups, refreshing last 3 hours
-SELECT add_continuous_aggregate_policy('storage_array_metrics_hourly',
-    start_offset    => INTERVAL '3 hours',
-    end_offset      => INTERVAL '1 hour',
-    schedule_interval => INTERVAL '1 hour',
-    if_not_exists   => TRUE);
+DO $$ BEGIN
+    PERFORM add_continuous_aggregate_policy('storage_array_metrics_hourly',
+        start_offset    => INTERVAL '3 hours',
+        end_offset      => INTERVAL '1 hour',
+        schedule_interval => INTERVAL '1 hour',
+        if_not_exists   => TRUE);
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'storage_array_metrics_hourly refresh policy skipped (TimescaleDB Community license required): %', SQLERRM;
+END $$;
 
 -- Daily rollups for long-term capacity trending
-CREATE MATERIALIZED VIEW IF NOT EXISTS storage_array_metrics_daily
-WITH (timescaledb.continuous) AS
-SELECT
-    time_bucket('1 day', timestamp) AS bucket,
-    org_id,
-    target_id,
-    array_name,
-    AVG(total_tb)           AS avg_total_tb,
-    AVG(used_tb)            AS avg_used_tb,
-    MAX(used_tb)            AS max_used_tb,
-    AVG(utilization_pct)    AS avg_utilization_pct,
-    MAX(utilization_pct)    AS max_utilization_pct,
-    AVG(iops)               AS avg_iops,
-    MAX(iops)               AS peak_iops,
-    AVG(throughput_mb)      AS avg_throughput_mb,
-    AVG(latency_ms)         AS avg_latency_ms,
-    MAX(latency_ms)         AS peak_latency_ms,
-    AVG(data_reduction_ratio) AS avg_data_reduction,
-    MAX(snapshot_count)     AS max_snapshots,
-    MAX(volume_count)       AS max_volumes,
-    MAX(alert_count)        AS max_alerts,
-    COUNT(*)                AS sample_count
-FROM storage_array_metrics
-GROUP BY bucket, org_id, target_id, array_name
-WITH NO DATA;
+DO $$ BEGIN
+    EXECUTE $agg$
+    CREATE MATERIALIZED VIEW IF NOT EXISTS storage_array_metrics_daily
+    WITH (timescaledb.continuous) AS
+    SELECT
+        time_bucket('1 day', timestamp) AS bucket,
+        org_id,
+        target_id,
+        array_name,
+        AVG(total_tb)           AS avg_total_tb,
+        AVG(used_tb)            AS avg_used_tb,
+        MAX(used_tb)            AS max_used_tb,
+        AVG(utilization_pct)    AS avg_utilization_pct,
+        MAX(utilization_pct)    AS max_utilization_pct,
+        AVG(iops)               AS avg_iops,
+        MAX(iops)               AS peak_iops,
+        AVG(throughput_mb)      AS avg_throughput_mb,
+        AVG(latency_ms)         AS avg_latency_ms,
+        MAX(latency_ms)         AS peak_latency_ms,
+        AVG(data_reduction_ratio) AS avg_data_reduction,
+        MAX(snapshot_count)     AS max_snapshots,
+        MAX(volume_count)       AS max_volumes,
+        MAX(alert_count)        AS max_alerts,
+        COUNT(*)                AS sample_count
+    FROM storage_array_metrics
+    GROUP BY bucket, org_id, target_id, array_name
+    WITH NO DATA
+    $agg$;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'storage_array_metrics_daily aggregate skipped (TimescaleDB Community license required): %', SQLERRM;
+END $$;
 
-SELECT add_continuous_aggregate_policy('storage_array_metrics_daily',
-    start_offset    => INTERVAL '3 days',
-    end_offset      => INTERVAL '1 day',
-    schedule_interval => INTERVAL '1 day',
-    if_not_exists   => TRUE);
+DO $$ BEGIN
+    PERFORM add_continuous_aggregate_policy('storage_array_metrics_daily',
+        start_offset    => INTERVAL '3 days',
+        end_offset      => INTERVAL '1 day',
+        schedule_interval => INTERVAL '1 day',
+        if_not_exists   => TRUE);
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'storage_array_metrics_daily refresh policy skipped (TimescaleDB Community license required): %', SQLERRM;
+END $$;
