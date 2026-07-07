@@ -164,7 +164,10 @@ function StepRegister({ onComplete }: { onComplete: (apiKey: string, dc: string)
 
   const registerMut = useMutation({
     mutationFn: () => registerAgent({ datacenter_name: dcName, region_label: region || undefined }),
-    onSuccess: (data) => setApiKey(data.agent_key),
+    onSuccess: (data) => {
+      const key = (data as any).agent_key || (data as any).org_key || ''
+      setApiKey(key)
+    },
   })
 
   const handleCopy = () => {
