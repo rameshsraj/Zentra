@@ -169,14 +169,11 @@ build_frontend() {
 # ── Step 4: Restart services ───────────────────────────────────────────────────
 restart_services() {
     info "Restarting services..."
-    run_remote "
+    (
         set -e
-
-        # Restart main application services
         systemctl restart zentra-api
         systemctl restart zentra-frontend
 
-        # nginx: reload config if running, start fresh if stopped
         if systemctl is-active --quiet nginx; then
             systemctl reload nginx
         else
@@ -185,19 +182,18 @@ restart_services() {
             systemctl start nginx
         fi
 
-        # Verify all services came up
         echo ''
         echo 'Service status:'
         for svc in zentra-api zentra-frontend nginx; do
-            if systemctl is-active --quiet \$svc; then
-                echo \"  ✓ \$svc is running\"
+            if systemctl is-active --quiet "$svc"; then
+                echo "  ✓ $svc is running"
             else
-                echo \"  ✗ \$svc FAILED\" >&2
-                systemctl status \$svc --no-pager -l 2>&1 | tail -15 >&2
+                echo "  ✗ $svc FAILED" >&2
+                systemctl status "$svc" --no-pager -l 2>&1 | tail -15 >&2
                 exit 1
             fi
         done
-    " || die "Service restart failed — run: journalctl -u zentra-api -n 50"
+    ) || die "Service restart failed — run: journalctl -u zentra-api -n 50"
     ok "All services running"
 }
 
