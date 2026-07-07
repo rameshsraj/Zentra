@@ -67,7 +67,6 @@ END $$;
 
 -- Continuous aggregate for hourly rollups (dashboard overview)
 DO $$ BEGIN
-    EXECUTE $agg$
     EXECUTE $DDL$
     CREATE MATERIALIZED VIEW IF NOT EXISTS storage_array_metrics_hourly
     WITH (timescaledb.continuous) AS
@@ -91,9 +90,6 @@ DO $$ BEGIN
     FROM storage_array_metrics
     GROUP BY bucket, org_id, target_id, array_name
     WITH NO DATA
-    $agg$;
-EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE 'storage_array_metrics_hourly aggregate skipped (TimescaleDB Community license required): %', SQLERRM;
     $DDL$;
 EXCEPTION WHEN OTHERS THEN
     RAISE NOTICE 'Continuous aggregate (hourly) skipped (TimescaleDB Community license required): %', SQLERRM;
@@ -113,7 +109,6 @@ END $$;
 
 -- Daily rollups for long-term capacity trending
 DO $$ BEGIN
-    EXECUTE $agg$
     EXECUTE $DDL$
     CREATE MATERIALIZED VIEW IF NOT EXISTS storage_array_metrics_daily
     WITH (timescaledb.continuous) AS
@@ -140,9 +135,6 @@ DO $$ BEGIN
     FROM storage_array_metrics
     GROUP BY bucket, org_id, target_id, array_name
     WITH NO DATA
-    $agg$;
-EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE 'storage_array_metrics_daily aggregate skipped (TimescaleDB Community license required): %', SQLERRM;
     $DDL$;
 EXCEPTION WHEN OTHERS THEN
     RAISE NOTICE 'Continuous aggregate (daily) skipped (TimescaleDB Community license required): %', SQLERRM;
