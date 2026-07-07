@@ -395,7 +395,7 @@ pub async fn register_agent(
             "INSERT INTO agent_api_keys
              (org_id, agent_id, key_hash, display_prefix, enabled, registered_ip, ip_locked,
               expires_at, last_rotated_at, enrollment_key_id, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6::inet, true, NOW() + INTERVAL '1 year', NOW(), $7, NOW(), NOW())",
+             VALUES ($1, $2, $3, $4, $5, $6::inet, false, NOW() + INTERVAL '1 year', NOW(), $7, NOW(), NOW())",
         )
         .bind(org_id)
         .bind(agent_id)
@@ -856,7 +856,7 @@ pub async fn rotate_agent_key(
         "INSERT INTO agent_api_keys
          (org_id, agent_id, key_hash, display_prefix, enabled, registered_ip, ip_locked,
           expires_at, last_rotated_at, enrollment_key_id, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, true, $5::inet, true, NOW() + INTERVAL '1 year', NOW(), $6, NOW(), NOW())
+         VALUES ($1, $2, $3, $4, true, $5::inet, false, NOW() + INTERVAL '1 year', NOW(), $6, NOW(), NOW())
          RETURNING id",
     )
     .bind(auth.org_id)
