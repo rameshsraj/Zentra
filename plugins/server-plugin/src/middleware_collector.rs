@@ -1,5 +1,6 @@
 use zentra_core::models::metric::Metric;
 use zentra_core::models::target::Target;
+use tracing::warn;
 
 fn mw_metric(name: &str, value: f64, resource: &str, target: &Target) -> Metric {
     Metric::new(name, value, resource)

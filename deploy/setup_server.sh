@@ -57,11 +57,24 @@ wait_for_apt_locks() {
 }
 
 ensure_timescaledb_installed() {
-    if [[ -f "/usr/share/postgresql/17/extension/timescaledb.control" ]]; then
+    # Detect the installed PostgreSQL major version
+    local pg_ver
+    pg_ver="$(psql --version 2>/dev/null | grep -oP '(?<=PostgreSQL )\d+' | head -n1 || true)"
+    if [[ -z "${pg_ver}" ]]; then
+        pg_ver="$(ls /etc/postgresql 2>/dev/null | sort -V | tail -n1 || true)"
+    fi
+    if [[ -z "${pg_ver}" ]]; then
+        echo "Cannot detect PostgreSQL version for TimescaleDB install" >&2
+        exit 1
+    fi
+    echo "Detected PostgreSQL version: ${pg_ver}"
+
+    if [[ -f "/usr/share/postgresql/${pg_ver}/extension/timescaledb.control" ]]; then
+        echo "TimescaleDB already installed for PostgreSQL ${pg_ver}."
         return 0
     fi
 
-    echo "Installing TimescaleDB extension for PostgreSQL 17..."
+    echo "Installing TimescaleDB extension for PostgreSQL ${pg_ver}..."
     if ! grep -Rqs "packagecloud.io/timescale/timescaledb" /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
         curl -fsSL https://packagecloud.io/install/repositories/timescale/timescaledb/script.deb.sh | bash
     fi
@@ -69,10 +82,10 @@ ensure_timescaledb_installed() {
     wait_for_apt_locks
     apt-get update -y
     wait_for_apt_locks
-    if ! apt-get install -y timescaledb-2-postgresql-17 timescaledb-tools; then
-        echo "timescaledb-2-postgresql-17 install failed; trying postgresql-17-timescaledb fallback..."
+    if ! apt-get install -y "timescaledb-2-postgresql-${pg_ver}" timescaledb-tools; then
+        echo "timescaledb-2-postgresql-${pg_ver} failed; trying postgresql-${pg_ver}-timescaledb fallback..."
         wait_for_apt_locks
-        apt-get install -y postgresql-17-timescaledb || {
+        apt-get install -y "postgresql-${pg_ver}-timescaledb" || {
             echo "TimescaleDB package install failed. Ensure the OS is supported by the TimescaleDB repository." >&2
             exit 1
         }
@@ -159,8 +172,10 @@ EOF
 fi
 
 systemctl enable postgresql
-if command -v pg_ctlcluster >/dev/null 2>&1; then
-    pg_ctlcluster 17 main restart
+# Detect installed PG version for pg_ctlcluster
+_PG_VER="$(ls /etc/postgresql 2>/dev/null | sort -V | tail -n1 || true)"
+if command -v pg_ctlcluster >/dev/null 2>&1 && [[ -n "${_PG_VER}" ]]; then
+    pg_ctlcluster "${_PG_VER}" main restart
 else
     systemctl restart postgresql
 fi

@@ -99,9 +99,9 @@ pub fn is_public_path(method: &Method, path: &str) -> bool {
     ) {
         return true;
     }
-    // /metrics is served for Prometheus scrapers. Restrict access at the
-    // network layer (firewall / nginx) — do not expose port 5006 externally.
-    if path == "/metrics" {
+    // /metrics is sensitive. It can be made public for trusted Prometheus
+    // network paths, but defaults to authenticated access.
+    if path == "/metrics" && std::env::var("ZENTRA_PUBLIC_METRICS").ok().as_deref() == Some("1") {
         return true;
     }
     // WebSocket endpoints authenticate via query-string token validated
@@ -117,7 +117,56 @@ fn unauthorized(reason: &str) -> Response {
         .into_response()
 }
 
+fn forbidden(reason: &str) -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(json!({"error": "forbidden", "message": reason})),
+    )
+        .into_response()
+}
+
+fn is_agent_scope_path(method: &Method, path: &str) -> bool {
+    if (*method == Method::POST && path == "/api/agents/heartbeat")
+        || (*method == Method::POST && path == "/api/agent/ingest/heartbeat")
+        || (*method == Method::GET && path == "/api/agents/targets")
+        || (*method == Method::GET && path == "/api/agents/log-dirs")
+        || (*method == Method::POST && path.starts_with("/api/agents/") && path.ends_with("/discovered"))
+        || (*method == Method::POST && path.starts_with("/api/agents/") && path.ends_with("/rotate-key"))
+        || (*method == Method::POST && path.starts_with("/api/agents/by-dc/") && path.ends_with("/components"))
+        || (*method == Method::POST && matches!(path, "/v1/metrics" | "/v1/logs" | "/api/agent/ingest/metrics" | "/api/agent/ingest/logs"))
+    {
+        return true;
+    }
+    false
+}
+
 pub async fn require_auth(State(state): State<AppState>, mut req: Request<Body>, next: Next) -> Response {
+    let path = req.uri().path().to_string();
+
+    let bearer = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned);
+
+    if let Some(token) = bearer.as_deref() {
+        if token.starts_with("isok_") {
+            if *req.method() == Method::POST && path == "/api/agents/register" {
+                return next.run(req).await;
+            }
+            return forbidden("Org enrollment key can only access POST /api/agents/register");
+        }
+        if token.starts_with("isak_") {
+            if !is_agent_scope_path(req.method(), &path) {
+                return forbidden("Agent key is not allowed on this endpoint");
+            }
+            return next.run(req).await;
+        }
+    }
+
     if is_public_path(req.method(), req.uri().path()) {
         return next.run(req).await;
     }
@@ -175,6 +224,22 @@ pub async fn require_auth(State(state): State<AppState>, mut req: Request<Body>,
     let ctx: AuthContext = claims.into();
     req.extensions_mut().insert(ctx);
     next.run(req).await
+}
+
+fn is_admin_role(role: &str) -> bool {
+    matches!(role, "Admin" | "Org Admin" | "Super Admin")
+}
+
+pub async fn require_admin_role(req: Request<Body>, next: Next) -> Response {
+    match req.extensions().get::<AuthContext>() {
+        Some(ctx) if is_admin_role(&ctx.role) => next.run(req).await,
+        Some(_) => (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "forbidden", "message": "Admin role required"})),
+        )
+            .into_response(),
+        None => unauthorized("auth context missing"),
+    }
 }
 
 /// Helper for handlers: pull the AuthContext out of request extensions.

@@ -8,10 +8,18 @@
 .env.test
 deploy/deploy.env
 .claude
+.gitignore
 
 # Build artifacts
 /target/
+/frontend/dist/
+*.tsbuildinfo
 build_output.txt
+
+# Package manager dependencies
+node_modules/*
+frontend/node_modules/*
+docs/node_modules/
 
 # OS
 .DS_Store

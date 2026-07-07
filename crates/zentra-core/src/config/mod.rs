@@ -14,8 +14,12 @@ pub struct AppConfig {
     pub agent_mode: String,
     /// Zentra server API endpoint (required in remote mode)
     pub api_endpoint: String,
-    /// Agent API key for remote mode (must start with "isok_")
-    pub agent_api_key: String,
+    /// Org enrollment key used only for initial registration (isok_)
+    pub org_key: String,
+    /// Agent operational key used after registration (isak_)
+    pub agent_key: String,
+    /// Path where the operational key is stored on disk
+    pub agent_key_path: String,
     /// Datacenter name for heartbeat and OTLP resource attributes
     pub dc_name: String,
     /// Offline buffer directory for remote mode
@@ -37,7 +41,9 @@ impl Default for AppConfig {
             max_plugins: 20,
             agent_mode: "local".into(),
             api_endpoint: String::new(),
-            agent_api_key: String::new(),
+            org_key: String::new(),
+            agent_key: String::new(),
+            agent_key_path: String::new(),
             dc_name: String::new(),
             buffer_dir: String::new(),
             agent_id: None,
@@ -87,12 +93,49 @@ impl AppConfig {
                 std::process::exit(2);
             }
 
-            if let Ok(v) = std::env::var("ZENTRA_AGENT_API_KEY") {
-                config.agent_api_key = v;
+            if let Ok(v) = std::env::var("ZENTRA_ORG_KEY") {
+                config.org_key = v;
             }
-            if config.agent_api_key.is_empty() || !config.agent_api_key.starts_with("isok_") {
-                eprintln!("FATAL: ZENTRA_AGENT_API_KEY is required and must start with 'isok_' when ZENTRA_AGENT_MODE=remote");
+
+            if let Ok(v) = std::env::var("ZENTRA_AGENT_KEY") {
+                config.agent_key = v;
+            }
+
+            if let Ok(v) = std::env::var("ZENTRA_AGENT_API_KEY") {
+                if v.starts_with("isok_") && config.org_key.is_empty() {
+                    config.org_key = v;
+                } else if v.starts_with("isak_") && config.agent_key.is_empty() {
+                    config.agent_key = v;
+                }
+            }
+
+            if config.org_key.is_empty() && config.agent_key.is_empty() {
+                eprintln!("FATAL: set ZENTRA_ORG_KEY (isok_) for first registration or ZENTRA_AGENT_KEY (isak_) for existing agents");
                 std::process::exit(2);
+            }
+
+            if !config.org_key.is_empty() && !config.org_key.starts_with("isok_") {
+                eprintln!("FATAL: ZENTRA_ORG_KEY must start with 'isok_'");
+                std::process::exit(2);
+            }
+            if !config.agent_key.is_empty() && !config.agent_key.starts_with("isak_") {
+                eprintln!("FATAL: ZENTRA_AGENT_KEY must start with 'isak_'");
+                std::process::exit(2);
+            }
+
+            if let Ok(v) = std::env::var("ZENTRA_AGENT_KEY_PATH") {
+                config.agent_key_path = v;
+            }
+            if config.agent_key_path.is_empty() {
+                #[cfg(target_os = "windows")]
+                {
+                    let base = std::env::var("ProgramData").unwrap_or_else(|_| "C:\\ProgramData".to_string());
+                    config.agent_key_path = format!("{}\\Zentra\\agent.key", base);
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    config.agent_key_path = "/etc/Zentra/agent.key".to_string();
+                }
             }
         } else if config.database_url.is_empty() {
             eprintln!("FATAL: DATABASE_URL environment variable is not set.");

@@ -1,1 +1,0 @@
-import{e as t}from"./index-zGz0tQmY.js";const o=()=>t("/alerts"),a=e=>t(`/alerts/${e}/acknowledge`,{method:"PUT"}),n=e=>t(`/alerts/${e}/resolve`,{method:"PUT"}),r=()=>t("/alert-rules"),l=()=>t("/notifications/channels"),c=()=>t("/notifications/history");export{a,r as b,l as c,c as d,o as g,n as r};
