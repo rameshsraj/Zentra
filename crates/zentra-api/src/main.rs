@@ -96,9 +96,12 @@ async fn main() {
     // ============================================================
     // Run database migrations (idempotent — all use IF NOT EXISTS)
     // ============================================================
-    match sqlx::migrate!("../../migrations").run(&pool).await {
+    match sqlx::migrate!("../../migrations").run(&tsdb_pool).await {
         Ok(_) => info!("Database migrations applied successfully"),
-        Err(e) => warn!("Migration runner returned error (tables may already exist): {e}"),
+        Err(e) => {
+            warn!("Migration runner error: {e}");
+            warn!("Some migrations may have been skipped. Check _sqlx_migrations table.");
+        }
     }
 
     // ============================================================
