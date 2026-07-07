@@ -80,7 +80,7 @@ export function listOrgEnrollmentRegistrations(id: string): Promise<Array<{
 
 export interface RegisterAgentResponse {
   agent_id: string
-  api_key: string
+  agent_key: string
   message: string
 }
 
