@@ -9,8 +9,8 @@ pub fn router() -> Router<AppState> {
         .route("/v1/metrics", post(handlers::otlp::ingest_metrics))
         .route("/v1/logs", post(handlers::otlp::ingest_logs))
         .route("/v1/profiles", post(handlers::otlp::ingest_profiles))
-        .route("/api/agent/ingest/metrics", post(handlers::otlp::ingest_metrics))
-        .route("/api/agent/ingest/logs", post(handlers::otlp::ingest_logs))
+        .route("/api/agent/ingest/metrics", post(handlers::otlp::agent_ingest_metrics))
+        .route("/api/agent/ingest/logs", post(handlers::otlp::agent_ingest_logs))
 
         // OTel P02: Collector Config & Status
         .route("/api/otel/status", get(handlers::otlp::otel_status))

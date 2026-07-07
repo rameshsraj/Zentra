@@ -215,6 +215,93 @@ pub async fn ingest_traces(
     })))
 }
 
+/// POST /api/agent/ingest/metrics — agent-key authenticated metric ingest
+/// Accepts isak_ bearer tokens (agent operational keys), not JWT.
+#[tracing::instrument(skip_all, fields(otel.kind = "server", signal = "metrics"))]
+pub async fn agent_ingest_metrics(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<Value>, ApiError> {
+    let bearer = headers
+        .get("Authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or_else(|| ApiError::Unauthorized("Missing Authorization header".into()))?;
+
+    let (org_id, _perms) = validate_otlp_key(&state, bearer)
+        .await
+        .map_err(|e| ApiError::Unauthorized(e))?;
+
+    let raw = maybe_decompress(&headers, &body)
+        .map_err(|e| ApiError::BadRequest(e))?;
+    let encoding = detect_encoding(&headers);
+    let payload: Value = match encoding {
+        OtlpEncoding::Json => serde_json::from_slice(&raw)
+            .map_err(|e| ApiError::BadRequest(format!("Invalid JSON: {}", e)))?,
+        OtlpEncoding::Protobuf => {
+            return Err(ApiError::BadRequest("Protobuf not supported on agent ingest endpoint".into()));
+        }
+    };
+
+    if let Some(ref queue) = state.ingest_queue {
+        let batch = crate::ingest_queue::IngestBatch {
+            org_id,
+            signal: crate::ingest_queue::Signal::Metrics,
+            payload: payload.clone(),
+            raw_bytes: body.to_vec(),
+        };
+        if queue.try_send(batch).is_err() {
+            return Err(ApiError::ServiceUnavailable("Ingest queue full, try again later".into()));
+        }
+    }
+
+    Ok(Json(json!({ "partialSuccess": null })))
+}
+
+/// POST /api/agent/ingest/logs — agent-key authenticated log ingest
+#[tracing::instrument(skip_all, fields(otel.kind = "server", signal = "logs"))]
+pub async fn agent_ingest_logs(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<Value>, ApiError> {
+    let bearer = headers
+        .get("Authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or_else(|| ApiError::Unauthorized("Missing Authorization header".into()))?;
+
+    let (org_id, _perms) = validate_otlp_key(&state, bearer)
+        .await
+        .map_err(|e| ApiError::Unauthorized(e))?;
+
+    let raw = maybe_decompress(&headers, &body)
+        .map_err(|e| ApiError::BadRequest(e))?;
+    let encoding = detect_encoding(&headers);
+    let payload: Value = match encoding {
+        OtlpEncoding::Json => serde_json::from_slice(&raw)
+            .map_err(|e| ApiError::BadRequest(format!("Invalid JSON: {}", e)))?,
+        OtlpEncoding::Protobuf => {
+            return Err(ApiError::BadRequest("Protobuf not supported on agent ingest endpoint".into()));
+        }
+    };
+
+    if let Some(ref queue) = state.ingest_queue {
+        let batch = crate::ingest_queue::IngestBatch {
+            org_id,
+            signal: crate::ingest_queue::Signal::Logs,
+            payload: payload.clone(),
+            raw_bytes: body.to_vec(),
+        };
+        if queue.try_send(batch).is_err() {
+            return Err(ApiError::ServiceUnavailable("Ingest queue full, try again later".into()));
+        }
+    }
+
+    Ok(Json(json!({ "partialSuccess": null })))
+}
+
 /// POST /v1/metrics — ingest OTLP metrics
 #[tracing::instrument(skip_all, fields(otel.kind = "server", signal = "metrics"))]
 pub async fn ingest_metrics(
