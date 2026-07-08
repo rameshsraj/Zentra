@@ -421,7 +421,7 @@ function StepInstall({ apiKey, dcName, onNext }: { apiKey: string; dcName: strin
 chmod +x zentra-agent && \\
 ZENTRA_AGENT_MODE=remote \\
 ZENTRA_API_ENDPOINT=${apiEndpoint} \\
-ZENTRA_AGENT_API_KEY=${apiKey} \\
+ZENTRA_ORG_KEY=${apiKey} \\
 ZENTRA_DC_NAME=${dcName} \\
 ./zentra-agent`
 
@@ -481,7 +481,7 @@ After=network.target
 Type=simple
 Environment=ZENTRA_AGENT_MODE=remote
 Environment=ZENTRA_API_ENDPOINT=${apiEndpoint}
-Environment=ZENTRA_AGENT_API_KEY=${apiKey}
+Environment=ZENTRA_ORG_KEY=${apiKey}
 Environment=ZENTRA_DC_NAME=${dcName}
 ExecStart=/usr/local/bin/zentra-agent
 Restart=always
@@ -507,7 +507,7 @@ WantedBy=multi-user.target`
   const windowsAgentCmd = `Invoke-WebRequest -Uri "${downloadUrl}/dl/zentra-agent-windows-x86_64.exe" -OutFile zentra-agent.exe
 $env:ZENTRA_AGENT_MODE="remote"
 $env:ZENTRA_API_ENDPOINT="${apiEndpoint}"
-$env:ZENTRA_AGENT_API_KEY="${apiKey}"
+$env:ZENTRA_ORG_KEY="${apiKey}"
 $env:ZENTRA_DC_NAME="${dcName}"
 .\\zentra-agent.exe`
 
@@ -558,7 +558,7 @@ $config | Out-File -FilePath otel-config.yaml -Encoding utf8
   -v /etc:/host/etc:ro \\
   -e ZENTRA_AGENT_MODE=remote \\
   -e ZENTRA_API_ENDPOINT=${apiEndpoint} \\
-  -e ZENTRA_AGENT_API_KEY=${apiKey} \\
+  -e ZENTRA_ORG_KEY=${apiKey} \\
   -e ZENTRA_DC_NAME=${dcName} \\
   zentraio/agent:latest`
 
