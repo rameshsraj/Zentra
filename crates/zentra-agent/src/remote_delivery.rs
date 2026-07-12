@@ -19,6 +19,7 @@ pub struct RemoteDeliveryService {
     api_endpoint: String,
     api_key: String,
     dc_name: String,
+    hostname: String,
     buffer: OfflineBuffer,
 }
 
@@ -33,12 +34,18 @@ impl RemoteDeliveryService {
             .expect("Failed to build HTTP client");
 
         let buffer = OfflineBuffer::new(buffer_dir);
+        let hostname = hostname::get()
+            .ok()
+            .and_then(|h| h.into_string().ok())
+            .filter(|h| !h.trim().is_empty())
+            .unwrap_or_else(|| dc_name.clone());
 
         Self {
             client,
             api_endpoint: api_endpoint.trim_end_matches('/').to_string(),
             api_key,
             dc_name,
+            hostname,
             buffer,
         }
     }
@@ -294,7 +301,9 @@ impl RemoteDeliveryService {
                         "attributes": [
                             {"key": "service.name", "value": {"stringValue": "zentra-agent"}},
                             {"key": "zentra.org_id", "value": {"stringValue": org_id}},
+                            {"key": "zentra.agent_id", "value": {"stringValue": target_id}},
                             {"key": "zentra.target_id", "value": {"stringValue": target_id}},
+                            {"key": "host.name", "value": {"stringValue": self.hostname}},
                             {"key": "zentra.dc_name", "value": {"stringValue": self.dc_name}},
                         ]
                     },

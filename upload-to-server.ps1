@@ -32,6 +32,26 @@ function Write-Ok    { param($msg) Write-Host "    ✓  $msg" -ForegroundColor G
 function Write-Fail  { param($msg) Write-Host "    ✗  $msg" -ForegroundColor Red }
 function Write-Step  { param($msg) Write-Host "    →  $msg" -ForegroundColor Yellow }
 
+function New-FilteredTempCopy {
+    param(
+        [string]$InputFolder,
+        [string[]]$ExcludePatterns
+    )
+
+    $tempDir = Join-Path $env:TEMP "zentra_upload_$(Get-Random)"
+    Write-Step "Creating filtered temp copy at $tempDir"
+    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+
+    $robocopyExcludeDirs = $ExcludePatterns | Where-Object { $_ -notlike "*.*" }
+    $robocopyExcludeFiles = $ExcludePatterns | Where-Object { $_ -like "*.*" }
+    $robocopyArgs = @($InputFolder, $tempDir, "/MIR", "/NP", "/NFL", "/NDL", "/NJH")
+    if ($robocopyExcludeDirs) { $robocopyArgs += "/XD"; $robocopyArgs += $robocopyExcludeDirs }
+    if ($robocopyExcludeFiles) { $robocopyArgs += "/XF"; $robocopyArgs += $robocopyExcludeFiles }
+    & robocopy @robocopyArgs | Out-Null
+
+    return $tempDir
+}
+
 # ── Validate source folder ────────────────────────────────────────────────────
 if (-not (Test-Path $SourceFolder)) {
     Write-Fail "Source folder not found: $SourceFolder"
@@ -40,30 +60,36 @@ if (-not (Test-Path $SourceFolder)) {
 $SourceFolder = (Resolve-Path $SourceFolder).Path.TrimEnd('\').TrimEnd('/')
 
 # ── Detect upload tool ────────────────────────────────────────────────────────
-# Prefer rsync (via WSL or native), then scp, then pscp (PuTTY)
-$UseRsync  = $false
-$UseScp    = $false
-$UsePscp   = $false
+# Priority when a password is supplied:
+#   1. native rsync  (rare on Windows)
+#   2. pscp (PuTTY)  — supports -pw natively, no sshpass needed
+#   3. scp           — only usable non-interactively if sshpass is present
+#   4. WSL rsync     — last resort; may not reach all network targets
+$UseRsync = $false
+$UseScp = $false
+$UsePscp = $false
 $UseWslRsync = $false
 
 if (Get-Command rsync -ErrorAction SilentlyContinue) {
     $UseRsync = $true
+} elseif (Get-Command pscp -ErrorAction SilentlyContinue) {
+    $UsePscp = $true
+} elseif (Get-Command scp -ErrorAction SilentlyContinue) {
+    if (-not (Get-Command sshpass -ErrorAction SilentlyContinue)) {
+        Write-Step "scp found but sshpass is not available — password cannot be passed non-interactively."
+        Write-Step "Install PuTTY (pscp) for password-based uploads: https://www.putty.org/"
+    }
+    $UseScp = $true
 } elseif (Get-Command wsl -ErrorAction SilentlyContinue) {
     $wslCheck = wsl which rsync 2>$null
     if ($wslCheck) { $UseWslRsync = $true }
 }
 
-if (-not $UseRsync -and -not $UseWslRsync) {
-    if (Get-Command scp -ErrorAction SilentlyContinue) {
-        $UseScp = $true
-    } elseif (Get-Command pscp -ErrorAction SilentlyContinue) {
-        $UsePscp = $true
-    } else {
-        Write-Fail "No upload tool found. Install one of: rsync, OpenSSH (scp), or PuTTY (pscp)."
-        Write-Step "Install OpenSSH: Settings → Apps → Optional Features → OpenSSH Client"
-        Write-Step "Install PuTTY:   https://www.putty.org/"
-        exit 1
-    }
+if (-not $UseRsync -and -not $UseScp -and -not $UsePscp -and -not $UseWslRsync) {
+    Write-Fail "No upload tool found. Install one of: rsync, OpenSSH (scp), PuTTY (pscp), or WSL rsync."
+    Write-Step "Install OpenSSH: Settings → Apps → Optional Features → OpenSSH Client"
+    Write-Step "Install PuTTY:   https://www.putty.org/"
+    exit 1
 }
 
 # ── Print summary ─────────────────────────────────────────────────────────────
@@ -110,34 +136,44 @@ if ($UseRsync) {
 
 } elseif ($UseScp) {
     Write-Step "Using scp (OpenSSH)"
-    # scp doesn't support excludes natively — create a temp filtered copy
-    $TempDir = Join-Path $env:TEMP "zentra_upload_$(Get-Random)"
-    Write-Step "Creating filtered temp copy at $TempDir"
-    New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
+    # scp doesn't support excludes natively — upload a filtered temp copy
+    $TempDir = New-FilteredTempCopy -InputFolder $SourceFolder -ExcludePatterns $Excludes
+    $TempItems = Get-ChildItem -LiteralPath $TempDir -Force
+    if (-not $TempItems) {
+        Write-Fail "Filtered temp copy is empty: $TempDir"
+        Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue
+        exit 1
+    }
 
-    # Use robocopy to mirror with excludes
-    $robocopyExcludeDirs = $Excludes | Where-Object { $_ -notlike "*.log" }
-    $robocopyExcludeFiles = $Excludes | Where-Object { $_ -like "*.*" }
-    $robocopyArgs = @($SourceFolder, $TempDir, "/MIR", "/NP", "/NFL", "/NDL", "/NJH")
-    if ($robocopyExcludeDirs) { $robocopyArgs += "/XD"; $robocopyArgs += $robocopyExcludeDirs }
-    if ($robocopyExcludeFiles) { $robocopyArgs += "/XF"; $robocopyArgs += $robocopyExcludeFiles }
-    & robocopy @robocopyArgs | Out-Null
-
-    # Now scp the filtered copy
+    # Upload temp contents into the remote deployment root
     $Env:SSHPASS = $Password
-    $scpArgs = @(
-        "-P", $Port,
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "PubkeyAuthentication=no",
-        "-r",
-        "$TempDir/",
-        "${Username}@${ServerHost}:${ServerPath}/"
-    )
     if (Get-Command sshpass -ErrorAction SilentlyContinue) {
-        & sshpass -p $Password scp @scpArgs
+        foreach ($item in $TempItems) {
+            $scpArgs = @(
+                "-P", $Port,
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "PubkeyAuthentication=no",
+                "-r",
+                $item.FullName,
+                "${Username}@${ServerHost}:${ServerPath}/"
+            )
+            & sshpass -p $Password scp @scpArgs
+            if ($LASTEXITCODE -ne 0) { break }
+        }
     } else {
         Write-Step "Tip: set SSH_ASKPASS or use PuTTY's pscp for password-based SCP without prompts"
-        & scp @scpArgs
+        foreach ($item in $TempItems) {
+            $scpArgs = @(
+                "-P", $Port,
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "PubkeyAuthentication=no",
+                "-r",
+                $item.FullName,
+                "${Username}@${ServerHost}:${ServerPath}/"
+            )
+            & scp @scpArgs
+            if ($LASTEXITCODE -ne 0) { break }
+        }
     }
 
     # Cleanup temp
@@ -145,16 +181,56 @@ if ($UseRsync) {
 
 } elseif ($UsePscp) {
     Write-Step "Using pscp (PuTTY)"
-    # pscp: -r recursive, -P port, -pw password, -batch no prompts
-    $pscpArgs = @(
-        "-r",
-        "-P", $Port,
-        "-pw", $Password,
-        "-batch",
-        "$SourceFolder\",
-        "${Username}@${ServerHost}:${ServerPath}/"
-    )
-    & pscp @pscpArgs
+
+    # Try to get the host key fingerprint via ssh-keyscan for -hostkey flag.
+    # If unavailable, pscp falls back to the PuTTY registry (populated by a
+    # prior plink/pscp connection). If neither works, the transfer will fail
+    # and the user is prompted to run plink once to cache the key.
+    $hostKeyArgs = @()
+    if (Get-Command ssh-keyscan -ErrorAction SilentlyContinue) {
+        $tmpKeyFile = [System.IO.Path]::GetTempFileName()
+        try {
+            ssh-keyscan -t ed25519 -p $Port $ServerHost 2>$null | Out-File -Encoding ascii $tmpKeyFile
+            if ((Get-Item $tmpKeyFile).Length -gt 0) {
+                $fpLine = & ssh-keygen -lf $tmpKeyFile 2>$null
+                $fp = ($fpLine -split '\s+') | Where-Object { $_ -match '^SHA256:' } | Select-Object -First 1
+                if ($fp) {
+                    Write-Step "Host key fingerprint: $fp"
+                    $hostKeyArgs = @("-hostkey", $fp)
+                }
+            }
+        } finally {
+            Remove-Item $tmpKeyFile -ErrorAction SilentlyContinue
+        }
+    }
+
+    if (-not $hostKeyArgs) {
+        Write-Step "Using PuTTY registry for host key (run 'plink -P $Port ${Username}@${ServerHost} exit' once if this fails)"
+    }
+
+    $TempDir = New-FilteredTempCopy -InputFolder $SourceFolder -ExcludePatterns $Excludes
+    $TempItems = Get-ChildItem -LiteralPath $TempDir -Force
+    if (-not $TempItems) {
+        Write-Fail "Filtered temp copy is empty: $TempDir"
+        Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue
+        exit 1
+    }
+
+    foreach ($item in $TempItems) {
+        $pscpArgs = @(
+            "-r",
+            "-P", $Port,
+            "-pw", $Password,
+            "-batch"
+        ) + $hostKeyArgs + @(
+            $item.FullName,
+            "${Username}@${ServerHost}:${ServerPath}/"
+        )
+        & pscp @pscpArgs
+        if ($LASTEXITCODE -ne 0) { break }
+    }
+
+    Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue
 }
 
 if ($LASTEXITCODE -ne 0) {
@@ -177,7 +253,19 @@ if ($RunBuild -match '^[Yy]') {
             -o PubkeyAuthentication=no `
             "${Username}@${ServerHost}" $sshCmd
     } elseif (Get-Command plink -ErrorAction SilentlyContinue) {
-        & plink -P $Port -pw $Password -batch "${Username}@${ServerHost}" $sshCmd
+        # Fetch fingerprint for plink batch mode
+        $plinkFp = $null
+        if (Get-Command ssh-keyscan -ErrorAction SilentlyContinue) {
+            $tmpKey = [System.IO.Path]::GetTempFileName()
+            try {
+                ssh-keyscan -t ed25519 -p $Port $ServerHost 2>$null | Out-File -Encoding ascii $tmpKey
+                if ((Get-Item $tmpKey).Length -gt 0) {
+                    $plinkFp = (& ssh-keygen -lf $tmpKey 2>$null) -split '\s+' | Where-Object { $_ -match '^SHA256:' } | Select-Object -First 1
+                }
+            } finally { Remove-Item $tmpKey -ErrorAction SilentlyContinue }
+        }
+        $plinkHostKey = if ($plinkFp) { @("-hostkey", $plinkFp) } else { @() }
+        & plink -P $Port -pw $Password -batch @plinkHostKey "${Username}@${ServerHost}" $sshCmd
     } else {
         Write-Step "Neither sshpass nor plink found — cannot auto-run remote build."
         Write-Step "SSH in manually and run: cd $ServerPath && bash restart-services.sh"

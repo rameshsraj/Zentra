@@ -89,7 +89,7 @@ pub async fn search_traces(
                 (SELECT EXISTS(SELECT 1 FROM traces s3 WHERE s3.trace_id = traces.trace_id AND status = 'error')) as has_errors
          FROM traces 
          WHERE {} 
-         AND parent_span_id IS NULL
+         AND NULLIF(parent_span_id, '') IS NULL
          ORDER BY started_at DESC 
          LIMIT ${}",
         where_clauses.join(" AND "),

@@ -128,13 +128,17 @@ pub async fn validate_account(
 
 pub async fn get_account_metrics(
     State(_state): State<AppState>,
-    Path(_id): Path<Uuid>,
-    Query(_q): Query<MetricQueryParams>,
+    Path(id): Path<Uuid>,
+    Query(q): Query<MetricQueryParams>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    Err(ApiError::from((
-        StatusCode::NOT_IMPLEMENTED,
-        "Cloud provider metrics require AWS/Azure/GCP SDK integration, coming in a future release.".into(),
-    )))
+    Ok(Json(serde_json::json!({
+        "account_id": id,
+        "hours": q.hours.unwrap_or(24),
+        "metric": q.metric.unwrap_or_else(|| "all".to_string()),
+        "status": "pending_integration",
+        "series": [],
+        "message": "Cloud provider SDK integration is not configured for this account yet."
+    })))
 }
 
 pub async fn cloud_summary(

@@ -78,58 +78,148 @@ pub async fn chat_history(
     return Ok(Json(vec![]));
 }
 
-/// GET /api/ai/insights — get AI-generated insights derived from OTEL trace errors
+/// GET /api/ai/insights — operational insights from alerts, traces, logs, and telemetry freshness.
 pub async fn insights(
     State(state): State<AppState>,
     OrgId(org_id): OrgId,
 ) -> Result<Json<Vec<AIInsightEntry>>, ApiError> {
     let now = Utc::now();
+    let mut insights: Vec<AIInsightEntry> = Vec::new();
 
-    #[derive(sqlx::FromRow)]
-    struct ErrorRow {
-        service_name: String,
-        operation_name: String,
-        error_count: i64,
+    let alert_rows = sqlx::query(
+        "SELECT severity, COUNT(*) AS count FROM active_alerts \
+         WHERE org_id = $1 AND status IN ('triggered','acknowledged') \
+         GROUP BY severity ORDER BY count DESC"
+    )
+    .bind(org_id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+    for row in alert_rows {
+        use sqlx::Row;
+        let severity: String = row.get("severity");
+        let count: i64 = row.get("count");
+        insights.push(AIInsightEntry {
+            id: Uuid::now_v7().to_string(),
+            category: "alerts".into(),
+            title: format!("{} active {} alerts", count, severity),
+            description: format!("There are {} unresolved or acknowledged alerts with {} severity.", count, severity),
+            severity: if severity == "critical" { "critical" } else { "warning" }.into(),
+            confidence: 0.9,
+            metric_data: Some([("alert_count".into(), count as f64)].into()),
+            recommendation: "Open Alerts & Events, group by severity or target, and resolve the highest-impact alerts first.".into(),
+            created_at: now.to_rfc3339(),
+        });
     }
 
-    let rows = sqlx::query_as::<_, ErrorRow>(
+    let trace_rows = sqlx::query(
         "SELECT service_name, operation_name, COUNT(*) AS error_count \
          FROM traces \
          WHERE status = 'error' AND org_id = $1 \
            AND started_at > NOW() - INTERVAL '1 hour' \
          GROUP BY service_name, operation_name \
-         ORDER BY error_count DESC \
-         LIMIT 10"
+         ORDER BY error_count DESC LIMIT 5"
     )
     .bind(org_id)
     .fetch_all(&state.tsdb_pool)
     .await
     .unwrap_or_default();
-
-    let insights: Vec<AIInsightEntry> = rows.into_iter().map(|r| {
-        let severity = if r.error_count > 50 { "critical" } else if r.error_count > 10 { "warning" } else { "info" };
-        AIInsightEntry {
+    for row in trace_rows {
+        use sqlx::Row;
+        let service_name: String = row.get("service_name");
+        let operation_name: String = row.get("operation_name");
+        let error_count: i64 = row.get("error_count");
+        let severity = if error_count > 50 { "critical" } else if error_count > 10 { "warning" } else { "info" };
+        insights.push(AIInsightEntry {
             id: Uuid::now_v7().to_string(),
             category: "trace_errors".into(),
-            title: format!("High error rate in {}", r.service_name),
-            description: format!(
-                "Operation '{}' on service '{}' produced {} errors in the last hour.",
-                r.operation_name, r.service_name, r.error_count
-            ),
+            title: format!("Trace errors in {}", service_name),
+            description: format!("Operation '{}' produced {} errors in the last hour.", operation_name, error_count),
             severity: severity.into(),
             confidence: 0.95,
-            metric_data: Some([("error_count".into(), r.error_count as f64)].into()),
-            recommendation: format!(
-                "Investigate recent deployments or dependency failures for '{}'.",
-                r.service_name
-            ),
+            metric_data: Some([("error_count".into(), error_count as f64)].into()),
+            recommendation: format!("Check recent deployments, dependencies, and logs for '{}'.", service_name),
             created_at: now.to_rfc3339(),
-        }
-    }).collect();
+        });
+    }
 
+    let log_rows = sqlx::query(
+        "SELECT COALESCE(tags->>'host.name', source) AS source_name, COUNT(*) AS error_count \
+         FROM logs \
+         WHERE org_id = $1 AND timestamp > NOW() - INTERVAL '1 hour' \
+           AND lower(severity) IN ('error','critical','fatal') \
+         GROUP BY source_name ORDER BY error_count DESC LIMIT 5"
+    )
+    .bind(org_id)
+    .fetch_all(&state.tsdb_pool)
+    .await
+    .unwrap_or_default();
+    for row in log_rows {
+        use sqlx::Row;
+        let source_name: String = row.get("source_name");
+        let error_count: i64 = row.get("error_count");
+        insights.push(AIInsightEntry {
+            id: Uuid::now_v7().to_string(),
+            category: "logs".into(),
+            title: format!("Error logs from {}", source_name),
+            description: format!("{} error-level log entries arrived from this source in the last hour.", error_count),
+            severity: if error_count > 25 { "critical" } else { "warning" }.into(),
+            confidence: 0.85,
+            metric_data: Some([("error_logs".into(), error_count as f64)].into()),
+            recommendation: format!("Open Logs and filter by server/source '{}' to inspect the error burst.", source_name),
+            created_at: now.to_rfc3339(),
+        });
+    }
+
+    let metric_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(DISTINCT target_id::text || ':' || metric_name || ':' || resource_id) \
+         FROM metrics WHERE org_id = $1 AND timestamp > NOW() - INTERVAL '24 hours'"
+    )
+    .bind(org_id)
+    .fetch_one(&state.tsdb_pool)
+    .await
+    .unwrap_or(0);
+
+    if insights.is_empty() {
+        let (title, description, recommendation) = if metric_count == 0 {
+            (
+                "No recent telemetry for AI analysis",
+                "Zentra needs recent metrics, logs, traces, or alerts before AI insights can produce meaningful findings.",
+                "Confirm agent collection, OTLP ingestion, and alert rules are enabled for the targets you care about.",
+            )
+        } else {
+            (
+                "No active AI findings",
+                "Recent telemetry is available, but Zentra did not find active alert clusters, trace errors, or error-log bursts in the current analysis window.",
+                "Keep collection running and review Predictive Alerts for trend-based capacity or anomaly signals.",
+            )
+        };
+        insights.push(AIInsightEntry {
+            id: Uuid::now_v7().to_string(),
+            category: "telemetry".into(),
+            title: title.into(),
+            description: description.into(),
+            severity: "info".into(),
+            confidence: 1.0,
+            metric_data: Some([("metric_streams".into(), metric_count as f64)].into()),
+            recommendation: recommendation.into(),
+            created_at: now.to_rfc3339(),
+        });
+    }
+
+    insights.sort_by(|a, b| severity_rank(&b.severity).cmp(&severity_rank(&a.severity)));
+    insights.truncate(20);
     Ok(Json(insights))
 }
 
+fn severity_rank(severity: &str) -> u8 {
+    match severity {
+        "critical" => 3,
+        "warning" => 2,
+        "info" => 1,
+        _ => 0,
+    }
+}
 // ============================================================================
 // P6: K-means ML wiring + ML endpoints
 // ============================================================================

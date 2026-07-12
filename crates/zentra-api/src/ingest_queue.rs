@@ -622,6 +622,8 @@ async fn insert_logs_batch(pool: &PgPool, batch: &[IngestBatch]) -> Result<usize
 
     let mut count = 0usize;
     let mut org_ids = Vec::new();
+    let mut log_ids = Vec::new();
+    let mut target_ids = Vec::new();
     let mut timestamps: Vec<chrono::DateTime<chrono::Utc>> = Vec::new();
     let mut sources = Vec::new();
     let mut levels = Vec::new();
@@ -632,7 +634,12 @@ async fn insert_logs_batch(pool: &PgPool, batch: &[IngestBatch]) -> Result<usize
         if let Some(resource_logs) = item.payload.get("resourceLogs").and_then(|v| v.as_array()) {
             for rl in resource_logs {
                 let resource_attrs = rl.pointer("/resource/attributes").cloned().unwrap_or(serde_json::json!({}));
+                let resource_map = otlp_attrs_to_map(&resource_attrs);
                 let source = extract_service_name(&resource_attrs);
+                let target_id = extract_attr_str(&resource_attrs, "zentra.target_id")
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                    .or_else(|| extract_attr_str(&resource_attrs, "zentra.agent_id").and_then(|s| uuid::Uuid::parse_str(s).ok()))
+                    .unwrap_or(uuid::Uuid::nil());
 
                 if let Some(scope_logs) = rl.get("scopeLogs").and_then(|v| v.as_array()) {
                     for sl in scope_logs {
@@ -647,26 +654,36 @@ async fn insert_logs_batch(pool: &PgPool, batch: &[IngestBatch]) -> Result<usize
                                     .and_then(|b| b.get("stringValue"))
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("").to_string();
-                                let mut attrs = otlp_attrs_to_map(&lr.get("attributes").cloned().unwrap_or(serde_json::json!([])));
+                                let mut attrs = match otlp_attrs_to_map(&lr.get("attributes").cloned().unwrap_or(serde_json::json!([]))) {
+                                    serde_json::Value::Object(map) => map,
+                                    _ => serde_json::Map::new(),
+                                };
+                                if let serde_json::Value::Object(resource_obj) = resource_map.clone() {
+                                    for (key, value) in resource_obj {
+                                        attrs.entry(key).or_insert(value);
+                                    }
+                                }
 
                                 // O18: Extract trace context so logs can be correlated with traces
                                 if let Some(tid) = lr.get("traceId").and_then(|v| v.as_str()) {
                                     if !tid.is_empty() {
-                                        attrs["trace_id"] = serde_json::Value::String(tid.to_string());
+                                        attrs.insert("trace_id".to_string(), serde_json::Value::String(tid.to_string()));
                                     }
                                 }
                                 if let Some(sid) = lr.get("spanId").and_then(|v| v.as_str()) {
                                     if !sid.is_empty() {
-                                        attrs["span_id"] = serde_json::Value::String(sid.to_string());
+                                        attrs.insert("span_id".to_string(), serde_json::Value::String(sid.to_string()));
                                     }
                                 }
 
+                                log_ids.push(uuid::Uuid::new_v4());
+                                target_ids.push(target_id);
                                 org_ids.push(item.org_id);
                                 timestamps.push(ts);
                                 sources.push(source.clone());
                                 levels.push(severity);
                                 messages.push(body);
-                                metadata_vals.push(attrs);
+                                metadata_vals.push(serde_json::Value::Object(attrs));
                                 count += 1;
                             }
                         }
@@ -680,16 +697,24 @@ async fn insert_logs_batch(pool: &PgPool, batch: &[IngestBatch]) -> Result<usize
         return Ok(0);
     }
 
+    let raw_logs = messages.clone();
+    let parsed_fields = metadata_vals.clone();
+    let tags_vals = metadata_vals;
+
     sqlx::query(
-        "INSERT INTO logs (org_id, timestamp, source, level, message, metadata) \
-         SELECT * FROM UNNEST($1::uuid[], $2::timestamptz[], $3::text[], $4::text[], $5::text[], $6::jsonb[])"
+        "INSERT INTO logs (log_id, timestamp, org_id, target_id, source, severity, message, raw_log, parsed_fields, tags) \
+         SELECT * FROM UNNEST($1::uuid[], $2::timestamptz[], $3::uuid[], $4::uuid[], $5::text[], $6::text[], $7::text[], $8::text[], $9::jsonb[], $10::jsonb[])"
     )
-    .bind(&org_ids)
+    .bind(&log_ids)
     .bind(&timestamps)
+    .bind(&org_ids)
+    .bind(&target_ids)
     .bind(&sources)
     .bind(&levels)
     .bind(&messages)
-    .bind(&metadata_vals)
+    .bind(&raw_logs)
+    .bind(&parsed_fields)
+    .bind(&tags_vals)
     .execute(pool)
     .await?;
 

@@ -99,10 +99,7 @@ pub async fn validate_otlp_key(
     state: &crate::state::AppState,
     key: &str,
 ) -> Result<(Uuid, Vec<String>), String> {
-    if key.starts_with("isok_") {
-        return Err("Org enrollment key cannot ingest telemetry".into());
-    }
-    if !key.starts_with("isak_") {
+    if !(key.starts_with("isok_") || key.starts_with("isak_")) {
         return Err("Invalid key format".into());
     }
 
@@ -117,8 +114,40 @@ pub async fn validate_otlp_key(
     }
     metrics::counter!("zentra_otlp_key_cache_miss").increment(1);
 
-    // Check DB
-    let row = sqlx::query(
+    // Prefer first-class OTLP keys. Older deployments may have isak_ prefixes,
+    // but they are still stored in otlp_api_keys when created for telemetry ingest.
+    let otlp_row = sqlx::query(
+        "SELECT org_id, permissions FROM otlp_api_keys
+         WHERE key_hash = $1
+           AND enabled = true
+           AND (expires_at IS NULL OR expires_at > NOW())"
+    )
+    .bind(&hash)
+    .fetch_optional(&state.tsdb_pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if let Some(r) = otlp_row {
+        use sqlx::Row;
+        let org_id: Uuid = r.get("org_id");
+        let perms: Vec<String> = r.try_get("permissions")
+            .unwrap_or_else(|_| vec!["traces".to_string(), "metrics".to_string(), "logs".to_string(), "profiles".to_string()]);
+        state.otlp_key_cache.insert(hash.clone(), (org_id, perms.clone()));
+
+        let pool = state.tsdb_pool.clone();
+        let h = hash.clone();
+        tokio::spawn(async move {
+            let _ = sqlx::query("UPDATE otlp_api_keys SET last_used = NOW(), updated_at = NOW() WHERE key_hash = $1")
+                .bind(&h)
+                .execute(&pool)
+                .await;
+        });
+
+        return Ok((org_id, perms));
+    }
+
+    // Backward compatibility: agent keys can still ingest metrics/logs.
+    let agent_row = sqlx::query(
         "SELECT org_id FROM agent_api_keys
          WHERE key_hash = $1
            AND enabled = true
@@ -130,13 +159,12 @@ pub async fn validate_otlp_key(
     .await
     .map_err(|e| e.to_string())?;
 
-    if let Some(r) = row {
+    if let Some(r) = agent_row {
         use sqlx::Row;
         let org_id: Uuid = r.get("org_id");
         let perms: Vec<String> = vec!["metrics".to_string(), "logs".to_string()];
         state.otlp_key_cache.insert(hash.clone(), (org_id, perms.clone()));
 
-        // O12: Update last_used_at asynchronously (fire-and-forget)
         let pool = state.tsdb_pool.clone();
         let h = hash.clone();
         tokio::spawn(async move {
@@ -1051,10 +1079,10 @@ pub async fn otel_span_metrics(
         r#"SELECT {col} AS group_key,
                   COUNT(*) AS request_count,
                   COUNT(*) FILTER (WHERE status = 'error') AS error_count,
-                  ROUND(AVG(duration_ms)::numeric, 2) AS avg_ms,
-                  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY duration_ms)::numeric, 2) AS p50_ms,
-                  ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms)::numeric, 2) AS p95_ms,
-                  ROUND(PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY duration_ms)::numeric, 2) AS p99_ms
+                  ROUND(AVG(duration_ms)::numeric, 2)::float8 AS avg_ms,
+                  ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY duration_ms)::numeric, 2)::float8 AS p50_ms,
+                  ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms)::numeric, 2)::float8 AS p95_ms,
+                  ROUND(PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY duration_ms)::numeric, 2)::float8 AS p99_ms
            FROM traces
            WHERE org_id = $1 AND started_at > NOW() - INTERVAL '{interval}'
              AND {col} IS NOT NULL AND {col} != ''
@@ -1192,8 +1220,8 @@ pub async fn evaluate_alert_rules_internal(
     let stats = sqlx::query_as::<_, EvalStatsRow>(
         r#"SELECT COUNT(*) AS total,
                   COUNT(*) FILTER (WHERE status = 'error') AS errors,
-                  ROUND(AVG(duration_ms)::numeric, 2) AS avg_ms,
-                  ROUND(PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY duration_ms)::numeric, 2) AS p99_ms
+                  ROUND(AVG(duration_ms)::numeric, 2)::float8 AS avg_ms,
+                  ROUND(PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY duration_ms)::numeric, 2)::float8 AS p99_ms
            FROM traces
            WHERE org_id = $1 AND started_at > NOW() - INTERVAL '5 minutes'"#
     )
@@ -1316,7 +1344,7 @@ pub async fn otel_genai(
                   attributes->>'gen_ai.request.model' AS model,
                   COUNT(*) AS call_count,
                   COUNT(*) FILTER (WHERE status = 'error') AS error_count,
-                  ROUND(AVG(duration_ms)::numeric, 2) AS avg_ms,
+                  ROUND(AVG(duration_ms)::numeric, 2)::float8 AS avg_ms,
                   COALESCE(AVG((attributes->>'gen_ai.usage.input_tokens')::numeric), 0) AS avg_input_tokens,
                   COALESCE(AVG((attributes->>'gen_ai.usage.output_tokens')::numeric), 0) AS avg_output_tokens,
                   COALESCE(SUM((attributes->>'gen_ai.usage.total_tokens')::numeric), 0) AS total_tokens

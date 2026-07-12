@@ -1,11 +1,13 @@
 use axum::{extract::{State, Path, Query, Json}, http::StatusCode};
 use serde::{Deserialize, Serialize};
-use chrono::{Utc, Duration};
+use chrono::{DateTime, Utc, Duration};
 use parking_lot::RwLock;
 use std::sync::OnceLock;
 use std::collections::{HashMap, VecDeque};
 use crate::state::AppState;
 use crate::error::ApiError;
+use crate::tenant::OrgId;
+use sqlx::Row;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {
@@ -188,31 +190,157 @@ fn match_line_filter(line: &str, query: &str) -> bool {
     true
 }
 
+fn parse_query_time(value: Option<&str>) -> Option<DateTime<Utc>> {
+    value
+        .and_then(|v| DateTime::parse_from_rfc3339(v).ok())
+        .map(|dt| dt.with_timezone(&Utc))
+}
+
+fn json_string_field(value: &serde_json::Value, key: &str) -> Option<String> {
+    value.get(key).and_then(|v| match v {
+        serde_json::Value::String(s) if !s.is_empty() => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    })
+}
+
+fn db_log_labels(row: &sqlx::postgres::PgRow) -> HashMap<String, String> {
+    let mut labels = HashMap::new();
+    let source: String = row.get("source");
+    let severity: String = row.get("severity");
+    let target_id: uuid::Uuid = row.get("target_id");
+    let tags: serde_json::Value = row.get("tags");
+
+    labels.insert("source".into(), source);
+    labels.insert("level".into(), severity.to_lowercase());
+    labels.insert("severity".into(), severity.to_lowercase());
+    labels.insert("target_id".into(), target_id.to_string());
+
+    if let Some(obj) = tags.as_object() {
+        for (key, value) in obj {
+            if let Some(text) = json_string_field(&tags, key) {
+                labels.insert(key.clone(), text);
+            } else if !value.is_null() {
+                labels.insert(key.clone(), value.to_string());
+            }
+        }
+    }
+
+    let agent_id: Option<uuid::Uuid> = row.try_get("agent_id").ok();
+    if let Some(agent_id) = agent_id {
+        labels.insert("agent_id".into(), agent_id.to_string());
+    }
+
+    let datacenter: Option<String> = row.try_get("datacenter_name").ok().flatten();
+    if let Some(datacenter) = datacenter.filter(|v| !v.is_empty()) {
+        labels.insert("datacenter".into(), datacenter);
+    }
+
+    let hostname: Option<String> = row.try_get("hostname").ok().flatten();
+    let target_name: Option<String> = row.try_get("target_name").ok().flatten();
+    let target_host: Option<String> = row.try_get("target_host").ok().flatten();
+    let agent_ip: Option<String> = row.try_get("agent_ip").ok().flatten();
+    let host_name = hostname
+        .or_else(|| target_name)
+        .or_else(|| json_string_field(&tags, "host.name"))
+        .or_else(|| target_host)
+        .or(agent_ip)
+        .unwrap_or_else(|| target_id.to_string());
+    labels.insert("host".into(), host_name.clone());
+    labels.insert("server".into(), host_name);
+
+    labels
+}
 // ── API Handlers ─────────────────────────────────────────────────────
 
-pub async fn query_logs(State(_s): State<AppState>, Query(params): Query<QueryParams>) -> Result<Json<QueryResult>, ApiError> {
-    let store = store().read();
+pub async fn query_logs(
+    State(s): State<AppState>,
+    OrgId(org_id): OrgId,
+    Query(params): Query<QueryParams>,
+) -> Result<Json<QueryResult>, ApiError> {
     let query = params.query.as_deref().unwrap_or("{}");
     let limit = params.limit.unwrap_or(1000);
     let stream_selector = query.split('}').next().map(|s| format!("{}}}", s)).unwrap_or_default();
+    let end = parse_query_time(params.end.as_deref()).unwrap_or_else(Utc::now);
+    let start = parse_query_time(params.start.as_deref()).unwrap_or_else(|| end - Duration::hours(1));
 
-    let mut result_streams = Vec::new();
-    let mut total = 0usize;
-    for (_fp, stream) in &store.streams {
-        if !match_stream(&stream.labels, &stream_selector) { continue; }
-        let entries: Vec<QueryEntry> = stream.entries.iter()
-            .filter(|e| match_line_filter(&e.line, query))
-            .take(limit)
-            .map(|e| QueryEntry {
-                timestamp: chrono::DateTime::from_timestamp_nanos(e.timestamp).to_rfc3339(),
-                line: e.line.clone(),
-                fields: e.parsed_fields.clone(),
-            }).collect();
-        total += entries.len();
-        if !entries.is_empty() {
-            result_streams.push(QueryResultStream { labels: stream.labels.clone(), entries });
+    let mut grouped: HashMap<String, QueryResultStream> = HashMap::new();
+
+    let rows = sqlx::query(
+        r#"SELECT l.timestamp, l.message, l.source, l.severity, l.target_id, l.tags,
+                  af.agent_id, af.datacenter_name, af.hostname, af.ip_address::text AS agent_ip,
+                  t.name AS target_name, t.host AS target_host
+           FROM logs l
+           LEFT JOIN agent_fleet af ON af.org_id = l.org_id AND af.agent_id = l.target_id
+           LEFT JOIN targets t ON t.org_id = l.org_id AND t.target_id = l.target_id
+           WHERE l.org_id = $1 AND l.timestamp >= $2 AND l.timestamp <= $3
+           ORDER BY l.timestamp DESC
+           LIMIT $4"#,
+    )
+    .bind(org_id)
+    .bind(start)
+    .bind(end)
+    .bind((limit as i64).saturating_mul(5).max(limit as i64))
+    .fetch_all(&s.tsdb_pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    for row in rows {
+        let message: String = row.get("message");
+        if !match_line_filter(&message, query) {
+            continue;
+        }
+
+        let labels = db_log_labels(&row);
+        if !match_stream(&labels, &stream_selector) {
+            continue;
+        }
+
+        let fp = label_fingerprint(&labels);
+        let timestamp: DateTime<Utc> = row.get("timestamp");
+        let entry = QueryEntry {
+            timestamp: timestamp.to_rfc3339(),
+            line: message,
+            fields: Some(labels.clone()),
+        };
+
+        grouped
+            .entry(fp)
+            .or_insert_with(|| QueryResultStream { labels, entries: Vec::new() })
+            .entries
+            .push(entry);
+    }
+
+    {
+        let store = store().read();
+        for (_fp, stream) in &store.streams {
+            if !match_stream(&stream.labels, &stream_selector) { continue; }
+            let entries: Vec<QueryEntry> = stream.entries.iter()
+                .filter(|e| match_line_filter(&e.line, query))
+                .take(limit)
+                .map(|e| QueryEntry {
+                    timestamp: chrono::DateTime::from_timestamp_nanos(e.timestamp).to_rfc3339(),
+                    line: e.line.clone(),
+                    fields: e.parsed_fields.clone(),
+                }).collect();
+            if !entries.is_empty() {
+                let fp = label_fingerprint(&stream.labels);
+                grouped
+                    .entry(fp)
+                    .or_insert_with(|| QueryResultStream { labels: stream.labels.clone(), entries: Vec::new() })
+                    .entries
+                    .extend(entries);
+            }
         }
     }
+
+    let mut result_streams: Vec<QueryResultStream> = grouped.into_values().collect();
+    result_streams.sort_by(|a, b| a.labels.get("server").cmp(&b.labels.get("server")));
+    for stream in &mut result_streams {
+        stream.entries.truncate(limit);
+    }
+    let total = result_streams.iter().map(|s| s.entries.len()).sum();
     Ok(Json(QueryResult { streams: result_streams, total_entries: total }))
 }
 

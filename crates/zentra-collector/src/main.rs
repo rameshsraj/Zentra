@@ -30,6 +30,7 @@ use uuid::Uuid;
 use zentra_agent::heartbeat::{HeartbeatLoop, new_agent_id_cell};
 use zentra_agent::log_capture::{CaptureLayer, LogBuffer};
 use zentra_agent::remote_delivery::RemoteDeliveryService;
+use zentra_agent::remote_transport::ensure_agent_key;
 use zentra_agent::remote_targets::RemoteTargetFetcher;
 use zentra_core::models::log_entry::LogBatch;
 use zentra_core::models::metric::MetricBatch;
@@ -57,8 +58,10 @@ async fn main() {
 
     let api_endpoint = std::env::var("ZENTRA_API_ENDPOINT")
         .expect("ZENTRA_API_ENDPOINT is required (e.g. https://zentra.example.com:5006)");
-    let api_key = std::env::var("ZENTRA_COLLECTOR_KEY")
-        .expect("ZENTRA_COLLECTOR_KEY is required (isok_... from Fleet -> API Keys)");
+    let collector_key = std::env::var("ZENTRA_COLLECTOR_KEY")
+        .or_else(|_| std::env::var("ZENTRA_AGENT_KEY"))
+        .or_else(|_| std::env::var("ZENTRA_AGENT_API_KEY"))
+        .expect("ZENTRA_COLLECTOR_KEY or ZENTRA_AGENT_KEY is required");
     let dc_name = std::env::var("ZENTRA_DC_NAME")
         .unwrap_or_else(|_| "dc-collector".to_string());
     let org_id: Uuid = std::env::var("ZENTRA_ORG_ID")
@@ -68,6 +71,20 @@ async fn main() {
     let collector_id: Option<Uuid> = std::env::var("ZENTRA_COLLECTOR_ID")
         .ok()
         .and_then(|s| s.parse().ok());
+    let key_path = std::env::var("ZENTRA_COLLECTOR_KEY_PATH")
+        .unwrap_or_else(|_| "/zentra/etc/collector.key".to_string());
+    let mut org_key = if collector_key.starts_with("isok_") { collector_key.clone() } else { String::new() };
+    let existing_agent_key = if collector_key.starts_with("isak_") { collector_key.as_str() } else { "" };
+    let key_material = ensure_agent_key(
+        &api_endpoint,
+        &dc_name,
+        &mut org_key,
+        existing_agent_key,
+        &key_path,
+    )
+    .await
+    .expect("collector key registration failed");
+    let api_key = key_material.agent_key.clone();
 
     info!(api_endpoint = %api_endpoint, dc_name = %dc_name,
         "Zentra Collector starting (network/SNMP/agentless mode)");
@@ -79,7 +96,7 @@ async fn main() {
     let active_targets = Arc::new(AtomicUsize::new(0));
 
     let agent_id_cell = new_agent_id_cell();
-    if let Some(id) = collector_id {
+    if let Some(id) = collector_id.or(key_material.agent_id) {
         let _ = agent_id_cell.set(id);
         info!(collector_id = %id, "Collector ID pre-loaded from ZENTRA_COLLECTOR_ID");
     }

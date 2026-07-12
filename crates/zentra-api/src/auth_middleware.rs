@@ -16,7 +16,8 @@ use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
-use sqlx;
+use sqlx::{self, Row};
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::Instant;
 use dashmap::DashMap;
@@ -109,6 +110,39 @@ pub fn is_public_path(method: &Method, path: &str) -> bool {
     false
 }
 
+fn hash_api_key(raw_key: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(raw_key.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+async fn agent_auth_context(state: &AppState, raw_key: &str) -> Option<AuthContext> {
+    let key_hash = hash_api_key(raw_key);
+    let row = sqlx::query(
+        "SELECT org_id, agent_id FROM agent_api_keys
+         WHERE key_hash = $1
+           AND enabled = true
+           AND (expires_at > NOW() OR (grace_until IS NOT NULL AND grace_until > NOW()))
+           AND revoked_at IS NULL
+         ORDER BY created_at DESC
+         LIMIT 1"
+    )
+    .bind(&key_hash)
+    .fetch_optional(&state.tsdb_pool)
+    .await
+    .ok()
+    .flatten()?;
+
+    let org_id: Uuid = row.get("org_id");
+    let agent_id: Uuid = row.get("agent_id");
+    Some(AuthContext {
+        user_id: agent_id,
+        org_id,
+        email: format!("agent:{}", agent_id),
+        role: "Agent".to_string(),
+        jti: String::new(),
+    })
+}
 fn unauthorized(reason: &str) -> Response {
     (
         StatusCode::UNAUTHORIZED,
@@ -154,16 +188,23 @@ pub async fn require_auth(State(state): State<AppState>, mut req: Request<Body>,
 
     if let Some(token) = bearer.as_deref() {
         if token.starts_with("isok_") {
-            if *req.method() == Method::POST && path == "/api/agents/register" {
+            if (*req.method() == Method::POST
+                && matches!(path.as_str(), "/v1/traces" | "/v1/metrics" | "/v1/logs" | "/v1/profiles"))
+                || (*req.method() == Method::POST && path == "/api/agents/register")
+            {
                 return next.run(req).await;
             }
-            return forbidden("Org enrollment key can only access POST /api/agents/register");
+            return forbidden("OTLP key is only allowed on OTLP ingest endpoints");
         }
         if token.starts_with("isak_") {
             if !is_agent_scope_path(req.method(), &path) {
                 return forbidden("Agent key is not allowed on this endpoint");
             }
-            return next.run(req).await;
+            if let Some(ctx) = agent_auth_context(&state, token).await {
+                req.extensions_mut().insert(ctx);
+                return next.run(req).await;
+            }
+            return unauthorized("Invalid, revoked, or expired agent key");
         }
     }
 

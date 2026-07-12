@@ -22,7 +22,7 @@ use opentelemetry_sdk::{
     Resource,
 };
 use opentelemetry_semantic_conventions as semconv;
-use tracing::info;
+use tracing::{info, warn};
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::registry::LookupSpan;
 use std::borrow::Cow;
@@ -102,6 +102,18 @@ where
 
     let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
         .unwrap_or_else(|_| "http://127.0.0.1:5006".into());
+
+    let has_otlp_headers = std::env::var("OTEL_EXPORTER_OTLP_HEADERS")
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false);
+    let exports_to_local_api = endpoint.trim_end_matches('/') == "http://127.0.0.1:5006";
+    if exports_to_local_api && !has_otlp_headers {
+        warn!(
+            endpoint = %endpoint,
+            "OTel self-instrumentation disabled: local OTLP ingest requires OTEL_EXPORTER_OTLP_HEADERS with an API key"
+        );
+        return None;
+    }
 
     let final_service_name = std::env::var("OTEL_SERVICE_NAME")
         .unwrap_or_else(|_| service_name.to_string());

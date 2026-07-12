@@ -18,15 +18,18 @@ const STATUS_STYLES: Record<string, { color: string; bg: string; label: string }
   deregistered: { color: 'text-zinc-500',   bg: 'bg-zinc-500/20',   label: 'Deregistered' },
 }
 
-function timeAgo(iso: string | null): string {
+function formatDateTime(iso: string | null): string {
   if (!iso) return 'Never'
-  const diff = Date.now() - new Date(iso).getTime()
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return 'Just now'
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  return `${Math.floor(hrs / 24)}d ago`
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return 'Invalid date'
+  return date.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -307,7 +310,7 @@ export default function FleetPage() {
                           {s.label}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-muted-foreground">{timeAgo(a.last_seen)}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{formatDateTime(a.last_seen)}</td>
                       <td className="px-4 py-3 font-mono text-xs">{a.agent_version ?? '—'}</td>
                       <td className="px-4 py-3">{a.active_target_count}</td>
                       <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{a.registered_ip ?? a.ip_address ?? '—'}</td>
@@ -321,7 +324,7 @@ export default function FleetPage() {
                           {a.key_status ?? 'unknown'}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground">{a.key_expires_at ? timeAgo(a.key_expires_at) : '—'}</td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground">{a.key_expires_at ? formatDateTime(a.key_expires_at) : '—'}</td>
                       <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
                         {a.status !== 'deregistered' && (
                           confirmId === a.agent_id ? (

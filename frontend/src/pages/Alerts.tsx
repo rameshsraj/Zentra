@@ -8,7 +8,7 @@ import LoadingSkeleton from '@/components/LoadingSkeleton'
 import { cn } from '@/lib/utils'
 import { useNavigate } from 'react-router-dom'
 
-interface InhibitionRule { id: string; source_match: Record<string,string>; target_match: Record<string,string>; equal: string[] }
+interface InhibitionRule { id: string; name?: string; source_match: Record<string,string>; target_match: Record<string,string>; equal_labels: string[] }
 
 export default function AlertsPage() {
   const qc = useQueryClient()
@@ -26,7 +26,7 @@ export default function AlertsPage() {
 
   useEffect(() => {
     fetchJSON<any>('/alerts/inhibitions').then((res: any) => {
-      setInhibitions(Array.isArray(res) ? res : res?.rules ?? [])
+      setInhibitions(Array.isArray(res) ? res : res?.inhibitions ?? res?.rules ?? [])
     }).catch(() => {})
   }, [])
 
@@ -169,7 +169,7 @@ export default function AlertsPage() {
                   <div className="flex-1">
                     <div className="text-xs text-slate-300">Source: <span className="text-red-400 font-mono">{JSON.stringify(rule.source_match)}</span></div>
                     <div className="text-xs text-slate-300">Target: <span className="text-amber-400 font-mono">{JSON.stringify(rule.target_match)}</span></div>
-                    <div className="text-[10px] text-slate-500">Equal labels: {rule.equal.join(', ')}</div>
+                    <div className="text-[10px] text-slate-500">Equal labels: {(rule.equal_labels ?? []).join(', ')}</div>
                   </div>
                   <button onClick={() => { fetch(`/api/alerts/inhibitions/${rule.id}`, { method: 'DELETE' }).then(() => setInhibitions(prev => prev.filter(r => r.id !== rule.id))) }} className="p-1.5 rounded hover:bg-red-600/20 text-slate-500 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>

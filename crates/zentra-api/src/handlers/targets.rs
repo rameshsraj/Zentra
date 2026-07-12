@@ -57,17 +57,22 @@ pub async fn list_targets(
         let existing_agent_ids: std::collections::HashSet<uuid::Uuid> = targets.iter()
             .filter_map(|t| t.agent_id)
             .collect();
+        let mut seen_hosts: std::collections::HashSet<String> = targets.iter()
+            .map(|t| t.host.clone())
+            .collect();
 
         for row in agent_rows {
             let agent_id: uuid::Uuid = row.get("agent_id");
             if existing_agent_ids.contains(&agent_id) { continue; }
 
             let ip: String = row.get::<Option<String>, _>("ip_address").unwrap_or_else(|| "0.0.0.0".to_string());
+            if !seen_hosts.insert(ip.clone()) { continue; }
             let dc_name: String = row.get("datacenter_name");
             let os_name: String = row.get::<Option<String>, _>("os_name").unwrap_or_else(|| "linux".to_string());
             let af_status: String = row.get("status");
             let comp_name: Option<String> = row.get("component_name");
             let version: Option<String> = row.get("version");
+            let existing_target_id: Option<uuid::Uuid> = row.get("existing_target_id");
 
             let display_name = if let Some(ver) = &version {
                 format!("{} ({})", comp_name.as_deref().unwrap_or("Linux Host"), ver)
@@ -84,6 +89,9 @@ pub async fn list_targets(
                 &ip,
                 22,
             );
+            if let Some(target_id) = existing_target_id {
+                vt.target_id = target_id;
+            }
             vt.agent_id = Some(agent_id);
             vt.status = t_status;
             vt.environment = dc_name;

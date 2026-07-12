@@ -9,10 +9,11 @@
 
 set -euo pipefail
 
-HOST="root@10.88.11.162"
-REMOTE_DIR="/store/Zentra"
+HOST="${ZENTRA_HOST:-root@10.88.11.162}"
+REMOTE_DIR="${ZENTRA_REMOTE_DIR:-/store/Zentra}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MODE="${1:-}"
+TARGET_HOST="${HOST#*@}"
 
 # ── SSH helpers ────────────────────────────────────────────────────────────────
 SSH_OPTS="-p 22 -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o ConnectTimeout=10"
@@ -134,7 +135,7 @@ restart_services() {
         set -e
 
         # Restart application services
-        systemctl restart zentra-api zentra-frontend
+        systemctl restart zentra-api
 
         # nginx: reload if running (avoids 'address already in use'), start if stopped
         if systemctl is-active --quiet nginx; then
@@ -147,7 +148,7 @@ restart_services() {
         fi
 
         # Verify all three are active
-        for svc in zentra-api zentra-frontend nginx; do
+        for svc in zentra-api nginx; do
             if systemctl is-active --quiet \$svc; then
                 echo \"  ✓ \$svc active\"
             else
@@ -164,7 +165,7 @@ restart_services() {
 health_check() {
     info "Running health check ..."
     for i in $(seq 1 8); do
-        HTTP=$(curl -sf --max-time 5 "http://10.88.11.162:5006/api/health" 2>/dev/null || true)
+        HTTP=$(run_remote "curl -sf --max-time 5 http://127.0.0.1:5006/api/health" 2>/dev/null || true)
         if [ -n "$HTTP" ]; then
             ok "API health check passed (attempt $i)"
             return 0
@@ -173,6 +174,19 @@ health_check() {
         sleep 4
     done
     die "API health check failed after 8 attempts — check: journalctl -u zentra-api -n 50"
+}
+
+frontend_health_check() {
+    info "Running frontend health check ..."
+    for i in $(seq 1 8); do
+        if run_remote "curl -sf --max-time 5 http://127.0.0.1:5010/ >/dev/null" 2>/dev/null; then
+            ok "Frontend health check passed (attempt $i)"
+            return 0
+        fi
+        echo "    waiting ... ($i/8)"
+        sleep 4
+    done
+    die "Frontend health check failed after 8 attempts — check: journalctl -u nginx -n 50"
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -188,6 +202,7 @@ case "$MODE" in
         build_backend
         restart_services
         health_check
+        frontend_health_check
         ;;
     --agent-only)
         sync_source
@@ -199,10 +214,12 @@ case "$MODE" in
         build_frontend
         restart_services
         health_check
+        frontend_health_check
         ;;
     --restart-only)
         restart_services
         health_check
+        frontend_health_check
         ;;
     *)
         sync_source
@@ -210,13 +227,14 @@ case "$MODE" in
         build_frontend
         restart_services
         health_check
+        frontend_health_check
         ;;
 esac
 
 echo ""
 echo "======================================================"
 echo "  Deployment complete!"
-echo "  API:       http://10.88.11.162:5006/api/health"
-echo "  Frontend:  http://10.88.11.162:5010"
-echo "  Agent DL:  http://10.88.11.162:5010/dl/zentra-agent-linux-x86_64"
+echo "  API:       http://${TARGET_HOST}:5006/api/health"
+echo "  Frontend:  http://${TARGET_HOST}:5010"
+echo "  Agent DL:  http://${TARGET_HOST}:5010/dl/zentra-agent-linux-x86_64"
 echo "======================================================"

@@ -82,19 +82,19 @@ pub async fn slo_services(
             ROUND(
                 PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY duration_us)::numeric / 1000.0,
                 2
-            ) AS p50_ms,
+            )::float8 AS p50_ms,
             ROUND(
                 PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_us)::numeric / 1000.0,
                 2
-            ) AS p95_ms,
+            )::float8 AS p95_ms,
             ROUND(
                 PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY duration_us)::numeric / 1000.0,
                 2
-            ) AS p99_ms
+            )::float8 AS p99_ms
          FROM traces
          WHERE org_id = $1
            AND started_at > NOW() - INTERVAL '{interval}'
-           AND parent_span_id IS NULL
+           AND NULLIF(parent_span_id, '') IS NULL
          GROUP BY service_name
          ORDER BY total_requests DESC"
     ))
@@ -230,7 +230,7 @@ pub async fn slo_budget(
          WHERE org_id = $1
            AND service_name = $2
            AND started_at > NOW() - $3::interval
-           AND parent_span_id IS NULL"
+           AND NULLIF(parent_span_id, '') IS NULL"
     )
     .bind(org_id)
     .bind(&service_name)

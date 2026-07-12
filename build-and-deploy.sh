@@ -151,7 +151,7 @@ build_agent_only() {
 
 # ── Step 3: Build frontend ─────────────────────────────────────────────────────
 # Runs npm ci + npm run build on the server in the frontend/ directory.
-# Output goes into frontend/dist/ which is served by zentra-frontend.service.
+# Output goes into frontend/dist/ which is served by nginx on port 5010.
 build_frontend() {
     info "Building frontend on server..."
     (
@@ -172,7 +172,6 @@ restart_services() {
     (
         set -e
         systemctl restart zentra-api
-        systemctl restart zentra-frontend
 
         if systemctl is-active --quiet nginx; then
             systemctl reload nginx
@@ -184,7 +183,7 @@ restart_services() {
 
         echo ''
         echo 'Service status:'
-        for svc in zentra-api zentra-frontend nginx; do
+        for svc in zentra-api nginx; do
             if systemctl is-active --quiet "$svc"; then
                 echo "  ✓ $svc is running"
             else
@@ -215,6 +214,21 @@ health_check() {
     die "API health check failed — check: journalctl -u zentra-api -n 50"
 }
 
+frontend_health_check() {
+    info "Waiting for frontend to be ready..."
+    local attempt=1
+    while [ $attempt -le 10 ]; do
+        if curl -sf --max-time 5 "http://127.0.0.1:5010/" >/dev/null 2>&1; then
+            ok "Frontend health check passed (attempt $attempt)"
+            return 0
+        fi
+        step "Attempt $attempt/10 — waiting 5s..."
+        sleep 5
+        attempt=$((attempt + 1))
+    done
+    die "Frontend health check failed — check: journalctl -u nginx -n 50"
+}
+
 # ── Main dispatcher ────────────────────────────────────────────────────────────
 case "$MODE" in
 
@@ -223,6 +237,7 @@ case "$MODE" in
         build_backend
         restart_services
         health_check
+        frontend_health_check
         ;;
 
     --agent-only)
@@ -236,12 +251,14 @@ case "$MODE" in
         build_frontend
         restart_services
         health_check
+        frontend_health_check
         ;;
 
     --restart-only)
         # Just restart all services — no build step
         restart_services
         health_check
+        frontend_health_check
         ;;
 
     *)
@@ -250,6 +267,7 @@ case "$MODE" in
         build_frontend
         restart_services
         health_check
+        frontend_health_check
         ;;
 esac
 
