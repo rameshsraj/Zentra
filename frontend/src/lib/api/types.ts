@@ -418,7 +418,7 @@ export interface LogSource {
   host: string
   port: number
   path: string
-  status: string
+  status: 'active' | 'error' | 'paused'
   last_ingested: string | null
   log_count: number
   created_at: string
@@ -1212,3 +1212,4 @@ export interface MetricsCatalogResponse {
   resource_types: string[]
   catalog: Record<string, { metric_name: string; unit: string; sample_count: number }[]>
 }
+

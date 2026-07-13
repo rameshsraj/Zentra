@@ -8,6 +8,7 @@ import {
   Timer,
   TimerOff,
   Plus,
+  type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -43,6 +44,8 @@ const breadcrumbMap: Record<string, string> = {
 interface PageHeaderProps {
   title: string
   subtitle?: string
+  description?: string
+  icon?: LucideIcon
   onRefresh?: () => void
   onSearch?: (query: string) => void
   searchPlaceholder?: string
@@ -55,6 +58,8 @@ interface PageHeaderProps {
 export default function PageHeader({
   title,
   subtitle,
+  description,
+  icon: Icon,
   onRefresh,
   onSearch,
   searchPlaceholder = 'Search...',
@@ -118,9 +123,16 @@ export default function PageHeader({
 
       {/* Title Row */}
       <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-white">{title}</h1>
-          {subtitle && <p className="text-slate-400 text-sm mt-1">{subtitle}</p>}
+        <div className="flex items-start gap-3">
+          {Icon && (
+            <div className="mt-1 rounded-lg border border-white/10 bg-white/5 p-2 text-brand-400">
+              <Icon className="h-5 w-5" aria-hidden="true" />
+            </div>
+          )}
+          <div>
+            <h1 className="text-3xl font-bold text-white">{title}</h1>
+            {(subtitle || description) && <p className="text-slate-400 text-sm mt-1">{subtitle ?? description}</p>}
+          </div>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           {children}
@@ -205,3 +217,6 @@ export default function PageHeader({
     </div>
   )
 }
+
+
+

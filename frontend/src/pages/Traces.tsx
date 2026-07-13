@@ -1,10 +1,10 @@
 import { useState, useMemo, useEffect } from 'react'
-import { useQuery, useMutation } from '@tanstack/react-query'
-import { searchTraces, getTrace, getTraceServices, getTraceOperations, fetchJSON } from '@/lib/api'
+import { useQuery } from '@tanstack/react-query'
+import { getTrace, getTraceServices, fetchJSON } from '@/lib/api'
 import type { TraceSpan } from '@/lib/api/types'
 import PageHeader from '@/components/PageHeader'
 import LoadingSkeleton from '@/components/LoadingSkeleton'
-import { Search, ChevronRight, AlertTriangle, CheckCircle, Layers, X, Code, Info } from 'lucide-react'
+import { ChevronRight, AlertTriangle, CheckCircle, Layers, X, Code } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface TraceQlResult {
@@ -76,7 +76,7 @@ export default function TracesPage() {
   }, [query]);
 
   const traces = data?.traces ?? []
-  const services = servicesData?.services ?? []
+  void servicesData
 
   const exampleQueries = [
     { label: 'Errors', val: '{status=error}' },
@@ -360,3 +360,4 @@ function getDepth(span: TraceSpan, all: TraceSpan[]): number {
   }
   return depth
 }
+

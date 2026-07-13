@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { fetchJSON } from '@/lib/api'
 import PageHeader from '@/components/PageHeader'
 import LoadingSkeleton from '@/components/LoadingSkeleton'
@@ -230,3 +230,4 @@ function StatusBadge({ status }: { status: string }) {
       return <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-500/10 text-slate-400 border border-slate-500/20 uppercase font-bold">{status}</span>
   }
 }
+

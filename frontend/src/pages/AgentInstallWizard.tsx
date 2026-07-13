@@ -425,53 +425,12 @@ ZENTRA_ORG_KEY=${apiKey} \\
 ZENTRA_DC_NAME=${dcName} \\
 ./zentra-agent`
 
-  const linuxCollectorCmd = `# Install OpenTelemetry Collector (contrib)
-curl -fsSL https://github.com/open-telemetry/opentelemetry-collector-releases/releases/latest/download/otelcol-contrib_linux_amd64.tar.gz | tar -xz
-chmod +x otelcol-contrib
-
-# Create config.yaml
-cat > otel-config.yaml << 'EOF'
-receivers:
-  otlp:
-    protocols:
-      grpc:
-        endpoint: 0.0.0.0:4317
-      http:
-        endpoint: 0.0.0.0:4318
-  hostmetrics:
-    collection_interval: 30s
-    scrapers:
-      cpu:
-      memory:
-      disk:
-      filesystem:
-      load:
-      network:
-      process:
-
-exporters:
-  otlp:
-    endpoint: ${otlpEndpoint}
-    tls:
-      insecure: true
-    headers:
-      Authorization: "Bearer ${apiKey}"
-      X-Zentra-DC: "${dcName}"
-
-service:
-  pipelines:
-    metrics:
-      receivers: [otlp, hostmetrics]
-      exporters: [otlp]
-    traces:
-      receivers: [otlp]
-      exporters: [otlp]
-    logs:
-      receivers: [otlp]
-      exporters: [otlp]
-EOF
-
-./otelcol-contrib --config=otel-config.yaml`
+  const linuxCollectorCmd = `curl -fsSL ${downloadUrl}/dl/zentra-collector-linux-x86_64 -o zentra-collector && \
+chmod +x zentra-collector && \
+ZENTRA_API_ENDPOINT=${apiEndpoint} \
+ZENTRA_COLLECTOR_KEY=${apiKey} \
+ZENTRA_DC_NAME=${dcName}-collector \
+./zentra-collector`
 
   const systemdAgentUnit = `[Unit]
 Description=Zentra Monitoring Agent
@@ -491,12 +450,15 @@ RestartSec=5
 WantedBy=multi-user.target`
 
   const systemdCollectorUnit = `[Unit]
-Description=Zentra OTel Collector
+Description=Zentra Collector
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/otelcol-contrib --config=/etc/zentra/otel-config.yaml
+Environment=ZENTRA_API_ENDPOINT=${apiEndpoint}
+Environment=ZENTRA_COLLECTOR_KEY=${apiKey}
+Environment=ZENTRA_DC_NAME=${dcName}-collector
+ExecStart=/usr/local/bin/zentra-collector
 Restart=always
 RestartSec=5
 
@@ -668,15 +630,14 @@ service:
       receivers: [snmp]
       exporters: [otlp]`
 
-  const linuxNetworkCmd = `# 1. Download OTel Collector contrib (includes SNMP receiver)
-curl -fsSL https://github.com/open-telemetry/opentelemetry-collector-releases/releases/latest/download/otelcol-contrib_linux_amd64.tar.gz | tar -xz
-chmod +x otelcol-contrib
-
-# 2. Save the config below as otel-snmp-config.yaml
-#    (edit DEVICE_IP and SNMP credentials first)
-
-# 3. Run the collector
-./otelcol-contrib --config=otel-snmp-config.yaml`
+  const linuxNetworkCmd = `curl -fsSL ${downloadUrl}/dl/zentra-collector-linux-x86_64 -o zentra-collector && \
+chmod +x zentra-collector && \
+# Save the config below as otel-snmp-config.yaml and edit DEVICE_IP / SNMP credentials.
+# Then assign the network targets to this collector from Fleet.
+ZENTRA_API_ENDPOINT=${apiEndpoint} \
+ZENTRA_COLLECTOR_KEY=${apiKey} \
+ZENTRA_DC_NAME=${dcName}-network \
+./zentra-collector`
 
   const windowsNetworkCmd = `# 1. Download OTel Collector contrib (includes SNMP receiver)
 Invoke-WebRequest -Uri "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/latest/download/otelcol-contrib_windows_amd64.tar.gz" -OutFile otelcol.tar.gz

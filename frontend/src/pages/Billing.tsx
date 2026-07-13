@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { getSubscription, createCheckout, createBillingPortal, type Subscription } from '@/lib/api/billing'
+import { getSubscription, createCheckout, createBillingPortal } from '@/lib/api/billing'
 import PageHeader from '@/components/PageHeader'
 import { CreditCard, ExternalLink, CheckCircle2, AlertTriangle, XCircle } from 'lucide-react'
 
@@ -193,3 +193,4 @@ function UsageGauge({ label, max }: { label: string; max: number }) {
     </div>
   )
 }
+
