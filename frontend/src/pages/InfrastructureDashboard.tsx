@@ -8,6 +8,16 @@ import { Server, HardDrive, Network, Cpu, MemoryStick, Loader2, Wifi } from 'luc
 import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 
+function formatGb(value: unknown) {
+  const n = typeof value === 'number' ? value : 0
+  return `${(Number.isFinite(n) ? n / 1e9 : 0).toFixed(1)} GB`
+}
+
+function formatPackets(value: unknown) {
+  const n = typeof value === 'number' ? value : 0
+  return `${(Number.isFinite(n) ? n / 1000 : 0).toFixed(0)}K`
+}
+
 export default function InfrastructureDashboardPage() {
   const qc = useQueryClient()
   const { data: targets } = useQuery({ queryKey: ['targets'], queryFn: getTargets })
@@ -37,16 +47,17 @@ export default function InfrastructureDashboardPage() {
     })
   }, [qc, serverTargets])
 
+  const statsValues = Object.values(serverStats)
   const totalServers = serverTargets.length
-  const reachableServers = Object.values(serverStats).length
-  const avgCpu = Object.values(serverStats).length > 0
-    ? Math.round(Object.values(serverStats).reduce((a, s) => a + s.cpu_usage_percent, 0) / Object.values(serverStats).length)
+  const reachableServers = statsValues.length
+  const avgCpu = statsValues.length > 0
+    ? Math.round(statsValues.reduce((a, s) => a + s.cpu_usage_percent, 0) / statsValues.length)
     : 0
-  const avgMem = Object.values(serverStats).length > 0
-    ? Math.round(Object.values(serverStats).reduce((a, s) => a + s.memory_usage_percent, 0) / Object.values(serverStats).length)
+  const avgMem = statsValues.length > 0
+    ? Math.round(statsValues.reduce((a, s) => a + s.memory_usage_percent, 0) / statsValues.length)
     : 0
-  const avgDisk = Object.values(serverStats).length > 0
-    ? Math.round(Object.values(serverStats).reduce((a, s) => a + s.disk_usage_percent, 0) / Object.values(serverStats).length)
+  const avgDisk = statsValues.length > 0
+    ? Math.round(statsValues.reduce((a, s) => a + s.disk_usage_percent, 0) / statsValues.length)
     : 0
 
   return (
@@ -61,7 +72,6 @@ export default function InfrastructureDashboardPage() {
       />
       <AddTargetModal open={showAddModal} onClose={() => setShowAddModal(false)} defaultType="server" title="Add Server" />
 
-      {/* KPI Strip */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         {[
           { label: 'Total Servers', value: String(totalServers), icon: Server, color: 'text-blue-400' },
@@ -81,8 +91,7 @@ export default function InfrastructureDashboardPage() {
         ))}
       </div>
 
-      {/* Gauges */}
-      {Object.values(serverStats).length > 0 && (
+      {statsValues.length > 0 && (
         <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-5">
           <h3 className="text-sm font-bold text-white mb-4">Fleet Resource Utilization</h3>
           <div className="flex justify-around">
@@ -94,7 +103,6 @@ export default function InfrastructureDashboardPage() {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Servers Section */}
         <Link to="/servers" className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-5 hover:bg-white/[0.08] transition-colors">
           <div className="flex items-center gap-2 mb-3">
             <Server className="w-5 h-5 text-blue-400" />
@@ -102,25 +110,28 @@ export default function InfrastructureDashboardPage() {
             <span className="ml-auto text-xs text-slate-500">{totalServers} targets</span>
           </div>
           <div className="space-y-2">
-            {serverTargets.slice(0, 4).map(t => {
-              const stats = serverStats[t.target_id]
-              return (
-                <div key={t.target_id} className="flex items-center gap-2 text-xs">
-                  <div className={`w-2 h-2 rounded-full ${stats ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-                  <span className="text-white truncate flex-1">{t.name}</span>
-                  {stats ? (
-                    <span className="text-slate-400 font-mono">CPU {Math.round(stats.cpu_usage_percent)}%</span>
-                  ) : (
-                    <Loader2 className="w-3 h-3 animate-spin text-slate-500" />
-                  )}
-                </div>
-              )
-            })}
-            {totalServers > 4 && <div className="text-[10px] text-slate-500">+{totalServers - 4} more</div>}
+            <div className="flex justify-between text-xs">
+              <span className="text-slate-400">Reachable</span>
+              <span className="text-white font-mono">{reachableServers}/{totalServers}</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-slate-400">Average CPU</span>
+              <span className="text-white font-mono">{avgCpu}%</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-slate-400">Average Memory</span>
+              <span className="text-white font-mono">{avgMem}%</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-slate-400">Average Disk</span>
+              <span className="text-white font-mono">{avgDisk}%</span>
+            </div>
+            {serverTargets.length > 0 && reachableServers === 0 && (
+              <div className="flex items-center gap-2 text-xs text-slate-500 pt-1"><Loader2 className="w-3 h-3 animate-spin" /> Loading server health</div>
+            )}
           </div>
         </Link>
 
-        {/* Storage Section */}
         <Link to="/storage" className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-5 hover:bg-white/[0.08] transition-colors">
           <div className="flex items-center gap-2 mb-3">
             <HardDrive className="w-5 h-5 text-purple-400" />
@@ -142,7 +153,6 @@ export default function InfrastructureDashboardPage() {
           )}
         </Link>
 
-        {/* Network Section */}
         <Link to="/network" className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-5 hover:bg-white/[0.08] transition-colors">
           <div className="flex items-center gap-2 mb-3">
             <Network className="w-5 h-5 text-cyan-400" />
@@ -150,48 +160,16 @@ export default function InfrastructureDashboardPage() {
           </div>
           {netCapture ? (
             <div className="space-y-2 text-xs">
-              <div className="flex justify-between"><span className="text-slate-400">Bytes In</span><span className="text-white font-mono">{((netCapture as any).total_bytes_in / 1e9).toFixed(1)} GB</span></div>
-              <div className="flex justify-between"><span className="text-slate-400">Bytes Out</span><span className="text-white font-mono">{((netCapture as any).total_bytes_out / 1e9).toFixed(1)} GB</span></div>
-              <div className="flex justify-between"><span className="text-slate-400">Active Conns</span><span className="text-white font-mono">{(netCapture as any).active_connections}</span></div>
-              <div className="flex justify-between"><span className="text-slate-400">Packets In</span><span className="text-white font-mono">{((netCapture as any).total_packets_in / 1000).toFixed(0)}K</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">Bytes In</span><span className="text-white font-mono">{formatGb((netCapture as any).total_bytes_in)}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">Bytes Out</span><span className="text-white font-mono">{formatGb((netCapture as any).total_bytes_out)}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">Active Conns</span><span className="text-white font-mono">{(netCapture as any).active_connections ?? 0}</span></div>
+              <div className="flex justify-between"><span className="text-slate-400">Packets In</span><span className="text-white font-mono">{formatPackets((netCapture as any).total_packets_in)}</span></div>
             </div>
           ) : (
             <div className="text-xs text-slate-500 py-4 text-center">Loading network data...</div>
           )}
         </Link>
       </div>
-
-      {/* Per-Server Detail Cards */}
-      {Object.values(serverStats).length > 0 && (
-        <div>
-          <h3 className="text-sm font-bold text-white mb-3">Server Fleet Details</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-            {serverTargets.map(t => {
-              const s = serverStats[t.target_id]
-              if (!s) return null
-              return (
-                <div key={t.target_id} className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className={`w-2 h-2 rounded-full ${s ? 'bg-emerald-400' : 'bg-red-400'}`} />
-                    <span className="text-sm font-bold text-white">{s.hostname || t.name}</span>
-                    <span className="ml-auto text-[10px] text-slate-500">{t.host}</span>
-                  </div>
-                  <div className="flex justify-around">
-                    <GaugeChart value={Math.round(s.cpu_usage_percent)} label="CPU" size={70} thickness={5} />
-                    <GaugeChart value={Math.round(s.memory_usage_percent)} label="Mem" size={70} thickness={5} />
-                    <GaugeChart value={Math.round(s.disk_usage_percent)} label="Disk" size={70} thickness={5} />
-                  </div>
-                  <div className="grid grid-cols-3 gap-1 mt-2 text-[10px]">
-                    <div className="text-center"><span className="text-slate-500">Cores</span><br/><span className="text-white font-mono">{s.cpu_cores}</span></div>
-                    <div className="text-center"><span className="text-slate-500">RAM</span><br/><span className="text-white font-mono">{Math.round(s.memory_total_mb / 1024)}GB</span></div>
-                    <div className="text-center"><span className="text-slate-500">Procs</span><br/><span className="text-white font-mono">{s.process_count}</span></div>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
     </div>
   )
 }

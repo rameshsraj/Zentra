@@ -21,6 +21,14 @@ function statusIcon(status: string) {
   }
 }
 
+function countByStatus(items: Target[]) {
+  return {
+    healthy: items.filter(t => t.status === 'healthy' || t.status === 'connected').length,
+    warning: items.filter(t => t.status === 'warning').length,
+    critical: items.filter(t => t.status === 'critical' || t.status === 'unreachable').length,
+  }
+}
+
 export default function DatabaseDashboardPage() {
   const qc = useQueryClient()
   const { data: targets, isLoading } = useQuery({ queryKey: ['targets'], queryFn: getTargets })
@@ -59,7 +67,6 @@ export default function DatabaseDashboardPage() {
       />
       <AddDatabaseModal open={showAddModal} onClose={() => setShowAddModal(false)} dbType="oracle" />
 
-      {/* KPI Strip */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3" role="region" aria-label="Database statistics">
         {[
           { label: 'Total Databases', value: String(dbTargets.length), color: 'text-white' },
@@ -75,68 +82,39 @@ export default function DatabaseDashboardPage() {
         ))}
       </div>
 
-      {/* Database Type Cards — only show types that have instances */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {DB_TYPES.filter(dbType => (byType[dbType.key] || []).length > 0).map(dbType => {
           const items = byType[dbType.key] || []
+          const status = countByStatus(items)
           return (
             <Link
               key={dbType.key}
               to={dbType.path}
               className={`${dbType.bgColor} backdrop-blur-sm border ${dbType.borderColor} rounded-xl p-5 hover:bg-white/[0.08] transition-colors`}
             >
-              <div className="flex items-center gap-2 mb-3">
+              <div className="flex items-center gap-2 mb-4">
                 <Database className={`w-5 h-5 ${dbType.color}`} />
                 <h3 className="text-sm font-bold text-white">{dbType.label}</h3>
                 <span className={`ml-auto text-xs font-mono ${dbType.color}`}>{items.length} instance{items.length !== 1 ? 's' : ''}</span>
               </div>
-              <div className="space-y-2">
-                {items.slice(0, 5).map(t => (
-                  <div key={t.target_id} className="flex items-center gap-2 text-xs">
-                    {statusIcon(t.status)}
-                    <span className="text-white truncate flex-1">{t.name}</span>
-                    <span className="text-slate-500">{t.host}:{t.port}</span>
-                  </div>
-                ))}
-                {items.length > 5 && <div className="text-[10px] text-slate-500">+{items.length - 5} more</div>}
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div className="bg-black/20 rounded-lg p-2">
+                  <div className="flex items-center gap-1.5 text-slate-400">{statusIcon('healthy')}Healthy</div>
+                  <div className="text-lg font-bold font-mono text-emerald-400 mt-1">{status.healthy}</div>
+                </div>
+                <div className="bg-black/20 rounded-lg p-2">
+                  <div className="flex items-center gap-1.5 text-slate-400">{statusIcon('warning')}Warning</div>
+                  <div className="text-lg font-bold font-mono text-amber-400 mt-1">{status.warning}</div>
+                </div>
+                <div className="bg-black/20 rounded-lg p-2">
+                  <div className="flex items-center gap-1.5 text-slate-400">{statusIcon('critical')}Critical</div>
+                  <div className="text-lg font-bold font-mono text-red-400 mt-1">{status.critical}</div>
+                </div>
               </div>
             </Link>
           )
         })}
       </div>
-
-      {/* All Database Targets Table */}
-      {dbTargets.length > 0 && (
-        <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl overflow-hidden">
-          <div className="px-5 py-3 border-b border-white/10">
-            <h3 className="text-sm font-bold text-white">All Database Instances</h3>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs" aria-label="Database instances">
-              <thead>
-                <tr className="border-b border-white/10 text-slate-400">
-                  <th className="px-4 py-2 text-left">Status</th>
-                  <th className="px-4 py-2 text-left">Name</th>
-                  <th className="px-4 py-2 text-left">Type</th>
-                  <th className="px-4 py-2 text-left">Host</th>
-                  <th className="px-4 py-2 text-left">Port</th>
-                </tr>
-              </thead>
-              <tbody>
-                {dbTargets.map(t => (
-                  <tr key={t.target_id} className="border-b border-white/5 hover:bg-white/5">
-                    <td className="px-4 py-2">{statusIcon(t.status)}</td>
-                    <td className="px-4 py-2 text-white font-medium">{t.name}</td>
-                    <td className="px-4 py-2 text-slate-400 capitalize">{t.target_subtype || '—'}</td>
-                    <td className="px-4 py-2 text-slate-400 font-mono">{t.host}</td>
-                    <td className="px-4 py-2 text-slate-400 font-mono">{t.port}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
 
       {isLoading && <LoadingSkeleton variant="card" count={3} />}
 
